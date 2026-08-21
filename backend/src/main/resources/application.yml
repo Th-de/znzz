@@ -1,0 +1,73 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: dsh-platform
+  config:
+    import: optional:file:./application-local.yml
+  datasource:
+    url: jdbc:mysql://localhost:3306/dsh_platform?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: root123
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: localhost
+      port: 6381
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 8MB
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+      id-type: auto
+
+# 自定义配置
+dsh:
+  jwt:
+    secret: dsh-platform-secret-key-for-jwt-signing-2024-change-in-prod
+    expire-hours: 24
+  fee:
+    intention-fixed: 1000      # 意向金固定金额
+    intention-rate: 0.001      # 意向金比例（已弃用，改走固定金额）
+    deposit-rate: 0.01         # 保证金比例 1%（可配置）
+    commission-rate: 0.01      # 佣金费率 1%
+    cancel-forfeit-rate: 0.5   # 买家反悔扣意向金比例 50%
+  credit:
+    survey-weight: 0.4
+    complete-weight: 0.3
+    pass-weight: 0.3
+  time:
+    thinking-hours: 12         # 思考期（演示模式可被覆盖）
+    review-hours: 6            # 审核期
+  upload:
+    dir: uploads
+  ai:
+    provider: deepseek
+    api-key: ${DSH_AI_API_KEY:}
+    model: deepseek-v4-pro
+    base-url: https://api.deepseek.com
+  pay:
+    alipay:
+      enabled: false
+      app-id: ${DSH_ALIPAY_APP_ID:}
+      gateway: https://openapi-sandbox.dl.alipaydev.com/gateway.do
+      notify-url: ${DSH_ALIPAY_NOTIFY_URL:}
+      return-url: http://localhost:5173/buyer/orders
+      factory-return-url: http://localhost:5173/factory/quotations
+
+logging:
+  level:
+    com.dsh: info

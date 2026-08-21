@@ -1,0 +1,12 @@
+backend/application-local.yml
+**/application-local.yml
+backend/uploads/
+backend/target/
+client-web/dist/
+admin-web/dist/
+tools/natapp/
+*.log
+.idea/
+.vscode/
+.cursor/
+node_modules/
