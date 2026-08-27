@@ -11,6 +11,7 @@
         <el-table-column label="倒计时" min-width="160">
           <template #default="{ row }">
             <IntentionCountdown v-if="row.status==='PUBLISHED'" :end-at="row.intentionEndAt" />
+            <IntentionCountdown v-else-if="row.status==='LOCKING'" :end-at="row.lockingEndAt" />
             <span v-else>-</span>
           </template>
         </el-table-column>
@@ -25,7 +26,7 @@
       </el-table>
 
       <el-dialog v-model="dialog" :title="'意向报名 - ' + current.title" width="560px">
-        <p class="tip">不填价格。按工序报名，冻结意向金 1000 元。粗加工产能不能算进精加工。</p>
+        <p class="tip">不填价格。按工序报名，冻结意向金 1000 元。保证金期截止前未锁价将扣除意向金并记失信。</p>
         <CoverageBars :items="coverage" />
         <el-form label-width="120px">
           <el-form-item label="工序">
@@ -33,8 +34,13 @@
               <el-option v-for="p in processes" :key="p.processNo" :label="p.processName" :value="p.processNo" />
             </el-select>
           </el-form-item>
-          <el-form-item label="档案设备">
-            <span>{{ deviceSummary }}</span>
+          <el-form-item label="投入设备" required>
+            <el-checkbox-group v-model="form.deviceIds">
+              <el-checkbox v-for="d in idleDevices" :key="d.id" :label="d.id">
+                {{ d.name }} {{ d.model || '' }}（{{ d.dailyCapacity || '-' }}件/天 · {{ d.status === 'IDLE' ? '空闲' : d.status }}）
+              </el-checkbox>
+            </el-checkbox-group>
+            <div class="tip" v-if="!idleDevices.length">暂无空闲设备，请先到「我的设备」添加</div>
           </el-form-item>
           <el-form-item label="日产能(件)">
             <span>{{ dailyCapacity || '见能力档案' }}</span>
@@ -98,14 +104,10 @@ const lockDialog = ref(false)
 const current = ref({})
 const cap = ref({})
 const coverage = ref([])
-const form = reactive({ demandId: null, processNo: null, minQty: null, maxQty: null, confirm: false })
+const form = reactive({ demandId: null, processNo: null, minQty: null, maxQty: null, deviceIds: [], confirm: false })
+const idleDevices = ref([])
 const lockForm = reactive({ demandId: null, processNo: null, price: null, yieldRate: 0.98, promisedDays: 10, minQty: null, maxQty: null, stageCount: 1, confirm: false })
 
-const deviceSummary = computed(() => {
-  const ds = cap.value.devices || []
-  if (!ds.length) return '未填写'
-  return ds.map(d => `${d.name || ''} ${d.model || ''}`.trim()).filter(Boolean).join('、') || '已填写'
-})
 const dailyCapacity = computed(() => {
   const rows = cap.value.capacityByProcess || []
   return rows[0]?.dailyCapacity || ''
@@ -119,6 +121,11 @@ async function ensureProfile() {
   const data = await api.get('/enterprise/capability')
   cap.value = data.capability || {}
   if (!data.complete) {
+    if (!(data.deviceCount > 0)) {
+      ElMessage.warning('请先在「我的设备」中至少添加一台设备')
+      router.push('/factory/devices')
+      return false
+    }
     ElMessage.warning('请先完善能力档案')
     router.push('/factory/profile')
     return false
@@ -138,7 +145,9 @@ async function openIntention(row) {
   form.processNo = null
   form.minQty = null
   form.maxQty = null
+  form.deviceIds = []
   form.confirm = false
+  idleDevices.value = await api.get('/device/idle')
   await loadProcesses(row)
   const cov = await getCoverage(row.id)
   coverage.value = cov.processes || []
@@ -162,6 +171,7 @@ async function submitIntention() {
   if (!form.processNo) return ElMessage.warning('请选择工序')
   if (!form.minQty || !form.maxQty) return ElMessage.warning('请填写承接量')
   if (form.minQty > form.maxQty) return ElMessage.warning('最小量不能大于最大量')
+  if (!form.deviceIds?.length) return ElMessage.warning('请勾选投入的设备')
   const proc = processes.value.find(p => p.processNo === form.processNo)
   const capQty = proc?.quantity || current.value.quantity
   if (capQty && form.maxQty > capQty) {
@@ -172,6 +182,7 @@ async function submitIntention() {
     processNo: form.processNo,
     minQty: form.minQty,
     maxQty: form.maxQty,
+    deviceIds: form.deviceIds,
   })
   if (data?.payUrl) {
     window.open(data.payUrl, '_blank')

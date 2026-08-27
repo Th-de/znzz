@@ -31,9 +31,10 @@
         <el-table-column label="状态" width="140">
           <template #default="{ row }">{{ label(DEMAND_STATUS, row.status) }}</template>
         </el-table-column>
-        <el-table-column label="意向倒计时" min-width="180">
+        <el-table-column label="倒计时" min-width="180">
           <template #default="{ row }">
             <IntentionCountdown v-if="row.status==='PUBLISHED'" :end-at="row.intentionEndAt" />
+            <IntentionCountdown v-else-if="row.status==='LOCKING'" :end-at="row.lockingEndAt" />
             <span v-else>-</span>
           </template>
         </el-table-column>
@@ -46,7 +47,10 @@
             <el-button v-if="row.status==='THINKING'" size="small" type="success" @click="decide(row, 'CONTINUE')">继续</el-button>
             <el-button v-if="row.status==='THINKING'" size="small" type="danger" @click="decide(row, 'CANCEL')">取消</el-button>
             <el-button v-if="row.status==='SOLUTION_GENERATED' && canPick(row)" size="small" type="primary" @click="$router.push('/buyer/solutions/'+row.id)">看方案</el-button>
-            <el-button v-else-if="row.status==='SOLUTION_GENERATED'" size="small" disabled>等待运营下发方案</el-button>
+            <el-tooltip v-else-if="row.status==='SOLUTION_GENERATED'" content="运营审阅并下发后才能选择方案" placement="top">
+              <el-button size="small" disabled>等待运营下发方案</el-button>
+            </el-tooltip>
+            <el-button v-if="row.status==='SOLUTION_CONFIRMED'" size="small" disabled>等待运营派单</el-button>
             <el-button v-if="row.status==='SOLUTION_SELECTED'" size="small" @click="$router.push('/buyer/orders')">看订单</el-button>
           </template>
         </el-table-column>

@@ -7,9 +7,11 @@ import com.dsh.platform.dto.NotifyView;
 import com.dsh.platform.dto.OrderDtos.TodoItem;
 import com.dsh.platform.service.TodoService;
 import com.dsh.platform.entity.CreditEvent;
+import com.dsh.platform.entity.Enterprise;
 import com.dsh.platform.entity.FundFlow;
 import com.dsh.platform.entity.Notify;
 import com.dsh.platform.mapper.CreditEventMapper;
+import com.dsh.platform.mapper.EnterpriseMapper;
 import com.dsh.platform.mapper.FundFlowMapper;
 import com.dsh.platform.mapper.NotifyMapper;
 import com.dsh.platform.security.UserContext;
@@ -25,6 +27,7 @@ public class NotifyController {
 
     private final NotifyMapper notifyMapper;
     private final FundFlowMapper fundFlowMapper;
+    private final EnterpriseMapper enterpriseMapper;
     private final CreditEventMapper creditEventMapper;
     private final NotifyActionResolver notifyActionResolver;
     private final TodoService todoService;
@@ -60,7 +63,12 @@ public class NotifyController {
     @GetMapping("/all-funds")
     @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('OPERATOR','SUPER_ADMIN')")
     public R<List<FundFlow>> allFunds() {
-        return R.ok(fundFlowMapper.selectList(new LambdaQueryWrapper<FundFlow>()
-                .orderByDesc(FundFlow::getId)));
+        List<FundFlow> list = fundFlowMapper.selectList(new LambdaQueryWrapper<FundFlow>()
+                .orderByDesc(FundFlow::getId));
+        for (FundFlow f : list) {
+            Enterprise e = f.getTenantId() == null ? null : enterpriseMapper.selectById(f.getTenantId());
+            f.setEnterpriseName(e == null ? "" : e.getName());
+        }
+        return R.ok(list);
     }
 }

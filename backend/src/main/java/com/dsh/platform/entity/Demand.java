@@ -46,6 +46,7 @@ public class Demand {
     private java.time.LocalDateTime intentionEndAt;
     private LocalDateTime thinkingEndAt;
     private LocalDateTime reviewEndAt;
+    private LocalDateTime lockingEndAt;
     private String status;
     @TableField(exist = false)
     private Boolean applied;

@@ -7,6 +7,7 @@ export const DEMAND_STATUS = {
   REVIEWING: '审核期',
   LOCKING: '保证金期',
   SOLUTION_GENERATED: '方案已生成',
+  SOLUTION_CONFIRMED: '已确认待派单',
   SOLUTION_SELECTED: '方案已选定',
   CONTRACTED: '已签约',
   IN_PRODUCTION: '生产中',
@@ -49,6 +50,7 @@ export const FUND_TYPE = {
   PENALTY: '罚没',
   COMMISSION: '佣金',
   ESCROW: '托管',
+  IMPOUND: '平台暂存',
 }
 
 export const ESCROW_STATUS = {

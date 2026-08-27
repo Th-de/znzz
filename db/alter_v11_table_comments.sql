@@ -1,0 +1,21 @@
+-- 统一补全各表 COMMENT（utf8mb4）
+ALTER TABLE account COMMENT = '企业账户表：可用余额与冻结余额，与资金流水同步';
+ALTER TABLE attachment COMMENT = '附件表：需求图纸、合同文件等上传附件';
+ALTER TABLE audit_log COMMENT = '审计日志表：关键操作留痕';
+ALTER TABLE contract COMMENT = '合同表：一厂一份，买家上传正文，双方签名与平台审核';
+ALTER TABLE credit_event COMMENT = '信用事件表：加分/扣分记录';
+ALTER TABLE demand COMMENT = '需求表：买家发布的加工需求及状态机阶段';
+ALTER TABLE device COMMENT = '工厂设备表：能力设备清单，报名勾选，开工/完工状态流转';
+ALTER TABLE enterprise COMMENT = '企业表：买家/工厂/质检/平台等租户主体';
+ALTER TABLE fund_flow COMMENT = '资金流水表：意向金、保证金、托管、罚没、佣金等唯一账本';
+ALTER TABLE inspection COMMENT = '质检表：工单质检结果与抽样记录';
+ALTER TABLE notify COMMENT = '站内信表：系统通知推送';
+ALTER TABLE `order` COMMENT = '订单表：方案选定后的履约主单';
+ALTER TABLE process COMMENT = '工序表：需求拆分的加工工序及数量要求';
+ALTER TABLE quotation COMMENT = '报价/报名表：工厂意向报名、锁价与保证金状态';
+ALTER TABLE role_permission COMMENT = '角色权限表：角色与权限点映射';
+ALTER TABLE solution COMMENT = '方案表：规则/AI 编排的工厂组合方案';
+ALTER TABLE stage_progress_log COMMENT = '工单进度上报日志：工厂按件上报进度与说明';
+ALTER TABLE survey COMMENT = '阶段问卷表：买家与工厂互评打分';
+ALTER TABLE sys_user COMMENT = '系统用户表：登录账号，关联企业 tenant_id';
+ALTER TABLE work_stage COMMENT = '工单表：按工序/分段拆出的履约执行单元';

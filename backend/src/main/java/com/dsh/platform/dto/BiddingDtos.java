@@ -5,7 +5,8 @@ import java.math.BigDecimal;
 public class BiddingDtos {
 
     public record IntentionRequest(Long demandId, Integer processNo,
-                                   Integer minQty, Integer maxQty) {}
+                                   Integer minQty, Integer maxQty,
+                                   java.util.List<Long> deviceIds) {}
 
     public record IntentionStart(Long quotationId, boolean frozen, String payUrl) {}
 

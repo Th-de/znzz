@@ -40,6 +40,7 @@ public class BiddingService {
     private final ProcessCoverageService coverageService;
     private final SiteNotify siteNotify;
     private final PaymentChannel paymentChannel;
+    private final DeviceService deviceService;
 
     @Value("${dsh.fee.deposit-rate}")
     private BigDecimal depositRate;
@@ -70,6 +71,7 @@ public class BiddingService {
         }
 
         JsonNode capJson = capabilityService.requireComplete(UserContext.tenantId());
+        deviceService.assertSelectable(UserContext.tenantId(), req.deviceIds());
         Quotation existing = quotationMapper.selectOne(new LambdaQueryWrapper<Quotation>()
                 .eq(Quotation::getDemandId, req.demandId())
                 .eq(Quotation::getProcessNo, req.processNo())
@@ -80,6 +82,8 @@ public class BiddingService {
             if ("LOCKED".equals(existing.getStatus()) || "FROZEN".equals(existing.getIntentionStatus())) {
                 throw new BizException("该工序已报名，请勿重复提交");
             }
+            existing.setDeviceIdsJson(deviceService.writeIds(req.deviceIds()));
+            quotationMapper.updateById(existing);
             return payIntention(existing);
         }
 
@@ -92,6 +96,7 @@ public class BiddingService {
         q.setMaxQty(req.maxQty());
         q.setValidDays(null);
         q.setExtraJson(snapshot(capJson, req.processNo()));
+        q.setDeviceIdsJson(deviceService.writeIds(req.deviceIds()));
         q.setIntentionStatus("PENDING_PAY");
         q.setDepositStatus("NONE");
         q.setStatus("INTENTION");
@@ -215,9 +220,14 @@ public class BiddingService {
     }
 
     public List<Quotation> listMine() {
-        return quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
+        List<Quotation> list = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
                 .eq(Quotation::getTenantId, UserContext.tenantId())
                 .orderByDesc(Quotation::getId));
+        for (Quotation q : list) {
+            Demand d = demandMapper.selectById(q.getDemandId());
+            q.setDemandTitle(d == null ? "" : d.getTitle());
+        }
+        return list;
     }
 
     public List<Quotation> listByDemand(Long demandId) {

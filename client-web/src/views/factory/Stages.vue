@@ -30,9 +30,11 @@
         <el-table-column label="托管" width="90">
           <template #default="{ row }">{{ label(ESCROW_STATUS, row.escrowStatus) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="320">
+        <el-table-column label="操作" width="360">
           <template #default="{ row }">
-            <el-button size="small" @click="openSign(row)">签合同</el-button>
+            <el-button v-if="!row.contractSigned" size="small" @click="openSign(row)">签合同</el-button>
+            <el-tag v-else type="success" size="small" style="margin-right:8px">已签约</el-tag>
+            <el-button v-if="row.contractSigned" size="small" link type="primary" @click="openSign(row)">查看合同</el-button>
             <el-button v-if="row.status==='PENDING' && row.contractSigned" size="small" type="success" @click="doStart(row)">开工</el-button>
             <el-button v-if="row.status==='IN_PRODUCTION'" size="small" type="warning" @click="openProg(row)">上报进度</el-button>
             <el-button v-if="row.status==='IN_PRODUCTION'" size="small" type="primary" @click="doDeliver(row)">交付</el-button>

@@ -4,6 +4,8 @@
       <div class="logo">工厂端</div>
       <el-menu :default-active="active" router background-color="#304156" text-color="#bfcbd9" active-text-color="#409EFF">
         <el-menu-item index="/factory/home">工作台</el-menu-item>
+        <el-menu-item index="/factory/mine">我的主页</el-menu-item>
+        <el-menu-item index="/factory/devices">我的设备</el-menu-item>
         <el-menu-item index="/factory/profile">能力档案</el-menu-item>
         <el-menu-item index="/factory/demands">浏览需求</el-menu-item>
         <el-menu-item index="/factory/quotations">我的报名</el-menu-item>
@@ -30,6 +32,8 @@ import { useRoute, useRouter } from 'vue-router'
 const route = useRoute()
 const router = useRouter()
 const active = computed(() => {
+  if (route.path.startsWith('/factory/mine')) return '/factory/mine'
+  if (route.path.startsWith('/factory/devices')) return '/factory/devices'
   if (route.path.startsWith('/factory/profile')) return '/factory/profile'
   if (route.path.startsWith('/factory/demands')) return '/factory/demands'
   if (route.path.startsWith('/factory/quotations')) return '/factory/quotations'
@@ -39,7 +43,7 @@ const active = computed(() => {
 })
 const title = computed(() => route.meta.title || '工厂工作台')
 function logout() {
-  localStorage.clear()
+  sessionStorage.clear()
   router.push('/login')
 }
 </script>

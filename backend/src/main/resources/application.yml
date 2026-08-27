@@ -52,6 +52,7 @@ dsh:
   time:
     thinking-hours: 12         # 思考期（演示模式可被覆盖）
     review-hours: 6            # 审核期
+    locking-hours: 48          # 保证金期
   upload:
     dir: uploads
   ai:

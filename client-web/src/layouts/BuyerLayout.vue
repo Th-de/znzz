@@ -4,6 +4,7 @@
       <div class="logo">买家端</div>
       <el-menu :default-active="active" router background-color="#304156" text-color="#bfcbd9" active-text-color="#409EFF">
         <el-menu-item index="/buyer/home">我的需求</el-menu-item>
+        <el-menu-item index="/buyer/mine">我的主页</el-menu-item>
         <el-menu-item index="/buyer/publish">发布需求</el-menu-item>
         <el-menu-item index="/buyer/orders">我的订单</el-menu-item>
         <el-menu-item index="/buyer/notifies">通知</el-menu-item>
@@ -30,13 +31,14 @@ const router = useRouter()
 const active = computed(() => {
   if (route.path.startsWith('/buyer/order')) return '/buyer/orders'
   if (route.path.startsWith('/buyer/demand') || route.path.startsWith('/buyer/solutions')) return '/buyer/home'
+  if (route.path.startsWith('/buyer/mine')) return '/buyer/mine'
   if (route.path.startsWith('/buyer/publish')) return '/buyer/publish'
   if (route.path.startsWith('/buyer/notifies')) return '/buyer/notifies'
   return '/buyer/home'
 })
 const title = computed(() => route.meta.title || '买家工作台')
 function logout() {
-  localStorage.clear()
+  sessionStorage.clear()
   router.push('/login')
 }
 </script>

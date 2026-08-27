@@ -1,18 +1,10 @@
 <template>
   <div style="max-width:860px">
-      <el-alert type="info" :closable="false" title="不填完不能参与意向报名。设备至少一台，并填写材料、工艺、合格率和工序产能。" style="margin-bottom:16px" />
+      <el-alert type="info" :closable="false"
+        title="不填完不能参与意向报名。设备请在「我的设备」维护（至少一台）；此处填写材料、工艺、合格率和工序产能。"
+        style="margin-bottom:16px" />
 
       <el-form label-width="120px">
-        <h4>设备清单</h4>
-        <div v-for="(d, i) in form.devices" :key="'d'+i" class="row">
-          <el-input v-model="d.name" placeholder="设备名" style="width:160px" />
-          <el-input v-model="d.model" placeholder="型号" style="width:140px" />
-          <el-input v-model="d.precision" placeholder="精度" style="width:120px" />
-          <el-input-number v-model="d.qty" :min="1" placeholder="数量" />
-          <el-button @click="form.devices.splice(i,1)">删</el-button>
-        </div>
-        <el-button size="small" @click="form.devices.push({ name:'', model:'', precision:'', qty:1 })">加设备</el-button>
-
         <h4>可加工材料 / 工艺 / 认证</h4>
         <el-form-item label="材料">
           <el-select v-model="form.materials" multiple placeholder="多选" style="width:100%">
@@ -54,16 +46,16 @@
 </template>
 
 <script setup>
-import { reactive, onMounted } from 'vue'
+import { reactive, ref, onMounted } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import api from '../../api'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 const MATERIAL_OPTS = ['碳钢', '合金钢', '不锈钢', '铝合金', '铜合金', '工程塑料']
 const PROCESS_OPTS = ['车削', '铣削', '磨削', '齿轮加工', '热处理', '表面处理', '钣金']
 const CERT_OPTS = ['ISO9001', 'ISO14001', 'IATF16949', 'CE']
 
 const form = reactive({
-  devices: [{ name: '', model: '', precision: '', qty: 1 }],
   materials: [],
   processes: [],
   certs: [],
@@ -71,23 +63,37 @@ const form = reactive({
   yieldRate: 0.97,
   capacityByProcess: [{ processName: '整单', dailyCapacity: 1000, loadPct: 50 }],
 })
+const snapshot = ref('')
+function takeSnap() { snapshot.value = JSON.stringify(form) }
+function dirty() { return snapshot.value && snapshot.value !== JSON.stringify(form) }
 
 async function load() {
   const data = await api.get('/enterprise/capability')
   const c = data.capability || {}
-  if (c.devices?.length) form.devices = c.devices
   if (c.materials) form.materials = c.materials
   if (c.processes) form.processes = c.processes
   if (c.certs) form.certs = c.certs
   if (c.inspectDevices) form.inspectDevices = c.inspectDevices
   if (c.yieldRate != null) form.yieldRate = c.yieldRate
   if (c.capacityByProcess?.length) form.capacityByProcess = c.capacityByProcess
+  takeSnap()
 }
 
 async function save() {
   await api.put('/enterprise/capability', { ...form })
+  takeSnap()
   ElMessage.success('档案已保存，可以去报名')
 }
+
+onBeforeRouteLeave(async () => {
+  if (!dirty()) return true
+  try {
+    await ElMessageBox.confirm('有未保存内容，确定离开？', '提示', { type: 'warning' })
+    return true
+  } catch {
+    return false
+  }
+})
 
 onMounted(load)
 </script>

@@ -7,6 +7,7 @@ import com.dsh.platform.entity.Quotation;
 import com.dsh.platform.mapper.EnterpriseMapper;
 import com.dsh.platform.mapper.FundFlowMapper;
 import com.dsh.platform.mapper.QuotationMapper;
+import com.dsh.platform.service.AccountService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -17,6 +18,7 @@ import java.util.List;
 
 /**
  * 资金流水唯一写入入口。禁止在 Bidding/Flow/Order 里再插流水。
+ * 每笔流水同步更新 account 余额/冻结。
  */
 @Component
 @RequiredArgsConstructor
@@ -25,6 +27,7 @@ public class FundLedger {
     private final FundFlowMapper fundFlowMapper;
     private final QuotationMapper quotationMapper;
     private final EnterpriseMapper enterpriseMapper;
+    private final AccountService accountService;
 
     @Value("${dsh.fee.intention-fixed:1000}")
     private BigDecimal intentionFixed;
@@ -37,6 +40,7 @@ public class FundLedger {
         if (q == null || q.getId() == null) {
             return;
         }
+        accountService.freeze(q.getTenantId(), intentionFixed);
         write("INTENTION", "FREEZE", intentionFixed, q.getDemandId(), q.getTenantId(), null,
                 "INTENTION-FREEZE-" + q.getId());
         q.setIntentionStatus("FROZEN");
@@ -48,7 +52,9 @@ public class FundLedger {
             return;
         }
         if ("FROZEN".equals(q.getIntentionStatus())) {
-            write("INTENTION", "UNFREEZE", freezeAmount(q, "INTENTION"), q.getDemandId(), q.getTenantId(), null,
+            BigDecimal amt = freezeAmount(q, "INTENTION");
+            accountService.unfreeze(q.getTenantId(), amt);
+            write("INTENTION", "UNFREEZE", amt, q.getDemandId(), q.getTenantId(), null,
                     "INTENTION-UNFREEZE-" + q.getId());
             q.setIntentionStatus("RELEASED");
         }
@@ -56,7 +62,6 @@ public class FundLedger {
         quotationMapper.updateById(q);
     }
 
-    /** 运营退回 / 买家取消需求：作废报名并解冻已冻意向金（幂等）。 */
     public void unfreezeIntentionsOfDemand(Long demandId) {
         List<Quotation> qs = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
                 .eq(Quotation::getDemandId, demandId)
@@ -73,6 +78,7 @@ public class FundLedger {
         for (Quotation q : qs) {
             BigDecimal amount = freezeAmount(q, "DEPOSIT");
             if (amount.compareTo(BigDecimal.ZERO) > 0) {
+                accountService.unfreeze(q.getTenantId(), amount);
                 write("DEPOSIT", "UNFREEZE", amount, demandId, q.getTenantId(), null,
                         "DEPOSIT-UNFREEZE-" + q.getId());
             }
@@ -81,9 +87,31 @@ public class FundLedger {
         }
     }
 
+    /** 未锁价：冻结意向金罚没进平台暂存。 */
+    public List<Quotation> forfeitUnlockedIntentions(Long demandId) {
+        Long platformId = platformTenantId();
+        List<Quotation> qs = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
+                .eq(Quotation::getDemandId, demandId)
+                .eq(Quotation::getStatus, "INTENTION"));
+        for (Quotation q : qs) {
+            if ("FROZEN".equals(q.getIntentionStatus())) {
+                accountService.impound(q.getTenantId(), platformId, intentionFixed);
+                write("PENALTY", "OUT", intentionFixed, demandId, q.getTenantId(), null,
+                        "INTENTION-NO-LOCK-" + q.getId());
+                write("IMPOUND", "IN", intentionFixed, demandId, platformId, null,
+                        "IMPOUND-IN-" + q.getId());
+                q.setIntentionStatus("FORFEITED");
+            }
+            q.setStatus("INVALID");
+            quotationMapper.updateById(q);
+        }
+        return qs;
+    }
+
     /** 审核不通过：买家扣 500，均分给报名厂。 */
     public void forfeitIntention(Long demandId, Long buyerTenantId) {
         BigDecimal penalty = intentionFixed.multiply(new BigDecimal("0.5"));
+        accountService.debit(buyerTenantId, penalty);
         write("PENALTY", "OUT", penalty, demandId, buyerTenantId, null,
                 "INTENTION-FORFEIT-" + demandId);
         List<Quotation> qs = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
@@ -93,17 +121,17 @@ public class FundLedger {
         if (factories.isEmpty() || penalty.compareTo(BigDecimal.ZERO) <= 0) {
             return;
         }
-        BigDecimal share = penalty.divide(BigDecimal.valueOf(factories.size()), 2, java.math.RoundingMode.DOWN);
+        BigDecimal share = penalty.divide(BigDecimal.valueOf(factories.size()), 2, RoundingMode.DOWN);
         BigDecimal given = BigDecimal.ZERO;
         for (int i = 0; i < factories.size(); i++) {
             BigDecimal part = (i == factories.size() - 1) ? penalty.subtract(given) : share;
+            accountService.credit(factories.get(i), part);
             write("PENALTY", "IN", part, demandId, factories.get(i), null,
                     "INTENTION-COMP-" + demandId + "-" + factories.get(i));
             given = given.add(part);
         }
     }
 
-    /** 工厂保证金期取消：保证金不退。 */
     public void forfeitDeposit(Quotation q) {
         if (q == null || q.getId() == null) {
             return;
@@ -111,8 +139,12 @@ public class FundLedger {
         if ("FROZEN".equals(q.getDepositStatus())) {
             BigDecimal amount = freezeAmount(q, "DEPOSIT");
             if (amount.compareTo(BigDecimal.ZERO) > 0) {
+                Long platformId = platformTenantId();
+                accountService.impound(q.getTenantId(), platformId, amount);
                 write("PENALTY", "OUT", amount, q.getDemandId(), q.getTenantId(), null,
                         "DEPOSIT-FORFEIT-" + q.getId());
+                write("IMPOUND", "IN", amount, q.getDemandId(), platformId, null,
+                        "DEPOSIT-IMPOUND-" + q.getId());
             }
             q.setDepositStatus("FORFEITED");
         }
@@ -120,51 +152,88 @@ public class FundLedger {
         quotationMapper.updateById(q);
     }
 
+    /**
+     * 落选退款：只解冻资金，不改 quotation.status（调用方已标 LOSE）。
+     * 不可复用 unfreezeIntention，否则会把状态改成 INVALID。
+     */
+    public void refundLoser(Quotation q) {
+        if (q == null || q.getId() == null) {
+            return;
+        }
+        if ("FROZEN".equals(q.getIntentionStatus())) {
+            BigDecimal amt = freezeAmount(q, "INTENTION");
+            if (amt.compareTo(BigDecimal.ZERO) > 0) {
+                accountService.unfreeze(q.getTenantId(), amt);
+                write("INTENTION", "UNFREEZE", amt, q.getDemandId(), q.getTenantId(), null,
+                        "LOSE-INTENTION-" + q.getId());
+            }
+            q.setIntentionStatus("RELEASED");
+        }
+        if ("FROZEN".equals(q.getDepositStatus())) {
+            BigDecimal amount = freezeAmount(q, "DEPOSIT");
+            if (amount.compareTo(BigDecimal.ZERO) > 0) {
+                accountService.unfreeze(q.getTenantId(), amount);
+                write("DEPOSIT", "UNFREEZE", amount, q.getDemandId(), q.getTenantId(), null,
+                        "LOSE-DEPOSIT-" + q.getId());
+            }
+            q.setDepositStatus("RELEASED");
+        }
+        quotationMapper.updateById(q);
+    }
+
     public void freezeDeposit(Quotation q, BigDecimal amount) {
         if (q == null || q.getId() == null || amount == null) {
             return;
         }
+        accountService.freeze(q.getTenantId(), amount);
         write("DEPOSIT", "FREEZE", amount, q.getDemandId(), q.getTenantId(), null,
                 "DEPOSIT-FREEZE-" + q.getId());
         q.setDepositStatus("FROZEN");
         quotationMapper.updateById(q);
     }
 
-    /** 买家付阶段款：买家 ESCROW OUT，平台 ESCROW IN。工厂余额不变。 */
     public void escrowStage(Long orderId, Long stageId, Long buyerTenantId, BigDecimal amount) {
         if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
             return;
         }
+        Long platformId = platformTenantId();
+        accountService.debit(buyerTenantId, amount);
+        accountService.credit(platformId, amount);
         write("ESCROW", "OUT", amount, null, buyerTenantId, orderId, "ESCROW-OUT-" + stageId);
-        write("ESCROW", "IN", amount, null, platformTenantId(), orderId, "ESCROW-IN-" + stageId);
+        write("ESCROW", "IN", amount, null, platformId, orderId, "ESCROW-IN-" + stageId);
     }
 
-    /** 完工结算：平台托管出账，工厂 PAYMENT IN。 */
     public void settleToFactory(Long orderId, Long factoryTenantId, BigDecimal amount) {
         if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
             return;
         }
-        write("ESCROW", "OUT", amount, null, platformTenantId(), orderId,
+        Long platformId = platformTenantId();
+        accountService.debit(platformId, amount);
+        accountService.credit(factoryTenantId, amount);
+        write("ESCROW", "OUT", amount, null, platformId, orderId,
                 "SETTLE-ESCROW-OUT-" + orderId + "-" + factoryTenantId);
         write("PAYMENT", "IN", amount, null, factoryTenantId, orderId,
                 "SETTLE-IN-" + orderId + "-" + factoryTenantId);
     }
 
-    /** 佣金从该厂保证金扣，入平台。 */
     public void takeCommission(Long orderId, Long demandId, Long factoryTenantId, BigDecimal amount) {
         if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
             return;
         }
+        Long platformId = platformTenantId();
         BigDecimal available = frozenDepositOf(demandId, factoryTenantId);
         BigDecimal take = amount.min(available);
         if (take.compareTo(BigDecimal.ZERO) > 0) {
+            accountService.deductFrozen(factoryTenantId, take);
+            accountService.credit(platformId, take);
             write("DEPOSIT", "OUT", take, demandId, factoryTenantId, orderId,
                     "COMMISSION-DEPOSIT-" + orderId + "-" + factoryTenantId);
-            write("COMMISSION", "IN", take, demandId, platformTenantId(), orderId,
+            write("COMMISSION", "IN", take, demandId, platformId, orderId,
                     "COMMISSION-IN-" + orderId + "-" + factoryTenantId);
         }
         BigDecimal leftover = available.subtract(take);
         if (leftover.compareTo(BigDecimal.ZERO) > 0) {
+            accountService.unfreeze(factoryTenantId, leftover);
             write("DEPOSIT", "UNFREEZE", leftover, demandId, factoryTenantId, orderId,
                     "DEPOSIT-RELEASE-" + orderId + "-" + factoryTenantId);
         }
@@ -200,7 +269,7 @@ public class FundLedger {
         return in.subtract(out).max(BigDecimal.ZERO).setScale(2, RoundingMode.DOWN);
     }
 
-    private Long platformTenantId() {
+    public Long platformTenantId() {
         Enterprise e = enterpriseMapper.selectOne(new LambdaQueryWrapper<Enterprise>()
                 .eq(Enterprise::getType, "PLATFORM")
                 .last("limit 1"));

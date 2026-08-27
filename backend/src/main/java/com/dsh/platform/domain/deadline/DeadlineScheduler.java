@@ -74,6 +74,23 @@ public class DeadlineScheduler {
                 log.warn("审核期超时失败 demandId={}: {}", d.getId(), e.getMessage());
             }
         }
+        List<Demand> locking = demandMapper.selectList(new LambdaQueryWrapper<Demand>()
+                .eq(Demand::getStatus, DemandStatus.LOCKING.name())
+                .isNotNull(Demand::getLockingEndAt));
+        for (Demand d : locking) {
+            try {
+                LocalDateTime end = d.getLockingEndAt();
+                LocalDateTime remindAt = end.minusHours(24);
+                if (!now.isBefore(remindAt) && now.isBefore(end)) {
+                    flowService.notifyLockingLastDay(d.getId());
+                }
+                if (!end.isAfter(now)) {
+                    flowService.endLocking(d.getId());
+                }
+            } catch (Exception e) {
+                log.warn("保证金期调度失败 demandId={}: {}", d.getId(), e.getMessage());
+            }
+        }
     }
 
     @Scheduled(fixedDelay = 3600000)

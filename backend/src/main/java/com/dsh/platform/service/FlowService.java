@@ -39,12 +39,16 @@ public class FlowService {
     private final FundLedger fundLedger;
     private final SolutionService solutionService;
     private final ObjectMapper objectMapper;
+    private final DeviceService deviceService;
 
     @Value("${dsh.time.thinking-hours:12}")
     private int thinkingHours;
 
     @Value("${dsh.time.review-hours:6}")
     private int reviewHours;
+
+    @Value("${dsh.time.locking-hours:48}")
+    private int lockingHours;
 
     @Transactional
     public void endIntention(Long demandId) {
@@ -158,15 +162,35 @@ public class FlowService {
         solutionService.generate(demandId);
     }
 
+    @Transactional
+    public void notifyLockingLastDay(Long demandId) {
+        Demand d = get(demandId);
+        if (DemandStatus.of(d.getStatus()) != DemandStatus.LOCKING) {
+            return;
+        }
+        List<Quotation> qs = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
+                .eq(Quotation::getDemandId, demandId)
+                .eq(Quotation::getStatus, "INTENTION"));
+        for (Quotation q : qs) {
+            String title = "锁价截止提醒#" + demandId;
+            if (!siteNotify.exists(q.getTenantId(), title)) {
+                siteNotify.send(q.getTenantId(), title,
+                        "需求「" + d.getTitle() + "」保证金期将于 24 小时内结束。未锁定报价将扣除意向金并记失信。");
+            }
+        }
+    }
+
     private void continueToLocking(Demand d) {
         stateMachine.transit(d, DemandStatus.LOCKING);
+        d.setLockingEndAt(LocalDateTime.now().plusHours(Math.max(lockingHours, 1)));
         demandMapper.updateById(d);
-        notifyFactories(d.getId(), "保证金期已开启", "请前往提交锁定报价");
+        notifyFactories(d.getId(), "保证金期已开启", "请在截止前锁定报价，否则将扣除意向金并记失信");
     }
 
     private void rejectCancel(Demand d) {
         fundLedger.forfeitIntention(d.getId(), d.getTenantId());
         stateMachine.transit(d, DemandStatus.LOCKING);
+        d.setLockingEndAt(LocalDateTime.now().plusHours(Math.max(lockingHours, 1)));
         demandMapper.updateById(d);
         siteNotify.send(d.getTenantId(), "取消未通过#" + d.getId(),
                 "需求「" + d.getTitle() + "」取消未通过，已扣意向金 500，进入保证金期。");
@@ -217,6 +241,7 @@ public class FlowService {
         stateMachine.transit(d, DemandStatus.CANCELLED);
         demandMapper.updateById(d);
         fundLedger.unfreezeIntentionsOfDemand(d.getId());
+        deviceService.releaseByDemand(d.getId());
         siteNotify.send(d.getTenantId(), "需求已取消#" + d.getId(), "需求「" + d.getTitle() + "」已取消，意向金已退还");
     }
 

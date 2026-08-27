@@ -3,6 +3,7 @@
       <el-table :data="quotations" border>
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="demandId" label="需求ID" width="80" />
+        <el-table-column prop="demandTitle" label="需求标题" min-width="160" />
         <el-table-column prop="processNo" label="工序" width="70" />
         <el-table-column label="承接区间" width="140">
           <template #default="{ row }">{{ row.minQty }} ~ {{ row.maxQty }}</template>

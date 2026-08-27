@@ -23,7 +23,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
-import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -42,6 +41,7 @@ public class DemandService {
     private final FundLedger fundLedger;
     private final ProcessCoverageService coverageService;
     private final QuotationMapper quotationMapper;
+    private final DeviceService deviceService;
 
     @Transactional
     public Long publish(PublishRequest req) {
@@ -102,6 +102,7 @@ public class DemandService {
                 .eq(Demand::getId, d.getId())
                 .set(Demand::getIntentionEndAt, null));
         fundLedger.unfreezeIntentionsOfDemand(demandId);
+        deviceService.releaseByDemand(demandId);
     }
 
     @Transactional
@@ -120,6 +121,7 @@ public class DemandService {
                 .eq(Demand::getId, d.getId())
                 .set(Demand::getIntentionEndAt, null));
         fundLedger.unfreezeIntentionsOfDemand(demandId);
+        deviceService.releaseByDemand(demandId);
     }
 
     /** 兼容旧审核按钮：通过=发布，驳回=退回（无原因则拒绝）。 */
@@ -266,7 +268,6 @@ public class DemandService {
         d.setDeliveryAddress(req.deliveryAddress().trim());
         d.setPackaging(req.packaging());
         d.setMultiProcess(1);
-        d.setWeightJson(buildWeightJson(req));
         d.setIntentionDays(req.intentionDays() == null ? 5 : req.intentionDays());
         d.setRemark(req.remark());
         d.setInspectMode(req.inspectMode());
@@ -366,16 +367,12 @@ public class DemandService {
         if (!StringUtils.hasText(extra.path("heatTreatment").asText(null))) {
             throw new BizException("请填写热处理");
         }
-        if (extra.path("annualQty").isMissingNode() || extra.path("annualQty").asInt(-1) < 0) {
-            throw new BizException("请填写年用量");
-        }
         long named = req.processes() == null ? 0 : req.processes().stream()
                 .filter(p -> p != null && StringUtils.hasText(p.processName()))
                 .count();
         if (req.multiProcess() == null || req.multiProcess() != 1 || named < 2) {
             throw new BizException("请按工序拆开，至少填写 2 道工序（不要用整单承包）");
         }
-        buildWeightJson(req);
     }
 
     private JsonNode parseExtra(String extraJson) {
@@ -389,32 +386,4 @@ public class DemandService {
         }
     }
 
-    private String buildWeightJson(PublishRequest req) {
-        try {
-            BigDecimal c = req.weightCost();
-            BigDecimal t = req.weightTime();
-            BigDecimal q = req.weightQuality();
-            if (c != null && t != null && q != null) {
-                BigDecimal sum = c.add(t).add(q);
-                if (sum.subtract(BigDecimal.ONE).abs().compareTo(new BigDecimal("0.02")) > 0) {
-                    throw new BizException("成本/工期/质量权重之和必须为 1");
-                }
-                return objectMapper.writeValueAsString(
-                        java.util.Map.of("cost", c, "time", t, "quality", q));
-            }
-            if (StringUtils.hasText(req.weightJson())) {
-                JsonNode n = objectMapper.readTree(req.weightJson());
-                double sum = n.path("cost").asDouble() + n.path("time").asDouble() + n.path("quality").asDouble();
-                if (Math.abs(sum - 1.0) > 0.02) {
-                    throw new BizException("成本/工期/质量权重之和必须为 1");
-                }
-                return req.weightJson();
-            }
-            return "{\"cost\":0.34,\"time\":0.33,\"quality\":0.33}";
-        } catch (BizException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new BizException("权重格式不正确");
-        }
-    }
 }

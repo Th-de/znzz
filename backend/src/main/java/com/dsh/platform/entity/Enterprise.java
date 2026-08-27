@@ -1,6 +1,7 @@
 package com.dsh.platform.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
@@ -23,6 +24,15 @@ public class Enterprise {
     private String legalPerson;
     private String bankAccount;
     private String capabilityJson;
+    private String address;
+    @TableField(exist = false)
+    private String accountPhone;
+    @TableField(exist = false)
+    private Long userId;
+    @TableField(exist = false)
+    private String userStatus;
+    @TableField(exist = false)
+    private String realName;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     @TableLogic

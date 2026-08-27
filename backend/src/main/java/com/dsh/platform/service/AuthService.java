@@ -11,6 +11,11 @@ import com.dsh.platform.security.JwtUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
+
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -20,39 +25,69 @@ public class AuthService {
     private final EnterpriseMapper enterpriseMapper;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
+    private final AccountService accountService;
 
     public void register(RegisterRequest req) {
+        if (req == null) {
+            throw new BizException("请填写注册信息");
+        }
+        if (!validPhone(req.phone())) {
+            throw new BizException("请填写11位手机号");
+        }
+        if (!StringUtils.hasText(req.password()) || req.password().length() < 6) {
+            throw new BizException("密码至少 6 位");
+        }
+        if (!StringUtils.hasText(req.companyName())) {
+            throw new BizException("请填写企业名称");
+        }
+        if (!StringUtils.hasText(req.creditCode()) || req.creditCode().trim().length() != 18) {
+            throw new BizException("请填写18位统一社会信用代码");
+        }
+        if (!StringUtils.hasText(req.contactName())) {
+            throw new BizException("请填写联系人");
+        }
+        if (!StringUtils.hasText(req.address())) {
+            throw new BizException("请填写企业地址");
+        }
+        if (!"BUYER".equals(req.type()) && !"FACTORY".equals(req.type())) {
+            throw new BizException("请选择企业类型");
+        }
         if (userMapper.selectCount(new LambdaQueryWrapper<SysUser>()
-                .eq(SysUser::getPhone, req.phone())) > 0) {
+                .eq(SysUser::getPhone, req.phone().trim())) > 0) {
             throw new BizException("该手机号已注册");
         }
         if (enterpriseMapper.selectCount(new LambdaQueryWrapper<Enterprise>()
-                .eq(Enterprise::getCreditCode, req.creditCode())) > 0) {
+                .eq(Enterprise::getCreditCode, req.creditCode().trim())) > 0) {
             throw new BizException("该企业已注册");
         }
 
         Enterprise e = new Enterprise();
         e.setType(req.type());
-        e.setName(req.companyName());
-        e.setCreditCode(req.creditCode());
+        e.setName(req.companyName().trim());
+        e.setCreditCode(req.creditCode().trim());
         e.setCreditScore(60);
         e.setAuthStatus("APPROVED");
-        e.setContactName(req.contactName());
+        e.setContactName(req.contactName().trim());
+        e.setAddress(req.address().trim());
         enterpriseMapper.insert(e);
 
         SysUser u = new SysUser();
         u.setTenantId(e.getId());
-        u.setPhone(req.phone());
+        u.setPhone(req.phone().trim());
         u.setPassword(passwordEncoder.encode(req.password()));
         u.setRole(req.type());
-        u.setRealName(req.contactName());
+        u.setRealName(req.contactName().trim());
         u.setStatus("ENABLED");
         userMapper.insert(u);
+        accountService.ensure(e.getId());
     }
 
     public LoginResponse login(LoginRequest req) {
+        if (req == null || !StringUtils.hasText(req.phone()) || !StringUtils.hasText(req.password())) {
+            throw new BizException("请填写账号和密码");
+        }
         SysUser u = userMapper.selectOne(new LambdaQueryWrapper<SysUser>()
-                .eq(SysUser::getPhone, req.phone()));
+                .eq(SysUser::getPhone, req.phone().trim()));
         if (u == null || !passwordEncoder.matches(req.password(), u.getPassword())) {
             throw new BizException("账号或密码错误");
         }
@@ -64,23 +99,54 @@ public class AuthService {
         return new LoginResponse(token, u.getRole(), u.getTenantId(), e == null ? "" : e.getName());
     }
 
-    /** 超级管理员创建运营/质检账号 */
-    public void createUser(String phone, String password, String realName, String role) {
+    public void createUser(CreateUserRequest req) {
+        if (req == null) {
+            throw new BizException("请填写账号信息");
+        }
+        if (!StringUtils.hasText(req.phone())) {
+            throw new BizException("请填写手机号");
+        }
+        if (!StringUtils.hasText(req.password()) || req.password().length() < 6) {
+            throw new BizException("密码至少 6 位");
+        }
+        if (!StringUtils.hasText(req.realName())) {
+            throw new BizException("请填写姓名");
+        }
+        if (!"OPERATOR".equals(req.role()) && !"INSPECTION".equals(req.role())) {
+            throw new BizException("角色只能是运营或质检");
+        }
         if (userMapper.selectCount(new LambdaQueryWrapper<SysUser>()
-                .eq(SysUser::getPhone, phone)) > 0) {
+                .eq(SysUser::getPhone, req.phone().trim())) > 0) {
             throw new BizException("该手机号已存在");
         }
         SysUser u = new SysUser();
-        u.setTenantId(1L);   // 归属平台
-        u.setPhone(phone);
-        u.setPassword(passwordEncoder.encode(password));
-        u.setRole(role);
-        u.setRealName(realName);
+        u.setTenantId(1L);
+        u.setPhone(req.phone().trim());
+        u.setPassword(passwordEncoder.encode(req.password()));
+        u.setRole(req.role());
+        u.setRealName(req.realName().trim());
         u.setStatus("ENABLED");
         userMapper.insert(u);
     }
 
-    /** 初始化超级管理员（部署时调用） */
+    public List<Enterprise> listEnterprises() {
+        List<Enterprise> list = enterpriseMapper.selectList(new LambdaQueryWrapper<Enterprise>()
+                .in(Enterprise::getType, "BUYER", "FACTORY", "INSPECTION")
+                .orderByDesc(Enterprise::getId));
+        if (list.isEmpty()) {
+            return list;
+        }
+        List<Long> ids = list.stream().map(Enterprise::getId).toList();
+        List<SysUser> users = userMapper.selectList(new LambdaQueryWrapper<SysUser>()
+                .in(SysUser::getTenantId, ids));
+        Map<Long, String> phones = users.stream()
+                .collect(Collectors.toMap(SysUser::getTenantId, SysUser::getPhone, (a, b) -> a));
+        for (Enterprise e : list) {
+            e.setAccountPhone(phones.get(e.getId()));
+        }
+        return list;
+    }
+
     public void initSuperAdmin() {
         if (userMapper.selectCount(new LambdaQueryWrapper<SysUser>()
                 .eq(SysUser::getRole, "SUPER_ADMIN")) > 0) {
@@ -101,5 +167,10 @@ public class AuthService {
         u.setRealName("超级管理员");
         u.setStatus("ENABLED");
         userMapper.insert(u);
+        accountService.ensure(e.getId());
+    }
+
+    private static boolean validPhone(String phone) {
+        return phone != null && phone.trim().matches("^1\\d{10}$");
     }
 }

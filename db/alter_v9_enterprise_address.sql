@@ -1,0 +1,2 @@
+ALTER TABLE enterprise ADD COLUMN address VARCHAR(255) NULL COMMENT '企业地址';
+ALTER TABLE demand ADD COLUMN locking_end_at DATETIME NULL COMMENT '保证金期截止';

@@ -4,7 +4,7 @@ import { ElMessage } from 'element-plus'
 const api = axios.create({ baseURL: '/api', timeout: 90000 })
 
 api.interceptors.request.use(config => {
-  const token = localStorage.getItem('token')
+  const token = sessionStorage.getItem('token')
   if (token) config.headers.Authorization = 'Bearer ' + token
   if (config.data instanceof FormData) {
     delete config.headers['Content-Type']

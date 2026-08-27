@@ -26,9 +26,8 @@ public class AuthController {
 
     @PostMapping("/create-user")
     @org.springframework.security.access.prepost.PreAuthorize("hasRole('SUPER_ADMIN')")
-    public R<Void> createUser(@RequestParam String phone, @RequestParam String password,
-                              @RequestParam String realName, @RequestParam String role) {
-        authService.createUser(phone, password, realName, role);
+    public R<Void> createUser(@RequestBody CreateUserRequest req) {
+        authService.createUser(req);
         return R.ok();
     }
 }

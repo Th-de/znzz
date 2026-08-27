@@ -1,6 +1,7 @@
 package com.dsh.platform.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
@@ -26,10 +27,13 @@ public class Quotation {
     private String stageCurveJson;
     private Integer validDays;
     private String extraJson;
+    private String deviceIdsJson;
     private String intentionStatus;
     private String depositStatus;
     private String status;
     private Integer version;
+    @TableField(exist = false)
+    private String demandTitle;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     @TableLogic

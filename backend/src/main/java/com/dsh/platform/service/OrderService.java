@@ -3,6 +3,7 @@ package com.dsh.platform.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.dsh.platform.common.BizException;
 import com.dsh.platform.domain.credit.CreditScoring;
+import com.dsh.platform.domain.fund.FundLedger;
 import com.dsh.platform.domain.notify.SiteNotify;
 import com.dsh.platform.domain.pay.PaymentChannel;
 import com.dsh.platform.domain.status.DemandStateMachine;
@@ -65,15 +66,17 @@ public class OrderService {
     private final StageProgressLogMapper stageProgressLogMapper;
     private final FileService fileService;
     private final AttachmentMapper attachmentMapper;
+    private final DeviceService deviceService;
+    private final FundLedger fundLedger;
 
     @Value("${dsh.fee.commission-rate}")
     private BigDecimal commissionRate;
 
     @Transactional
-    public Long selectSolution(Long demandId, Long solutionId) {
+    public void confirmSolution(Long demandId, Long solutionId) {
         Demand d = demandMapper.selectById(demandId);
         if (d == null || !"SOLUTION_GENERATED".equals(d.getStatus())) {
-            throw new BizException("当前状态不可选方案");
+            throw new BizException("当前状态不可确认方案");
         }
         if (!UserContext.tenantId().equals(d.getTenantId())) {
             throw new BizException(403, "只能选自己的需求方案");
@@ -85,33 +88,52 @@ public class OrderService {
         if (!"ACTIVE".equals(s.getStatus())) {
             throw new BizException("该方案尚未由运营下发");
         }
-
         s.setIsFinal(1);
         s.setSource("FINAL");
         s.setEditedBy(UserContext.userId());
         solutionMapper.updateById(s);
+        stateMachine.transit(d, DemandStatus.SOLUTION_CONFIRMED);
+        demandMapper.updateById(d);
+        siteNotify.send(d.getTenantId(), "方案已确认#" + demandId,
+                "需求「" + d.getTitle() + "」方案已确认，等待运营派单。");
+        siteNotify.notifyOperators("买家已确认方案#" + demandId,
+                "买家已确认需求「" + d.getTitle() + "」的方案，请到需求管理派单。");
+    }
 
+    @Transactional
+    public Long dispatch(Long demandId) {
+        if (!"OPERATOR".equals(UserContext.role()) && !"SUPER_ADMIN".equals(UserContext.role())) {
+            throw new BizException(403, "仅运营可以派单");
+        }
+        Demand d = demandMapper.selectById(demandId);
+        if (d == null || !"SOLUTION_CONFIRMED".equals(d.getStatus())) {
+            throw new BizException("仅买家确认后的方案可以派单");
+        }
+        Solution s = solutionMapper.selectOne(new LambdaQueryWrapper<Solution>()
+                .eq(Solution::getDemandId, demandId)
+                .eq(Solution::getIsFinal, 1)
+                .last("limit 1"));
+        if (s == null) {
+            throw new BizException("没有买家确认的方案");
+        }
         List<Map<String, Object>> combo = readCombo(s.getFinalComboJson());
         BigDecimal total = BigDecimal.ZERO;
         for (Map<String, Object> c : combo) {
             total = total.add(new BigDecimal(c.get("price").toString()));
         }
-
         Order o = new Order();
         o.setDemandId(demandId);
-        o.setSolutionId(solutionId);
+        o.setSolutionId(s.getId());
         o.setTotalAmount(total);
         o.setCommissionRate(commissionRate);
         o.setCommissionAmount(total.multiply(commissionRate).setScale(2, RoundingMode.HALF_UP));
         o.setStatus("CREATED");
         orderMapper.insert(o);
-
         contractService.createDrafts(o.getId(), s.getFinalComboJson());
-        stateMachine.transit(d, DemandStatus.SOLUTION_SELECTED);
-        demandMapper.updateById(d);
-
+        List<Long> winFactoryIds = new java.util.ArrayList<>();
         for (Map<String, Object> c : combo) {
             Long fid = Long.valueOf(c.get("factoryId").toString());
+            winFactoryIds.add(fid);
             Integer pno = Integer.valueOf(c.get("processNo").toString());
             quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
                     .eq(Quotation::getDemandId, demandId).eq(Quotation::getProcessNo, pno))
@@ -120,7 +142,16 @@ public class OrderService {
                         quotationMapper.updateById(q);
                     });
         }
-        siteNotify.send(d.getTenantId(), "请按厂上传合同#" + o.getId(), "方案已选定。请按中标厂分别上传你们拟定的合同并签名。");
+        List<Quotation> losers = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
+                .eq(Quotation::getDemandId, demandId)
+                .eq(Quotation::getStatus, "LOSE"));
+        for (Quotation q : losers) {
+            fundLedger.refundLoser(q);
+        }
+        deviceService.releaseLosers(demandId, winFactoryIds);
+        stateMachine.transit(d, DemandStatus.SOLUTION_SELECTED);
+        demandMapper.updateById(d);
+        siteNotify.send(d.getTenantId(), "请按厂上传合同#" + o.getId(), "方案已派单。请按中标厂分别上传你们拟定的合同并签名。");
         combo.stream().map(c -> Long.valueOf(c.get("factoryId").toString())).distinct()
                 .forEach(fid -> siteNotify.send(fid, "请签合同#" + o.getId(), "你已中标。买家上传与你的合同后，请阅读并签名。"));
         return o.getId();
@@ -137,6 +168,23 @@ public class OrderService {
         }
         ws.setStatus("IN_PRODUCTION");
         workStageMapper.updateById(ws);
+        Order order = orderMapper.selectById(ws.getOrderId());
+        if (order != null) {
+            Quotation q = quotationMapper.selectOne(new LambdaQueryWrapper<Quotation>()
+                    .eq(Quotation::getDemandId, order.getDemandId())
+                    .eq(Quotation::getTenantId, ws.getTenantId())
+                    .eq(Quotation::getProcessNo, ws.getProcessNo())
+                    .in(Quotation::getStatus, "WIN", "LOCKED")
+                    .last("limit 1"));
+            if (q == null) {
+                q = quotationMapper.selectOne(new LambdaQueryWrapper<Quotation>()
+                        .eq(Quotation::getDemandId, order.getDemandId())
+                        .eq(Quotation::getTenantId, ws.getTenantId())
+                        .eq(Quotation::getStatus, "WIN")
+                        .last("limit 1"));
+            }
+            deviceService.markInUseByQuotation(q);
+        }
     }
 
     @Transactional
@@ -399,6 +447,7 @@ public class OrderService {
         stateMachine.transit(d, DemandStatus.COMPLETED);
         demandMapper.updateById(d);
         creditScoring.applyOnComplete(o);
+        deviceService.releaseByDemand(o.getDemandId());
         siteNotify.send(d.getTenantId(), "订单已完成#" + orderId, "完工确认完成，工厂工钱已结算，佣金已从保证金扣除。");
         byFactory.keySet().forEach(fid -> siteNotify.send(fid, "订单已结算#" + orderId, "工钱已到账，佣金已从保证金扣除。"));
     }

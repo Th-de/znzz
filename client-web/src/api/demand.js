@@ -12,6 +12,10 @@ export function getCoverage(id) {
   return api.get(`/demand/${id}/coverage`)
 }
 
+export function getPanorama(id) {
+  return api.get(`/demand/${id}/panorama`)
+}
+
 export function getCancelStats() {
   return api.get('/demand/cancel-stats')
 }

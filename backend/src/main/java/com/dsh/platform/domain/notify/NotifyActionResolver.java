@@ -85,9 +85,20 @@ public class NotifyActionResolver {
             v.setAction("去看方案");
             return;
         }
-        if (title.startsWith("保证金期已开启") || "竞标提醒".equals(title)) {
+        if (title.startsWith("方案已确认#") || title.startsWith("买家已确认方案#")
+                || title.startsWith("AI方案待审核#") || title.startsWith("AI方案生成失败#")) {
+            v.setLink(hashId != null ? "/buyer/demand/" + hashId : "/buyer/home");
+            v.setAction("查看需求");
+            return;
+        }
+        if (title.startsWith("保证金期已开启") || title.startsWith("锁价截止提醒#") || "竞标提醒".equals(title)) {
             v.setLink("/factory/demands");
-            v.setAction(title.startsWith("保证金") ? "去锁定报价" : "去看需求");
+            v.setAction(title.contains("锁价") || title.startsWith("保证金") ? "去锁定报价" : "去看需求");
+            return;
+        }
+        if (title.startsWith("未锁价扣除意向金#")) {
+            v.setLink("/factory/quotations");
+            v.setAction("查看报名");
             return;
         }
         if (title.startsWith("覆盖度更新#") || title.startsWith("意向期末日提醒#")

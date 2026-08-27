@@ -7,6 +7,7 @@
       <el-button v-if="demand.status === 'THINKING'" type="danger" @click="decide('CANCEL')">取消需求</el-button>
       <el-button v-if="demand.status === 'SOLUTION_GENERATED' && hasActiveSolution" type="primary" @click="$router.push('/buyer/solutions/' + demand.id)">看方案</el-button>
       <el-button v-else-if="demand.status === 'SOLUTION_GENERATED'" disabled>等待运营下发方案</el-button>
+      <el-button v-if="demand.status === 'SOLUTION_CONFIRMED'" disabled>等待运营派单</el-button>
       <el-button v-if="demand.status === 'SOLUTION_SELECTED' || demand.status === 'CONTRACTED' || demand.status === 'IN_PRODUCTION' || demand.status === 'COMPLETED'" @click="$router.push('/buyer/orders')">去订单</el-button>
     </div>
       <el-alert
@@ -33,6 +34,7 @@
       <el-card shadow="never" class="now">
         <div class="now-title">{{ label(DEMAND_STATUS, demand.status) }} · {{ nextHint }}</div>
         <IntentionCountdown v-if="demand.status==='PUBLISHED'" :end-at="demand.intentionEndAt" />
+        <IntentionCountdown v-else-if="demand.status==='LOCKING'" :end-at="demand.lockingEndAt" />
         <div style="margin-top:12px"><CoverageBars :items="coverage" /></div>
       </el-card>
       <el-descriptions :column="2" border style="margin-top:12px">
@@ -65,7 +67,6 @@
             <el-descriptions-item label="最低信用分">{{ demand.minCreditScore }}</el-descriptions-item>
             <el-descriptions-item label="包装">{{ demand.packaging || '-' }}</el-descriptions-item>
             <el-descriptions-item label="意向天数">{{ demand.intentionDays }}</el-descriptions-item>
-            <el-descriptions-item label="权重">成本 {{ weight.cost }} / 工期 {{ weight.time }} / 质量 {{ weight.quality }}</el-descriptions-item>
           </el-descriptions>
         </el-collapse-item>
       </el-collapse>
@@ -77,6 +78,24 @@
         :title="'近 90 天已取消 ' + cancelStats.last90Days + ' 次'"
         style="margin:12px 0"
       />
+
+      <div v-if="['CONTRACTED','IN_PRODUCTION','COMPLETED'].includes(demand.status)" style="margin-top:16px">
+        <h4>生产进度 {{ pano.progressPercent ?? 0 }}%</h4>
+        <el-progress :percentage="pano.progressPercent || 0" style="margin-bottom:10px" />
+        <el-table :data="pano.stages || []" border size="small">
+          <el-table-column prop="processName" label="工序" />
+          <el-table-column prop="factoryName" label="工厂" />
+          <el-table-column label="完成" width="120">
+            <template #default="{ row }">{{ row.doneQty || 0 }} / {{ row.quantity || 0 }}</template>
+          </el-table-column>
+          <el-table-column label="进度" width="160">
+            <template #default="{ row }">
+              <el-progress :percentage="row.progress || 0" :stroke-width="10" />
+            </template>
+          </el-table-column>
+          <el-table-column prop="promisedDate" label="承诺交期" width="120" />
+        </el-table>
+      </div>
 
       <h4>工序</h4>
       <el-table :data="processes" border size="small">
@@ -106,7 +125,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getDetail, getCoverage, getCancelStats, cancelPublished, decide as decideDemand } from '../../api/demand'
+import { getDetail, getCoverage, getCancelStats, cancelPublished, decide as decideDemand, getPanorama } from '../../api/demand'
 import { listByDemand } from '../../api/solution'
 import { fetchAttachment, saveBlob } from '../../api/file'
 import CoverageBars from '../../components/CoverageBars.vue'
@@ -136,6 +155,7 @@ const nextHint = computed(() => {
     REVIEWING: '等待运营审核取消',
     LOCKING: '工厂正在锁定报价',
     SOLUTION_GENERATED: hasActiveSolution.value ? '可以去选方案' : '等待运营下发方案',
+    SOLUTION_CONFIRMED: '方案已确认，等待运营派单',
     SOLUTION_SELECTED: '请按厂上传并签署合同',
     CONTRACTED: '等待工厂开工',
     IN_PRODUCTION: '履约进行中，可在订单页看进度',
@@ -146,7 +166,7 @@ const nextHint = computed(() => {
 })
 
 const extra = computed(() => parseJson(demand.value.extraJson))
-const weight = computed(() => parseJson(demand.value.weightJson))
+const pano = ref({})
 
 function parseJson(raw) {
   try { return raw ? JSON.parse(raw) : {} } catch { return {} }
@@ -218,6 +238,13 @@ async function load() {
       const sols = await listByDemand(route.params.id)
       hasActiveSolution.value = (sols || []).length > 0
     } catch { hasActiveSolution.value = false }
+    try {
+      if (['CONTRACTED', 'IN_PRODUCTION', 'COMPLETED'].includes(demand.value.status)) {
+        pano.value = await getPanorama(route.params.id)
+      } else {
+        pano.value = {}
+      }
+    } catch { pano.value = {} }
   } finally {
     loading.value = false
   }

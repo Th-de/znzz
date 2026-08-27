@@ -33,8 +33,15 @@ public class OrderController {
 
     @PostMapping("/{demandId}/select/{solutionId}")
     @PreAuthorize("hasRole('BUYER')")
-    public R<Long> select(@PathVariable Long demandId, @PathVariable Long solutionId) {
-        return R.ok(orderService.selectSolution(demandId, solutionId));
+    public R<Void> confirm(@PathVariable Long demandId, @PathVariable Long solutionId) {
+        orderService.confirmSolution(demandId, solutionId);
+        return R.ok();
+    }
+
+    @PostMapping("/dispatch/{demandId}")
+    @PreAuthorize("hasAnyRole('OPERATOR','SUPER_ADMIN')")
+    public R<Long> dispatch(@PathVariable Long demandId) {
+        return R.ok(orderService.dispatch(demandId));
     }
 
     @GetMapping("/{orderId}")

@@ -1,4 +1,4 @@
--- ===================== 平台数据库建表脚本（v2 两阶段竞标） =====================
+﻿-- ===================== 平台数据库建表脚本（v2 两阶段竞标） =====================
 -- MySQL 8.x / utf8mb4 / InnoDB
 
 SET NAMES utf8mb4;
@@ -15,13 +15,42 @@ CREATE TABLE IF NOT EXISTS enterprise (
   legal_person   VARCHAR(64) DEFAULT NULL COMMENT '法人(脱敏)',
   bank_account   VARCHAR(64) DEFAULT NULL COMMENT '银行账户(脱敏)',
   capability_json JSON DEFAULT NULL COMMENT '能力档案JSON',
+  address        VARCHAR(255) DEFAULT NULL COMMENT '企业地址',
   created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   deleted        TINYINT NOT NULL DEFAULT 0,
   PRIMARY KEY (id),
   UNIQUE KEY uk_credit_code (credit_code),
   KEY idx_type (type)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='企业表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='企业表：买家/工厂/质检/平台等租户主体';
+
+CREATE TABLE IF NOT EXISTS account (
+  id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  tenant_id  BIGINT UNSIGNED NOT NULL COMMENT '企业id',
+  balance    DECIMAL(18,2) NOT NULL DEFAULT 0 COMMENT '可用余额',
+  frozen     DECIMAL(18,2) NOT NULL DEFAULT 0 COMMENT '冻结中',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_tenant (tenant_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='企业账户表：可用余额与冻结余额，与资金流水同步';
+
+CREATE TABLE IF NOT EXISTS device (
+  id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  tenant_id   BIGINT UNSIGNED NOT NULL COMMENT '工厂企业id',
+  name        VARCHAR(64) NOT NULL COMMENT '设备名',
+  model       VARCHAR(64) DEFAULT NULL COMMENT '型号',
+  precision_text VARCHAR(64) DEFAULT NULL COMMENT '精度',
+  parts       VARCHAR(255) DEFAULT NULL COMMENT '可加工零件',
+  materials   VARCHAR(255) DEFAULT NULL COMMENT '可加工材料',
+  daily_capacity INT DEFAULT NULL COMMENT '日产能（件/天），AI 产能核算依据',
+  status      VARCHAR(16) NOT NULL DEFAULT 'IDLE' COMMENT 'IDLE/IN_USE/MAINTENANCE',
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  deleted     TINYINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  KEY idx_tenant (tenant_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='工厂设备表：能力设备清单，报名勾选，开工/完工状态流转';
 
 CREATE TABLE IF NOT EXISTS sys_user (
   id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -36,7 +65,7 @@ CREATE TABLE IF NOT EXISTS sys_user (
   PRIMARY KEY (id),
   UNIQUE KEY uk_phone (phone),
   KEY idx_tenant (tenant_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='系统用户表：登录账号，关联企业 tenant_id';
 
 CREATE TABLE IF NOT EXISTS role_permission (
   id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -44,7 +73,7 @@ CREATE TABLE IF NOT EXISTS role_permission (
   permission  VARCHAR(64) NOT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uk_role_perm (role, permission)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='角色权限表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='角色权限表：角色与权限点映射';
 
 CREATE TABLE IF NOT EXISTS demand (
   id               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -71,13 +100,14 @@ CREATE TABLE IF NOT EXISTS demand (
   inspect_mode     VARCHAR(16) DEFAULT NULL COMMENT 'FAI/AQL/FULL',
   general_tolerance VARCHAR(32) DEFAULT NULL COMMENT '一般公差标准如 ISO 2768-m',
   part_revision    VARCHAR(64) DEFAULT NULL COMMENT '图号/版本',
-  extra_json       JSON DEFAULT NULL COMMENT 'Ra/热处理/年用量等扩展',
+  extra_json       JSON DEFAULT NULL COMMENT 'Ra/热处理等扩展',
   return_reason    VARCHAR(512) DEFAULT NULL COMMENT '运营退回原因',
   cancel_reason    VARCHAR(512) DEFAULT NULL COMMENT '买家取消原因',
   source_demand_id BIGINT UNSIGNED DEFAULT NULL COMMENT '取消后重发时的来源需求',
   intention_end_at DATETIME DEFAULT NULL COMMENT '意向期截止',
   thinking_end_at  DATETIME DEFAULT NULL COMMENT '思考期截止',
   review_end_at    DATETIME DEFAULT NULL COMMENT '审核期截止',
+  locking_end_at   DATETIME DEFAULT NULL COMMENT '保证金期截止',
   status           VARCHAR(24) NOT NULL DEFAULT 'DRAFT' COMMENT 'DRAFT/PENDING_AUDIT/PUBLISHED/RETURNED/THINKING/REVIEWING/LOCKING/SOLUTION_GENERATED/SOLUTION_SELECTED/CONTRACTED/IN_PRODUCTION/COMPLETED/CANCELLED/FLOW_FAILED',
   created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -85,7 +115,7 @@ CREATE TABLE IF NOT EXISTS demand (
   PRIMARY KEY (id),
   KEY idx_tenant (tenant_id),
   KEY idx_status (status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='需求表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='需求表：买家发布的加工需求及状态机阶段';
 
 CREATE TABLE IF NOT EXISTS process (
   id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -97,7 +127,7 @@ CREATE TABLE IF NOT EXISTS process (
   created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_demand (demand_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='工序表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='工序表：需求拆分的加工工序及数量要求';
 
 CREATE TABLE IF NOT EXISTS attachment (
   id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -111,7 +141,7 @@ CREATE TABLE IF NOT EXISTS attachment (
   created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_biz (biz_type, biz_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='附件表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='附件表：需求图纸、合同文件等上传附件';
 
 CREATE TABLE IF NOT EXISTS quotation (
   id               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -127,6 +157,7 @@ CREATE TABLE IF NOT EXISTS quotation (
   stage_curve_json JSON DEFAULT NULL COMMENT '分阶段工期曲线',
   valid_days       INT DEFAULT 7 COMMENT '报价有效期(意向期已停用)',
   extra_json       JSON DEFAULT NULL COMMENT '意向报名快照:产能/设备/认证',
+  device_ids_json  VARCHAR(512) DEFAULT NULL COMMENT '报名勾选的设备id列表JSON',
   intention_status VARCHAR(16) NOT NULL DEFAULT 'NONE' COMMENT 'NONE/PENDING_PAY/FROZEN/RELEASED/FORFEITED',
   deposit_status   VARCHAR(16) NOT NULL DEFAULT 'NONE' COMMENT 'NONE/FROZEN/RELEASED/FORFEITED',
   status           VARCHAR(16) NOT NULL DEFAULT 'INTENTION' COMMENT 'INTENTION/LOCKED/WIN/LOSE/INVALID',
@@ -138,7 +169,7 @@ CREATE TABLE IF NOT EXISTS quotation (
   KEY idx_demand (demand_id),
   KEY idx_tenant (tenant_id),
   KEY idx_demand_process (demand_id, process_no)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='报价表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='报价/报名表：工厂意向报名、锁价与保证金状态';
 
 CREATE TABLE IF NOT EXISTS solution (
   id                   BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -157,7 +188,7 @@ CREATE TABLE IF NOT EXISTS solution (
   created_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_demand (demand_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='方案表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='方案表：规则/AI 编排的工厂组合方案';
 
 CREATE TABLE IF NOT EXISTS `order` (
   id                BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -173,7 +204,7 @@ CREATE TABLE IF NOT EXISTS `order` (
   PRIMARY KEY (id),
   KEY idx_demand (demand_id),
   KEY idx_status (status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='订单表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='订单表：方案选定后的履约主单';
 
 CREATE TABLE IF NOT EXISTS contract (
   id                  BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -196,7 +227,7 @@ CREATE TABLE IF NOT EXISTS contract (
   UNIQUE KEY uk_order_factory (order_id, tenant_id),
   KEY idx_order (order_id),
   KEY idx_tenant (tenant_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='合同表（一厂一份，正文买家自备）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='合同表：一厂一份，买家上传正文，双方签名与平台审核';
 
 CREATE TABLE IF NOT EXISTS work_stage (
   id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -218,7 +249,7 @@ CREATE TABLE IF NOT EXISTS work_stage (
   KEY idx_order (order_id),
   KEY idx_tenant (tenant_id),
   KEY idx_status (status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='工单表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='工单表：按工序/分段拆出的履约执行单元';
 
 CREATE TABLE IF NOT EXISTS stage_progress_log (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -230,7 +261,7 @@ CREATE TABLE IF NOT EXISTS stage_progress_log (
   created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_stage (stage_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='工单进度上报日志';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='工单进度上报日志：工厂按件上报进度与说明';
 
 CREATE TABLE IF NOT EXISTS inspection (
   id                  BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -243,7 +274,7 @@ CREATE TABLE IF NOT EXISTS inspection (
   created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_stage (stage_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='质检表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='质检表：工单质检结果与抽样记录';
 
 CREATE TABLE IF NOT EXISTS fund_flow (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -260,7 +291,7 @@ CREATE TABLE IF NOT EXISTS fund_flow (
   UNIQUE KEY uk_idempotent (idempotent_no),
   KEY idx_order (order_id),
   KEY idx_tenant (tenant_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='资金流水表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='资金流水表：意向金、保证金、托管、罚没、佣金等唯一账本';
 
 CREATE TABLE IF NOT EXISTS credit_event (
   id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -273,7 +304,7 @@ CREATE TABLE IF NOT EXISTS credit_event (
   created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_tenant (tenant_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='信用事件表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='信用事件表：加分/扣分记录';
 
 CREATE TABLE IF NOT EXISTS survey (
   id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -286,7 +317,7 @@ CREATE TABLE IF NOT EXISTS survey (
   PRIMARY KEY (id),
   UNIQUE KEY uk_stage_role (stage_id, role, tenant_id),
   KEY idx_order (order_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='阶段问卷';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='阶段问卷表：买家与工厂互评打分';
 
 CREATE TABLE IF NOT EXISTS audit_log (
   id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -301,7 +332,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
   PRIMARY KEY (id),
   KEY idx_actor (actor_id),
   KEY idx_target (target_type, target_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='审计表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='审计日志表：关键操作留痕';
 
 CREATE TABLE IF NOT EXISTS notify (
   id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -312,7 +343,7 @@ CREATE TABLE IF NOT EXISTS notify (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_tenant (tenant_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='站内信表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='站内信表：系统通知推送';
 
 -- ===================== 初始化超级管理员 =====================
 -- 密码为 BCrypt 加密后的 "admin123"（需后端生成，此处占位由代码初始化）

@@ -25,7 +25,8 @@ public class DemandStateMachine {
         ALLOWED.put(DemandStatus.THINKING, EnumSet.of(DemandStatus.LOCKING, DemandStatus.REVIEWING, DemandStatus.CANCELLED));
         ALLOWED.put(DemandStatus.REVIEWING, EnumSet.of(DemandStatus.LOCKING, DemandStatus.CANCELLED));
         ALLOWED.put(DemandStatus.LOCKING, EnumSet.of(DemandStatus.SOLUTION_GENERATED, DemandStatus.FLOW_FAILED, DemandStatus.CANCELLED));
-        ALLOWED.put(DemandStatus.SOLUTION_GENERATED, EnumSet.of(DemandStatus.SOLUTION_SELECTED, DemandStatus.FLOW_FAILED));
+        ALLOWED.put(DemandStatus.SOLUTION_GENERATED, EnumSet.of(DemandStatus.SOLUTION_CONFIRMED, DemandStatus.FLOW_FAILED));
+        ALLOWED.put(DemandStatus.SOLUTION_CONFIRMED, EnumSet.of(DemandStatus.SOLUTION_SELECTED, DemandStatus.FLOW_FAILED));
         ALLOWED.put(DemandStatus.SOLUTION_SELECTED, EnumSet.of(DemandStatus.CONTRACTED));
         ALLOWED.put(DemandStatus.CONTRACTED, EnumSet.of(DemandStatus.IN_PRODUCTION, DemandStatus.COMPLETED));
         ALLOWED.put(DemandStatus.IN_PRODUCTION, EnumSet.of(DemandStatus.COMPLETED));

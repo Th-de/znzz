@@ -1,6 +1,7 @@
 package com.dsh.platform.service;
 
 import com.dsh.platform.common.BizException;
+import com.dsh.platform.entity.Account;
 import com.dsh.platform.entity.Enterprise;
 import com.dsh.platform.mapper.EnterpriseMapper;
 import com.dsh.platform.security.UserContext;
@@ -9,6 +10,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @Service
@@ -17,15 +19,40 @@ public class CapabilityService {
 
     private final EnterpriseMapper enterpriseMapper;
     private final ObjectMapper objectMapper;
+    private final DeviceService deviceService;
+    private final AccountService accountService;
 
     public Map<String, Object> getMine() {
         Enterprise e = enterpriseMapper.selectById(UserContext.tenantId());
         if (e == null) throw new BizException("企业不存在");
         JsonNode node = read(e.getCapabilityJson());
+        long deviceCount = deviceService.countMine();
+        Map<String, Object> capability = node == null || node.isNull()
+                ? Map.of()
+                : objectMapper.convertValue(node, Map.class);
         return Map.of(
-                "complete", isComplete(node),
-                "capability", node == null || node.isNull() ? Map.of() : objectMapper.convertValue(node, Map.class)
+                "complete", isComplete(node) && deviceCount > 0,
+                "deviceCount", deviceCount,
+                "capability", capability
         );
+    }
+
+    public Map<String, Object> mineProfile() {
+        Enterprise e = enterpriseMapper.selectById(UserContext.tenantId());
+        if (e == null) throw new BizException("企业不存在");
+        Account a = accountService.get(e.getId());
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", e.getId());
+        m.put("type", e.getType());
+        m.put("name", e.getName());
+        m.put("creditCode", e.getCreditCode());
+        m.put("creditScore", e.getCreditScore());
+        m.put("authStatus", e.getAuthStatus());
+        m.put("contactName", e.getContactName());
+        m.put("address", e.getAddress());
+        m.put("balance", a.getBalance());
+        m.put("frozen", a.getFrozen());
+        return m;
     }
 
     public void save(Map<String, Object> body) {
@@ -33,7 +60,10 @@ public class CapabilityService {
             String json = objectMapper.writeValueAsString(body);
             JsonNode node = objectMapper.readTree(json);
             if (!isComplete(node)) {
-                throw new BizException("请补全设备、材料、工艺、合格率和至少一条工序产能");
+                throw new BizException("请补全材料、工艺、合格率和至少一条工序产能");
+            }
+            if (deviceService.countMine() <= 0) {
+                throw new BizException("请先在「我的设备」中至少添加一台设备");
             }
             Enterprise e = enterpriseMapper.selectById(UserContext.tenantId());
             if (e == null) throw new BizException("企业不存在");
@@ -53,12 +83,15 @@ public class CapabilityService {
         if (!isComplete(node)) {
             throw new BizException("请先完善能力档案后再报名");
         }
+        long deviceCount = deviceService.countMine();
+        if (UserContext.tenantId() != null && UserContext.tenantId().equals(tenantId) && deviceCount <= 0) {
+            throw new BizException("请先在「我的设备」中至少添加一台设备后再报名");
+        }
         return node;
     }
 
     public static boolean isComplete(JsonNode node) {
         if (node == null || node.isNull()) return false;
-        if (!hasItems(node.get("devices")) || blankName(node.get("devices"))) return false;
         if (!hasItems(node.get("materials"))) return false;
         if (!hasItems(node.get("processes"))) return false;
         if (node.get("yieldRate") == null || node.get("yieldRate").isNull()) return false;
@@ -72,13 +105,6 @@ public class CapabilityService {
 
     private static boolean hasItems(JsonNode arr) {
         return arr != null && arr.isArray() && !arr.isEmpty();
-    }
-
-    private static boolean blankName(JsonNode devices) {
-        for (JsonNode d : devices) {
-            if (d.path("name").asText("").isBlank()) return true;
-        }
-        return false;
     }
 
     private JsonNode read(String json) {

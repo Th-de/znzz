@@ -2,6 +2,7 @@ package com.dsh.platform.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.dsh.platform.common.BizException;
+import com.dsh.platform.domain.credit.CreditScoring;
 import com.dsh.platform.domain.fund.FundLedger;
 import com.dsh.platform.domain.notify.SiteNotify;
 import com.dsh.platform.domain.solution.SolutionCombo;
@@ -12,16 +13,19 @@ import com.dsh.platform.domain.solution.AiSolutionGenerator;
 import com.dsh.platform.domain.solution.RuleSolutionGenerator;
 import com.dsh.platform.entity.Demand;
 import com.dsh.platform.entity.Enterprise;
+import com.dsh.platform.entity.Process;
 import com.dsh.platform.entity.Quotation;
 import com.dsh.platform.entity.Solution;
 import com.dsh.platform.mapper.DemandMapper;
 import com.dsh.platform.mapper.EnterpriseMapper;
+import com.dsh.platform.mapper.ProcessMapper;
 import com.dsh.platform.mapper.QuotationMapper;
 import com.dsh.platform.mapper.SolutionMapper;
 import com.dsh.platform.security.UserContext;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,6 +39,7 @@ import java.util.Map;
 /**
  * 方案编排：算法在 SolutionGenerator，这里只负责落库和改状态。
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class SolutionService {
@@ -42,14 +47,18 @@ public class SolutionService {
     private final DemandMapper demandMapper;
     private final SolutionMapper solutionMapper;
     private final ObjectMapper objectMapper;
+    @SuppressWarnings("unused")
     private final SolutionGenerator solutionGenerator;
+    private final ProcessMapper processMapper;
     private final DemandStateMachine stateMachine;
     private final FundLedger fundLedger;
+    private final CreditScoring creditScoring;
     private final SiteNotify siteNotify;
     private final RuleSolutionGenerator ruleSolutionGenerator;
     private final AiSolutionGenerator aiSolutionGenerator;
     private final QuotationMapper quotationMapper;
     private final EnterpriseMapper enterpriseMapper;
+    private final DeviceService deviceService;
 
     @Transactional
     public List<Solution> generate(Long demandId) {
@@ -64,34 +73,84 @@ public class SolutionService {
         if (st != DemandStatus.LOCKING) {
             throw new BizException("仅保证金期可以生成方案");
         }
-        List<SolutionCombo> combos = solutionGenerator.generate(d);
-        if (combos == null || combos.isEmpty()) {
+        if (!coveredByLocked(d)) {
             stateMachine.transit(d, DemandStatus.FLOW_FAILED);
             demandMapper.updateById(d);
             fundLedger.unfreezeIntentionsOfDemand(demandId);
             fundLedger.unfreezeDepositsOfDemand(demandId);
+            deviceService.releaseByDemand(demandId);
             siteNotify.send(d.getTenantId(), "需求流拍#" + demandId,
                     "需求「" + d.getTitle() + "」各工序没有足够的锁定报价，已流拍并退回意向金/保证金。");
             return List.of();
         }
-        List<Solution> result = new ArrayList<>();
+        for (Quotation q : fundLedger.forfeitUnlockedIntentions(demandId)) {
+            creditScoring.applyNoLock(q.getTenantId(), demandId);
+            siteNotify.send(q.getTenantId(), "未锁价扣除意向金#" + demandId,
+                    "需求「" + d.getTitle() + "」保证金期已结束，你未锁定报价，意向金已扣除并记失信。");
+        }
+        stateMachine.transit(d, DemandStatus.SOLUTION_GENERATED);
+        demandMapper.updateById(d);
+        tryInsertAi(d);
+        return listByDemand(demandId);
+    }
+
+    private boolean coveredByLocked(Demand d) {
+        List<Process> processes = processMapper.selectList(new LambdaQueryWrapper<Process>()
+                .eq(Process::getDemandId, d.getId())
+                .orderByAsc(Process::getProcessNo));
+        if (processes.isEmpty()) {
+            Process one = new Process();
+            one.setProcessNo(1);
+            one.setQuantity(d.getQuantity());
+            processes = List.of(one);
+        }
+        List<Quotation> locked = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
+                .eq(Quotation::getDemandId, d.getId())
+                .eq(Quotation::getStatus, "LOCKED"));
+        for (Process p : processes) {
+            int need = p.getQuantity() == null ? 0 : p.getQuantity();
+            Integer no = p.getProcessNo() == null ? 1 : p.getProcessNo();
+            boolean ok = locked.stream()
+                    .filter(q -> no.equals(q.getProcessNo() == null ? 1 : q.getProcessNo()))
+                    .anyMatch(q -> q.getMaxQty() != null && q.getMaxQty() >= need);
+            if (!ok) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void tryInsertAi(Demand d) {
+        try {
+            List<SolutionCombo> combos = aiSolutionGenerator.generate(d);
+            insertAiCombos(d.getId(), combos);
+            siteNotify.notifyOperators("AI方案待审核#" + d.getId(),
+                    "需求「" + d.getTitle() + "」的 AI 方案已生成，请审阅后下发给买家。");
+        } catch (Exception e) {
+            log.warn("AI 方案生成失败 demandId={}: {}", d.getId(), e.getMessage());
+            siteNotify.notifyOperators("AI方案生成失败#" + d.getId(),
+                    "需求「" + d.getTitle() + "」保证金期已结束，AI 方案生成失败："
+                            + e.getMessage() + "。请到需求管理手动重试。");
+        }
+    }
+
+    private void insertAiCombos(Long demandId, List<SolutionCombo> combos) {
+        if (combos == null) {
+            return;
+        }
         for (SolutionCombo combo : combos) {
             Solution s = new Solution();
             s.setDemandId(demandId);
             s.setType(combo.type());
             s.setSuggestedComboJson(writeJson(combo.items()));
             s.setFinalComboJson(writeJson(combo.items()));
-            s.setSource("SUGGESTED");
+            s.setSource("AI");
             s.setIsFinal(0);
             s.setScore(combo.score());
             s.setRationaleJson(combo.rationale());
             s.setStatus("PENDING_REVIEW");
             solutionMapper.insert(s);
-            result.add(s);
         }
-        stateMachine.transit(d, DemandStatus.SOLUTION_GENERATED);
-        demandMapper.updateById(d);
-        return result;
     }
 
     public List<Solution> listByDemand(Long demandId) {
@@ -116,7 +175,7 @@ public class SolutionService {
             throw new BizException("需求不存在");
         }
         if (!"SOLUTION_GENERATED".equals(d.getStatus())) {
-            throw new BizException("请先出规则方案，再生成 AI 综合方案");
+            throw new BizException("仅方案已生成后可以重试 AI 方案");
         }
         if (!"OPERATOR".equals(UserContext.role()) && !"SUPER_ADMIN".equals(UserContext.role())) {
             throw new BizException(403, "仅运营可以生成并审核 AI 方案");
@@ -128,19 +187,7 @@ public class SolutionService {
             return listByDemand(demandId);
         }
         List<SolutionCombo> combos = aiSolutionGenerator.generate(d);
-        for (SolutionCombo combo : combos) {
-            Solution s = new Solution();
-            s.setDemandId(demandId);
-            s.setType(combo.type());
-            s.setSuggestedComboJson(writeJson(combo.items()));
-            s.setFinalComboJson(writeJson(combo.items()));
-            s.setSource("AI");
-            s.setIsFinal(0);
-            s.setScore(combo.score());
-            s.setRationaleJson(combo.rationale());
-            s.setStatus("PENDING_REVIEW");
-            solutionMapper.insert(s);
-        }
+        insertAiCombos(d.getId(), combos);
         return listByDemand(demandId);
     }
 

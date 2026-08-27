@@ -9,6 +9,7 @@
         <el-menu-item index="contracts">📝 合同审核</el-menu-item>
         <el-menu-item index="inspect">🔍 工单质检</el-menu-item>
         <el-menu-item index="funds">💰 资金流水</el-menu-item>
+        <el-menu-item index="enterprises">👥 用户信息管理</el-menu-item>
         <el-menu-item index="users" v-if="isSuper">👤 账号管理</el-menu-item>
       </el-menu>
     </el-aside>
@@ -38,9 +39,13 @@
           <el-table-column prop="status" label="当前状态" width="170">
             <template #default="{row}"><el-tag :type="tagType(row.status)">{{ statusText(row.status) }}</el-tag></template>
           </el-table-column>
+          <el-table-column label="锁价截止" width="160">
+            <template #default="{row}">{{ row.status==='LOCKING' ? (row.lockingEndAt || '-') : '-' }}</template>
+          </el-table-column>
           <el-table-column label="可执行操作" min-width="420">
             <template #default="{ row }">
               <el-button size="small" @click="openDetail(row)">详情</el-button>
+              <el-button size="small" type="primary" plain @click="openPanorama(row)">全景</el-button>
               <el-button v-if="row.status==='PENDING_AUDIT'" size="small" type="primary" @click="audit(row,'PASS')">审核通过</el-button>
               <el-button v-if="['PENDING_AUDIT','PUBLISHED'].includes(row.status)" size="small" type="danger" @click="openReturn(row)">退回修改</el-button>
               <el-button v-if="row.status==='PUBLISHED'" size="small" type="warning" @click="endIntention(row)">结束意向期</el-button>
@@ -48,6 +53,7 @@
               <el-button v-if="row.status==='REVIEWING'" size="small" type="danger" @click="review(row,false)">驳回取消</el-button>
               <el-button v-if="row.status==='LOCKING'" size="small" type="warning" @click="endLocking(row)">结束保证金期</el-button>
               <el-button v-if="row.status==='SOLUTION_GENERATED'" size="small" type="success" @click="genAi(row)">生成AI综合方案</el-button>
+              <el-button v-if="row.status==='SOLUTION_CONFIRMED'" size="small" type="primary" @click="dispatchOrder(row)">派单</el-button>
               <el-tag v-if="['THINKING','CONTRACTED','IN_PRODUCTION','COMPLETED','CANCELLED','FLOW_FAILED','RETURNED'].includes(row.status)" type="info" size="small">{{ row.status==='RETURNED' ? '待买家修改' : '等待其他角色操作' }}</el-tag>
             </template>
           </el-table-column>
@@ -104,6 +110,54 @@
             <el-button type="danger" @click="openReturn(detail.demand)">退回修改</el-button>
           </div>
         </el-drawer>
+        <el-drawer v-model="panoOpen" title="需求全景" size="720px">
+          <el-descriptions :column="1" border size="small" title="阶段与买家">
+            <el-descriptions-item label="阶段">{{ label(DEMAND_STATUS, pano.stage) }}</el-descriptions-item>
+            <el-descriptions-item label="买家">{{ pano.buyer?.name }}</el-descriptions-item>
+            <el-descriptions-item label="买家余额">¥ {{ pano.buyer?.balance }} / 冻结 ¥ {{ pano.buyer?.frozen }}</el-descriptions-item>
+            <el-descriptions-item label="订单">{{ pano.orderId || '-' }} {{ pano.orderStatus || '' }}</el-descriptions-item>
+            <el-descriptions-item label="整体进度">{{ pano.progressPercent ?? 0 }}%</el-descriptions-item>
+          </el-descriptions>
+          <h4 v-if="(pano.stages || []).length">工单进度</h4>
+          <el-table v-if="(pano.stages || []).length" :data="pano.stages" border size="small" style="margin-bottom:12px">
+            <el-table-column prop="processName" label="工序" />
+            <el-table-column prop="factoryName" label="工厂" />
+            <el-table-column label="完成" width="110">
+              <template #default="{ row }">{{ row.doneQty || 0 }} / {{ row.quantity || 0 }}</template>
+            </el-table-column>
+            <el-table-column label="进度" width="140">
+              <template #default="{ row }">
+                <el-progress :percentage="row.progress || 0" :stroke-width="10" />
+              </template>
+            </el-table-column>
+            <el-table-column prop="promisedDate" label="承诺交期" width="120" />
+            <el-table-column prop="status" label="状态" width="110" />
+          </el-table>
+          <h4>报名 / 工厂 / 设备</h4>
+          <el-table :data="pano.bids || []" border size="small">
+            <el-table-column prop="processNo" label="工序#" width="70" />
+            <el-table-column prop="factoryName" label="工厂" min-width="120" />
+            <el-table-column prop="status" label="报名状态" width="100" />
+            <el-table-column prop="intentionStatus" label="意向金" width="100" />
+            <el-table-column prop="price" label="锁价" width="90" />
+            <el-table-column label="设备" min-width="160">
+              <template #default="{ row }">
+                {{ (row.devices || []).map(d => d.name).join('、') || '-' }}
+              </template>
+            </el-table-column>
+          </el-table>
+          <h4>资金小计 ¥ {{ pano.fundSubtotal || 0 }}</h4>
+          <el-table :data="pano.funds || []" border size="small">
+            <el-table-column prop="enterpriseName" label="企业" min-width="120" />
+            <el-table-column label="类型" width="100">
+              <template #default="{row}">{{ label(FUND_TYPE, row.type) }}</template>
+            </el-table-column>
+            <el-table-column label="方向" width="90">
+              <template #default="{row}">{{ label(FUND_DIR, row.direction) }}</template>
+            </el-table-column>
+            <el-table-column prop="amount" label="金额" width="100" />
+          </el-table>
+        </el-drawer>
         <el-dialog v-model="fileOpen" :title="fileTitle" width="720px">
           <pre class="file-preview">{{ fileText }}</pre>
         </el-dialog>
@@ -123,7 +177,7 @@
       <!-- 方案查看 -->
       <div v-if="active==='solutions'">
         <div class="toolbar"><span class="title">方案查看</span><el-button @click="loadDemands">刷新</el-button></div>
-        <el-table :data="demands.filter(d=>['SOLUTION_GENERATED','SOLUTION_SELECTED','CONTRACTED','IN_PRODUCTION','COMPLETED'].includes(d.status))" border @row-click="viewSolutions">
+        <el-table :data="demands.filter(d=>['SOLUTION_GENERATED','SOLUTION_CONFIRMED','SOLUTION_SELECTED','CONTRACTED','IN_PRODUCTION','COMPLETED'].includes(d.status))" border @row-click="viewSolutions">
           <el-table-column prop="id" label="需求ID" width="80" />
           <el-table-column prop="title" label="标题" />
           <el-table-column prop="status" label="状态" width="150" />
@@ -135,16 +189,24 @@
           <el-button type="warning" :loading="aiLoading" style="margin-bottom:10px" @click="genAiFromDialog">生成 AI 综合方案</el-button>
           <div v-for="s in solutions" :key="s.id" style="margin-bottom:16px">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
-              <el-tag :type="s.type && s.type.startsWith('AI') ? 'primary' : (s.type==='A'?'danger':s.type==='B'?'warning':'success')">方案 {{ s.type }}</el-tag>
+              <el-tag type="primary">方案 {{ s.type }}</el-tag>
               <el-tag size="small" :type="s.status==='ACTIVE'?'success':'warning'">{{ s.status==='ACTIVE' ? '已下发买家' : '待下发' }}</el-tag>
               <el-button v-if="s.status!=='ACTIVE'" size="small" type="success" @click="publish(s)">下发给买家</el-button>
             </div>
-            <p v-if="s.rationaleJson" class="hint">{{ s.rationaleJson }}</p>
-            <p v-else-if="!(s.type && s.type.startsWith('AI'))" class="hint">按价格/工期/良率自动打分</p>
+            <p class="hint">{{ parseRationale(s.rationaleJson).rationale }}</p>
+            <el-alert
+              v-for="(r, i) in parseRationale(s.rationaleJson).risks"
+              :key="s.id + '-r-' + i"
+              type="warning"
+              :closable="false"
+              :title="r"
+              style="margin-bottom:8px"
+            />
             <el-table :data="parse(s.finalComboJson || s.suggestedComboJson)" size="small" border>
               <el-table-column prop="processName" label="工序" width="80" />
               <el-table-column prop="factoryName" label="工厂" width="140" />
-              <el-table-column prop="reason" label="选厂理由" min-width="180" />
+              <el-table-column prop="reason" label="选厂理由" min-width="160" />
+              <el-table-column prop="capacityCheck" label="产能核算" min-width="160" />
               <el-table-column prop="price" label="价格" width="90" />
               <el-table-column prop="days" label="工期" width="60" />
               <el-table-column prop="yieldRate" label="良率" width="70" />
@@ -161,8 +223,8 @@
           <el-table :data="alts" size="small" border>
             <el-table-column prop="factoryName" label="工厂" />
             <el-table-column prop="creditScore" label="信用" width="70" />
-            <el-table-column prop="maxQty" label="产能" width="80" />
-            <el-table-column prop="score" label="规则分" width="80" />
+            <el-table-column prop="maxQty" label="承接量" width="80" />
+            <el-table-column prop="dailyCapacity" label="日产能合计" width="110" />
             <el-table-column label="" width="80">
               <template #default="{ row }">
                 <el-button size="small" type="primary" @click="doReplace(row)">选用</el-button>
@@ -195,6 +257,7 @@
         <el-table :data="sortedStages" border>
           <el-table-column prop="id" label="工单ID" width="70" />
           <el-table-column prop="orderId" label="订单ID" width="70" />
+          <el-table-column prop="factoryName" label="工厂" min-width="120" />
           <el-table-column prop="processName" label="工序" />
           <el-table-column label="进度" width="140">
             <template #default="{row}">
@@ -221,7 +284,9 @@
           <el-timeline>
             <el-timeline-item v-for="p in progLogs" :key="p.id" :timestamp="p.createdAt">
               {{ p.doneQty }} 件 · {{ p.progress }}% · {{ p.remark }}
-              <div v-if="p.fileName" class="hint">照片 {{ p.fileName }}</div>
+              <div v-if="p.attachmentId">
+                <el-button size="small" link type="primary" @click="downloadPhoto(p.attachmentId)">{{ p.fileName || '下载照片' }}</el-button>
+              </div>
             </el-timeline-item>
           </el-timeline>
           <p v-if="!progLogs.length">暂无上报</p>
@@ -243,27 +308,131 @@
 
       <!-- 资金流水 -->
       <div v-if="active==='funds'">
-        <div class="toolbar"><span class="title">全部资金流水</span><el-button @click="loadFunds">刷新</el-button></div>
-        <el-table :data="funds" border>
-          <el-table-column prop="id" label="ID" width="60" />
-          <el-table-column prop="tenantId" label="企业ID" width="80" />
-          <el-table-column label="类型" width="120">
-            <template #default="{row}">{{ label(FUND_TYPE, row.type) }}</template>
+        <div class="toolbar"><span class="title">资金总览</span><el-button @click="loadFundViews">刷新</el-button></div>
+        <el-row :gutter="12" style="margin-bottom:16px">
+          <el-col :span="4"><el-card shadow="never"><div class="kpi">意向冻结</div><div class="kpi-v">¥ {{ fundOverview.intentionFrozenNet || 0 }}</div></el-card></el-col>
+          <el-col :span="4"><el-card shadow="never"><div class="kpi">保证金冻结</div><div class="kpi-v">¥ {{ fundOverview.depositFrozenNet || 0 }}</div></el-card></el-col>
+          <el-col :span="4"><el-card shadow="never"><div class="kpi">托管在途</div><div class="kpi-v">¥ {{ fundOverview.escrowHeld || 0 }}</div></el-card></el-col>
+          <el-col :span="4"><el-card shadow="never"><div class="kpi">平台暂存</div><div class="kpi-v">¥ {{ fundOverview.impoundBalance || 0 }}</div></el-card></el-col>
+          <el-col :span="4"><el-card shadow="never"><div class="kpi">佣金累计</div><div class="kpi-v">¥ {{ fundOverview.commissionTotal || 0 }}</div></el-card></el-col>
+          <el-col :span="4"><el-card shadow="never"><div class="kpi">平台余额</div><div class="kpi-v">¥ {{ fundOverview.platformBalance || 0 }}</div></el-card></el-col>
+        </el-row>
+        <el-tabs v-model="fundTab">
+          <el-tab-pane label="按需求分组" name="byDemand">
+            <el-collapse>
+              <el-collapse-item v-for="g in fundByDemand" :key="g.demandId" :title="'#' + g.demandId + ' ' + (g.demandTitle || '') + ' · 小计 ¥' + g.subtotal">
+                <el-table :data="g.flows" border size="small">
+                  <el-table-column prop="enterpriseName" label="企业" min-width="120" />
+                  <el-table-column label="类型" width="100"><template #default="{row}">{{ label(FUND_TYPE, row.type) }}</template></el-table-column>
+                  <el-table-column label="方向" width="90"><template #default="{row}">{{ label(FUND_DIR, row.direction) }}</template></el-table-column>
+                  <el-table-column prop="amount" label="金额" width="100" />
+                </el-table>
+              </el-collapse-item>
+            </el-collapse>
+          </el-tab-pane>
+          <el-tab-pane label="企业账户" name="accounts">
+            <el-table :data="fundAccounts" border>
+              <el-table-column prop="tenantId" label="企业ID" width="80" />
+              <el-table-column prop="enterpriseName" label="企业" min-width="140" />
+              <el-table-column prop="enterpriseType" label="类型" width="90" />
+              <el-table-column prop="balance" label="可用余额" width="120" />
+              <el-table-column prop="frozen" label="冻结" width="120" />
+            </el-table>
+          </el-tab-pane>
+          <el-tab-pane label="全部流水" name="all">
+            <el-table :data="funds" border>
+              <el-table-column prop="id" label="ID" width="60" />
+              <el-table-column prop="tenantId" label="企业ID" width="80" />
+              <el-table-column prop="enterpriseName" label="企业" min-width="140" />
+              <el-table-column label="类型" width="120"><template #default="{row}">{{ label(FUND_TYPE, row.type) }}</template></el-table-column>
+              <el-table-column label="方向" width="100"><template #default="{row}">{{ label(FUND_DIR, row.direction) }}</template></el-table-column>
+              <el-table-column prop="amount" label="金额" width="120" />
+            </el-table>
+          </el-tab-pane>
+        </el-tabs>
+      </div>
+
+      <!-- 用户信息管理 -->
+      <div v-if="active==='enterprises'">
+        <div class="toolbar">
+          <span class="title">用户信息管理</span>
+          <div style="display:flex;gap:8px;align-items:center">
+            <el-input v-model="entKeyword" clearable placeholder="搜企业名/信用代码/联系人/手机号" style="width:280px" @keyup.enter="loadEnterprises" />
+            <el-button type="primary" @click="loadEnterprises">搜索</el-button>
+            <el-button @click="entKeyword=''; loadEnterprises()">刷新</el-button>
+          </div>
+        </div>
+        <el-tabs v-model="entTab" @tab-change="loadEnterprises">
+          <el-tab-pane label="需求方" name="BUYER" />
+          <el-tab-pane label="工厂方" name="FACTORY" />
+          <el-tab-pane label="质检方" name="INSPECTION" />
+        </el-tabs>
+        <el-table :data="enterprises" border>
+          <el-table-column prop="id" label="企业ID" width="80" />
+          <el-table-column prop="name" label="企业名称" min-width="140" />
+          <el-table-column prop="creditCode" label="信用代码" min-width="150" />
+          <el-table-column prop="contactName" label="联系人" width="100" />
+          <el-table-column prop="address" label="地址" min-width="160" />
+          <el-table-column prop="creditScore" label="信用分" width="80" />
+          <el-table-column prop="authStatus" label="认证" width="90" />
+          <el-table-column prop="accountPhone" label="登录手机" width="120" />
+          <el-table-column prop="realName" label="账号姓名" width="100" />
+          <el-table-column label="账号状态" width="90">
+            <template #default="{ row }">{{ row.userStatus === 'DISABLED' ? '停用' : (row.userStatus || '-') }}</template>
           </el-table-column>
-          <el-table-column label="方向" width="100">
-            <template #default="{row}">{{ label(FUND_DIR, row.direction) }}</template>
+          <el-table-column label="操作" width="160" fixed="right">
+            <template #default="{ row }">
+              <el-button size="small" @click="openEntEdit(row)">编辑</el-button>
+              <el-button size="small" type="danger" @click="removeEnterprise(row)">删除</el-button>
+            </template>
           </el-table-column>
-          <el-table-column prop="amount" label="金额" width="120" />
         </el-table>
+
+        <el-dialog v-model="entEditOpen" title="编辑用户信息" width="560px">
+          <h4 style="margin:0 0 8px">企业信息</h4>
+          <el-form label-width="100px">
+            <el-form-item label="企业名称" required><el-input v-model="entEdit.name" /></el-form-item>
+            <el-form-item label="信用代码"><el-input v-model="entEdit.creditCode" /></el-form-item>
+            <el-form-item label="联系人"><el-input v-model="entEdit.contactName" /></el-form-item>
+            <el-form-item label="地址"><el-input v-model="entEdit.address" /></el-form-item>
+            <el-form-item label="信用分"><el-input-number v-model="entEdit.creditScore" :min="0" :max="100" /></el-form-item>
+            <el-form-item label="认证状态">
+              <el-select v-model="entEdit.authStatus" style="width:100%">
+                <el-option label="待审" value="PENDING" />
+                <el-option label="已通过" value="APPROVED" />
+                <el-option label="已拒绝" value="REJECTED" />
+              </el-select>
+            </el-form-item>
+          </el-form>
+          <h4 style="margin:16px 0 8px">登录账号</h4>
+          <el-form label-width="100px">
+            <el-form-item label="手机号"><el-input v-model="entEdit.accountPhone" :disabled="!entEdit.userId" /></el-form-item>
+            <el-form-item label="姓名"><el-input v-model="entEdit.realName" :disabled="!entEdit.userId" /></el-form-item>
+            <el-form-item label="状态">
+              <el-select v-model="entEdit.userStatus" style="width:100%" :disabled="!entEdit.userId">
+                <el-option label="启用" value="ENABLED" />
+                <el-option label="停用" value="DISABLED" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="新密码">
+              <el-input v-model="entEdit.password" type="password" show-password placeholder="不改请留空" :disabled="!entEdit.userId" />
+            </el-form-item>
+          </el-form>
+          <el-alert v-if="!entEdit.userId" type="warning" :closable="false" title="该企业暂无关联登录账号，仅可改企业信息" style="margin-top:8px" />
+          <template #footer>
+            <el-button @click="entEditOpen=false">取消</el-button>
+            <el-button type="primary" @click="saveEntEdit">保存</el-button>
+          </template>
+        </el-dialog>
       </div>
 
       <!-- 账号管理 -->
       <div v-if="active==='users' && isSuper">
         <div class="toolbar"><span class="title">创建账号（发放权限）</span></div>
-        <el-form label-width="90px" style="max-width:480px">
-          <el-form-item label="手机号"><el-input v-model="userForm.phone" /></el-form-item>
-          <el-form-item label="密码"><el-input v-model="userForm.password" /></el-form-item>
-          <el-form-item label="姓名"><el-input v-model="userForm.realName" /></el-form-item>
+        <el-form ref="userFormRef" :model="userForm" :rules="userRules" label-width="90px" style="max-width:480px">
+          <el-form-item label="手机号" prop="phone"><el-input v-model="userForm.phone" /></el-form-item>
+          <el-form-item label="密码" prop="password"><el-input v-model="userForm.password" type="password" show-password /></el-form-item>
+          <el-form-item label="姓名" prop="realName"><el-input v-model="userForm.realName" /></el-form-item>
           <el-form-item label="角色">
             <el-radio-group v-model="userForm.role">
               <el-radio value="OPERATOR">运营</el-radio>
@@ -285,7 +454,7 @@ import { listAll, getDetail, getCoverage, returnToBuyer, audit as auditDemand } 
 import { pendingContracts, approveContract, inspect as inspectStage, progressLog } from '../api/order'
 import { fetchAttachment, saveBlob } from '../api/file'
 import CoverageBars from '../components/CoverageBars.vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { DEMAND_STATUS, FUND_TYPE, FUND_DIR, STAGE_STATUS, ESCROW_STATUS, label } from '../utils/labels'
 
 const router = useRouter()
@@ -295,7 +464,7 @@ const DEMAND_GROUPS = {
   audit: ['PENDING_AUDIT'],
   returned: ['RETURNED'],
   match: ['PUBLISHED', 'THINKING', 'REVIEWING'],
-  quote: ['LOCKING', 'SOLUTION_GENERATED'],
+  quote: ['LOCKING', 'SOLUTION_GENERATED', 'SOLUTION_CONFIRMED'],
   fulfill: ['SOLUTION_SELECTED', 'CONTRACTED', 'IN_PRODUCTION'],
   close: ['COMPLETED', 'CANCELLED', 'FLOW_FAILED'],
 }
@@ -312,6 +481,27 @@ const sortedStages = computed(() => {
 const progOpen = ref(false)
 const progLogs = ref([])
 const funds = ref([])
+const fundOverview = ref({})
+const fundByDemand = ref([])
+const fundAccounts = ref([])
+const fundTab = ref('byDemand')
+const panoOpen = ref(false)
+const pano = ref({})
+const enterprises = ref([])
+const entTab = ref('BUYER')
+const entKeyword = ref('')
+const entEditOpen = ref(false)
+const entEdit = reactive({
+  id: null, name: '', creditCode: '', contactName: '', address: '', creditScore: 60, authStatus: 'APPROVED',
+  userId: null, accountPhone: '', realName: '', userStatus: 'ENABLED', password: '',
+})
+const userFormRef = ref()
+const userForm = reactive({ phone: '', password: '123456', realName: '', role: 'OPERATOR' })
+const userRules = {
+  phone: [{ required: true, message: '请填写手机号', trigger: 'blur' }],
+  password: [{ required: true, message: '请填写密码', trigger: 'blur' }, { min: 6, message: '至少 6 位', trigger: 'blur' }],
+  realName: [{ required: true, message: '请填写姓名', trigger: 'blur' }],
+}
 const solutions = ref([])
 const solDialog = ref(false)
 const currentSolDemand = ref(null)
@@ -321,7 +511,6 @@ const alts = ref([])
 const currentSol = ref(null)
 const currentProcess = ref(null)
 const isSuper = localStorage.getItem('role') === 'SUPER_ADMIN'
-const userForm = reactive({ phone: '', password: '123456', realName: '', role: 'OPERATOR' })
 
 const fileOpen = ref(false)
 const fileTitle = ref('')
@@ -341,12 +530,22 @@ function statusText(s) { return label(DEMAND_STATUS, s) === s ? label(STAGE_STAT
 function tagType(s) {
   if (['PENDING_AUDIT','PUBLISHED','LOCKING','RETURNED'].includes(s)) return 'warning'
   if (['THINKING','REVIEWING'].includes(s)) return 'primary'
-  if (['SOLUTION_GENERATED','SOLUTION_SELECTED'].includes(s)) return 'success'
+  if (['SOLUTION_GENERATED','SOLUTION_CONFIRMED','SOLUTION_SELECTED'].includes(s)) return 'success'
   if (['COMPLETED'].includes(s)) return 'success'
   if (['CANCELLED','FLOW_FAILED','FAIL'].includes(s)) return 'danger'
   return 'info'
 }
 function parse(json) { try { return JSON.parse(json) } catch { return [] } }
+function parseRationale(raw) {
+  if (!raw) return { rationale: '', risks: [] }
+  try {
+    const o = JSON.parse(raw)
+    if (o && typeof o === 'object' && (o.rationale != null || o.risks)) {
+      return { rationale: o.rationale || '', risks: Array.isArray(o.risks) ? o.risks : [] }
+    }
+  } catch { /* 旧数据是纯文本 */ }
+  return { rationale: raw, risks: [] }
+}
 
 async function loadDemands() { demands.value = await listAll() }
 async function loadStages() {
@@ -355,6 +554,71 @@ async function loadStages() {
   stages.value = all
 }
 async function loadFunds() { funds.value = await api.get('/common/all-funds') }
+async function loadFundViews() {
+  fundOverview.value = await api.get('/fund/overview')
+  fundByDemand.value = await api.get('/fund/by-demand')
+  fundAccounts.value = await api.get('/fund/accounts')
+  await loadFunds()
+}
+async function loadEnterprises() {
+  enterprises.value = await api.get('/enterprise/manage', {
+    params: { type: entTab.value, keyword: entKeyword.value || undefined },
+  })
+}
+function openEntEdit(row) {
+  Object.assign(entEdit, {
+    id: row.id,
+    name: row.name || '',
+    creditCode: row.creditCode || '',
+    contactName: row.contactName || '',
+    address: row.address || '',
+    creditScore: row.creditScore ?? 60,
+    authStatus: row.authStatus || 'APPROVED',
+    userId: row.userId || null,
+    accountPhone: row.accountPhone || '',
+    realName: row.realName || '',
+    userStatus: row.userStatus || 'ENABLED',
+    password: '',
+  })
+  entEditOpen.value = true
+}
+async function saveEntEdit() {
+  if (!entEdit.name?.trim()) return ElMessage.warning('请填写企业名称')
+  await api.put(`/enterprise/${entEdit.id}`, {
+    name: entEdit.name,
+    creditCode: entEdit.creditCode,
+    contactName: entEdit.contactName,
+    address: entEdit.address,
+    creditScore: entEdit.creditScore,
+    authStatus: entEdit.authStatus,
+  })
+  if (entEdit.userId) {
+    await api.put(`/enterprise/${entEdit.id}/account`, {
+      phone: entEdit.accountPhone,
+      realName: entEdit.realName,
+      status: entEdit.userStatus,
+      password: entEdit.password || null,
+    })
+  }
+  ElMessage.success('已保存')
+  entEditOpen.value = false
+  loadEnterprises()
+}
+async function removeEnterprise(row) {
+  await ElMessageBox.confirm(
+    `确认删除「${row.name}」？将软删企业并停用其登录账号，历史单据保留。`,
+    '删除确认',
+    { type: 'warning' },
+  )
+  await api.delete(`/enterprise/${row.id}`)
+  ElMessage.success('已删除')
+  loadEnterprises()
+}
+
+async function openPanorama(row) {
+  pano.value = await api.get(`/demand/${row.id}/panorama`)
+  panoOpen.value = true
+}
 
 function isTextFile(row, fileName) {
   const t = (row.fileType || '').toLowerCase()
@@ -401,8 +665,14 @@ async function submitReturn() {
 async function audit(row, result) { await auditDemand(row.id, result); ElMessage.success('操作成功'); loadDemands() }
 async function endIntention(row) { await api.post(`/flow/${row.id}/end-intention`); ElMessage.success('已进入思考期'); loadDemands() }
 async function review(row, pass) { await api.post(`/flow/${row.id}/review?pass=${pass}`); ElMessage.success('操作成功'); loadDemands() }
-async function endLocking(row) { await api.post(`/flow/${row.id}/end-locking`); ElMessage.success('方案已生成，请到方案查看里审阅并下发'); loadDemands() }
-async function genSolution(row) { await api.post(`/solution/${row.id}/generate`); ElMessage.success('方案已生成'); loadDemands() }
+async function endLocking(row) { await api.post(`/flow/${row.id}/end-locking`); ElMessage.success('保证金期已结束，请到方案查看里审阅 AI 方案并下发'); loadDemands() }
+async function dispatchOrder(row) {
+  await ElMessageBox.confirm('派单后将通知中标厂签合同，并退回未中标厂的冻结资金。', '确认派单', { type: 'warning' })
+  await api.post(`/order/dispatch/${row.id}`)
+  ElMessage.success('已派单，落选厂资金已退回')
+  loadDemands()
+  loadFundViews()
+}
 async function genAi(row) {
   currentSolDemand.value = row
   aiLoading.value = true
@@ -456,7 +726,8 @@ async function submitInspect() {
   loadStages()
 }
 async function createUser() {
-  await api.post(`/auth/create-user?phone=${userForm.phone}&password=${userForm.password}&realName=${userForm.realName}&role=${userForm.role}`)
+  await userFormRef.value.validate()
+  await api.post('/auth/create-user', { ...userForm })
   ElMessage.success('账号已创建')
 }
 
@@ -470,10 +741,24 @@ async function openProgress(row) {
   progLogs.value = await progressLog(row.id)
   progOpen.value = true
 }
+async function downloadPhoto(id) {
+  try {
+    const { blob, fileName } = await fetchAttachment(id)
+    saveBlob(blob, fileName)
+  } catch (e) {
+    ElMessage.error(e.message || '无法下载照片')
+  }
+}
 
 function logout() { localStorage.clear(); router.push('/login') }
 
-onMounted(() => { loadDemands(); loadStages(); loadFunds(); loadContracts() })
+onMounted(() => {
+  loadDemands()
+  loadStages()
+  loadFundViews()
+  loadContracts()
+  loadEnterprises()
+})
 </script>
 
 <style scoped>
@@ -483,4 +768,6 @@ onMounted(() => { loadDemands(); loadStages(); loadFunds(); loadContracts() })
 .title { font-size:16px; font-weight:bold; }
 .file-preview { white-space: pre-wrap; word-break: break-word; margin: 0; font-size: 13px; line-height: 1.6; }
 .hint { color: #909399; font-size: 12px; margin: 4px 0 8px; }
+.kpi { color:#909399; font-size:12px; }
+.kpi-v { font-size:18px; font-weight:600; margin-top:6px; }
 </style>

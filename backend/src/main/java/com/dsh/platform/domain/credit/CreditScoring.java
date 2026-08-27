@@ -40,6 +40,27 @@ public class CreditScoring {
     @Value("${dsh.credit.pass-weight:0.3}")
     private double passWeight;
 
+    public void applyNoLock(Long tenantId, Long demandId) {
+        if (tenantId == null) {
+            return;
+        }
+        CreditEvent ev = new CreditEvent();
+        ev.setTenantId(tenantId);
+        ev.setType("INTENTION_NO_LOCK");
+        ev.setScoreChange(-5);
+        ev.setRefType("DEMAND");
+        ev.setRefId(demandId);
+        ev.setRemark("保证金期截止未锁定报价，扣除意向金并记失信");
+        creditEventMapper.insert(ev);
+        Enterprise ent = enterpriseMapper.selectById(tenantId);
+        if (ent == null) {
+            return;
+        }
+        int base = ent.getCreditScore() == null ? 60 : ent.getCreditScore();
+        ent.setCreditScore(Math.max(0, Math.min(100, base - 5)));
+        enterpriseMapper.updateById(ent);
+    }
+
     public void applyOnComplete(Order order) {
         if (order == null) {
             return;
