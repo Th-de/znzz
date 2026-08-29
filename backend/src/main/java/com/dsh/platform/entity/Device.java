@@ -19,6 +19,8 @@ public class Device {
     private String precisionText;
     private String parts;
     private String materials;
+    /** 适用工序（逗号分隔） */
+    private String processNames;
     private Integer dailyCapacity;
     private String status;
     private LocalDateTime createdAt;

@@ -49,6 +49,23 @@ public class SolutionController {
         return R.ok();
     }
 
+    /** 某工序可分配候选（各厂承接量/单价/产能） */
+    @GetMapping("/item/{solutionId}/candidates")
+    public R<List<Map<String, Object>>> candidates(@PathVariable Long solutionId,
+                                                   @RequestParam Integer processNo) {
+        return R.ok(solutionService.allocationCandidates(solutionId, processNo));
+    }
+
+    /** 重新分配某工序在各厂之间的承接量（同工序可多厂分摊） */
+    @PostMapping("/item/{solutionId}/reallocate")
+    @PreAuthorize("hasAnyRole('BUYER','OPERATOR','SUPER_ADMIN')")
+    public R<Void> reallocate(@PathVariable Long solutionId,
+                              @RequestParam Integer processNo,
+                              @RequestBody List<Map<String, Object>> allocations) {
+        solutionService.reallocate(solutionId, processNo, allocations);
+        return R.ok();
+    }
+
     @PostMapping("/item/{solutionId}/publish")
     @PreAuthorize("hasAnyRole('OPERATOR','SUPER_ADMIN')")
     public R<Void> publish(@PathVariable Long solutionId) {

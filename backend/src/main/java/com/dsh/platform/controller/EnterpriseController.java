@@ -7,6 +7,7 @@ import com.dsh.platform.entity.Enterprise;
 import com.dsh.platform.service.AuthService;
 import com.dsh.platform.service.CapabilityService;
 import com.dsh.platform.service.EnterpriseAdminService;
+import com.dsh.platform.service.EnterprisePublicService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -22,6 +23,7 @@ public class EnterpriseController {
     private final CapabilityService capabilityService;
     private final AuthService authService;
     private final EnterpriseAdminService enterpriseAdminService;
+    private final EnterprisePublicService enterprisePublicService;
 
     @GetMapping("/all")
     @PreAuthorize("hasAnyRole('OPERATOR','SUPER_ADMIN')")
@@ -61,6 +63,20 @@ public class EnterpriseController {
     @PreAuthorize("hasAnyRole('BUYER','FACTORY')")
     public R<Map<String, Object>> mine() {
         return R.ok(capabilityService.mineProfile());
+    }
+
+    /** 工厂公开画像：介绍/设备/产能/平台计算的合格率，买家、运营均可看 */
+    @GetMapping("/{id}/public-profile")
+    public R<Map<String, Object>> publicProfile(@PathVariable Long id) {
+        return R.ok(enterprisePublicService.publicProfile(id));
+    }
+
+    /** 工厂更新企业介绍 */
+    @PutMapping("/introduction")
+    @PreAuthorize("hasRole('FACTORY')")
+    public R<Void> updateIntroduction(@RequestBody Map<String, String> body) {
+        enterprisePublicService.updateIntroduction(body == null ? "" : body.get("introduction"));
+        return R.ok();
     }
 
     @GetMapping("/capability")

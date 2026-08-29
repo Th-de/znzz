@@ -1,11 +1,15 @@
 <template>
   <div>
-      <el-table :data="orders" border>
+      <PagedBox :data="orders" v-slot="{ rows }">
+      <el-table :data="rows" border>
         <el-table-column prop="title" label="需求" min-width="180" />
         <el-table-column prop="productName" label="产品" width="140" />
         <el-table-column prop="factoryNames" label="工厂" min-width="160" />
         <el-table-column prop="totalAmount" label="总金额" width="110" />
         <el-table-column prop="commissionAmount" label="佣金" width="90" />
+        <el-table-column label="下单时间" width="160">
+          <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
+        </el-table-column>
         <el-table-column label="状态" width="110">
           <template #default="{ row }">{{ label(ORDER_STATUS, row.status) }}</template>
         </el-table-column>
@@ -15,13 +19,15 @@
           </template>
         </el-table-column>
       </el-table>
+      </PagedBox>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
 import { listOrders } from '../../api/order'
-import { ORDER_STATUS, label } from '../../utils/labels'
+import PagedBox from '../../components/PagedBox.vue'
+import { ORDER_STATUS, label, fmtTime } from '../../utils/labels'
 
 const orders = ref([])
 

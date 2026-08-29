@@ -23,7 +23,8 @@
         </el-card>
       </div>
       <h3>我的需求</h3>
-      <el-table :data="demands" border>
+      <PagedBox :data="demands" v-slot="{ rows }">
+      <el-table :data="rows" border>
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="title" label="标题" />
         <el-table-column prop="productName" label="产品" />
@@ -31,9 +32,17 @@
         <el-table-column label="状态" width="140">
           <template #default="{ row }">{{ label(DEMAND_STATUS, row.status) }}</template>
         </el-table-column>
+        <el-table-column label="提交时间" width="160">
+          <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
+        </el-table-column>
+        <el-table-column label="发布/意向开始" width="160">
+          <template #default="{ row }">{{ fmtTime(row.publishedAt) }}</template>
+        </el-table-column>
         <el-table-column label="倒计时" min-width="180">
           <template #default="{ row }">
             <IntentionCountdown v-if="row.status==='PUBLISHED'" :end-at="row.intentionEndAt" />
+            <IntentionCountdown v-else-if="row.status==='FACTORY_THINKING'" :end-at="row.factoryThinkingEndAt" />
+            <IntentionCountdown v-else-if="row.status==='BUYER_THINKING'" :end-at="row.buyerThinkingEndAt" />
             <IntentionCountdown v-else-if="row.status==='LOCKING'" :end-at="row.lockingEndAt" />
             <span v-else>-</span>
           </template>
@@ -46,6 +55,7 @@
             <el-button v-if="row.status==='PUBLISHED'" size="small" type="danger" @click="cancelAndRepublish(row)">取消并重新发布</el-button>
             <el-button v-if="row.status==='THINKING'" size="small" type="success" @click="decide(row, 'CONTINUE')">继续</el-button>
             <el-button v-if="row.status==='THINKING'" size="small" type="danger" @click="decide(row, 'CANCEL')">取消</el-button>
+            <el-button v-if="row.status==='BUYER_THINKING'" size="small" type="success" @click="$router.push('/buyer/demand/' + row.id)">去决定(交保证金/取消)</el-button>
             <el-button v-if="row.status==='SOLUTION_GENERATED' && canPick(row)" size="small" type="primary" @click="$router.push('/buyer/solutions/'+row.id)">看方案</el-button>
             <el-tooltip v-else-if="row.status==='SOLUTION_GENERATED'" content="运营审阅并下发后才能选择方案" placement="top">
               <el-button size="small" disabled>等待运营下发方案</el-button>
@@ -55,6 +65,7 @@
           </template>
         </el-table-column>
       </el-table>
+      </PagedBox>
   </div>
 </template>
 
@@ -64,8 +75,9 @@ import { useRouter } from 'vue-router'
 import { listMine, decide as decideDemand, cancelPublished, getCancelStats } from '../../api/demand'
 import api from '../../api'
 import IntentionCountdown from '../../components/IntentionCountdown.vue'
+import PagedBox from '../../components/PagedBox.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { DEMAND_STATUS, label } from '../../utils/labels'
+import { DEMAND_STATUS, label, fmtTime } from '../../utils/labels'
 
 const router = useRouter()
 const demands = ref([])

@@ -1,85 +1,167 @@
 <template>
   <div>
-      <el-table :data="demands" border>
+      <PagedBox :data="demands" v-slot="{ rows }">
+      <el-table :data="rows" border>
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="title" label="标题" />
         <el-table-column prop="productName" label="产品" />
-        <el-table-column prop="quantity" label="数量" width="100" />
-        <el-table-column label="阶段" width="120">
+        <el-table-column prop="quantity" label="数量" width="90" />
+        <el-table-column label="阶段" width="110">
           <template #default="{ row }">{{ label(DEMAND_STATUS, row.status) }}</template>
         </el-table-column>
-        <el-table-column label="倒计时" min-width="160">
+        <el-table-column label="发布/意向开始" width="160">
+          <template #default="{ row }">{{ fmtTime(row.publishedAt) }}</template>
+        </el-table-column>
+        <el-table-column label="倒计时" min-width="150">
           <template #default="{ row }">
             <IntentionCountdown v-if="row.status==='PUBLISHED'" :end-at="row.intentionEndAt" />
+            <IntentionCountdown v-else-if="row.status==='FACTORY_THINKING'" :end-at="row.factoryThinkingEndAt" />
             <IntentionCountdown v-else-if="row.status==='LOCKING'" :end-at="row.lockingEndAt" />
             <span v-else>-</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="160">
+        <el-table-column label="详情" width="90">
+          <template #default="{ row }">
+            <el-button size="small" link type="primary" @click="openDetail(row)">查看详情</el-button>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="230">
           <template #default="{ row }">
             <el-button v-if="row.status==='PUBLISHED' && row.applied" size="small" disabled>已报名</el-button>
             <el-button v-else-if="row.status==='PUBLISHED'" size="small" type="primary" @click="openIntention(row)">意向报名</el-button>
-            <el-button v-if="row.status==='LOCKING' && row.myQuoteStatus==='LOCKED'" size="small" disabled>已锁定</el-button>
-            <el-button v-else-if="row.status==='LOCKING' && row.applied" size="small" type="warning" @click="openLock(row)">锁定报价</el-button>
+            <template v-if="row.status==='FACTORY_THINKING' && row.applied">
+              <el-button v-if="row.myQuoteStatus==='LOCKED'" size="small" disabled>已填报</el-button>
+              <template v-else>
+                <el-button size="small" type="warning" @click="openCommit(row)">填报方案</el-button>
+                <el-button size="small" @click="exitThinking(row)">退出</el-button>
+              </template>
+            </template>
+            <el-button v-if="row.status==='LOCKING' && row.applied && row.myQuoteStatus!=='LOCKED'"
+                       size="small" type="warning" @click="openCommit(row)">填报方案</el-button>
           </template>
         </el-table-column>
       </el-table>
+      </PagedBox>
 
-      <el-dialog v-model="dialog" :title="'意向报名 - ' + current.title" width="560px">
-        <p class="tip">不填价格。按工序报名，冻结意向金 1000 元。保证金期截止前未锁价将扣除意向金并记失信。</p>
+      <!-- 需求全量详情 -->
+      <el-dialog v-model="detailDialog" :title="'需求详情 - ' + (detail.demand?.title || '')" width="720px" :close-on-click-modal="false">
+        <el-descriptions :column="2" border v-if="detail.demand">
+          <el-descriptions-item label="产品">{{ detail.demand.productName }}</el-descriptions-item>
+          <el-descriptions-item label="类别">{{ detail.demand.category }}</el-descriptions-item>
+          <el-descriptions-item label="数量">{{ detail.demand.quantity }}</el-descriptions-item>
+          <el-descriptions-item label="材料">{{ detail.demand.material }}</el-descriptions-item>
+          <el-descriptions-item label="关键公差">{{ detail.demand.tolerance }}</el-descriptions-item>
+          <el-descriptions-item label="一般公差">{{ detail.demand.generalTolerance }}</el-descriptions-item>
+          <el-descriptions-item label="表面处理">{{ detail.demand.surfaceTreatment }}</el-descriptions-item>
+          <el-descriptions-item label="AQL">{{ detail.demand.aql }}</el-descriptions-item>
+          <el-descriptions-item label="认证要求">{{ detail.demand.certification }}</el-descriptions-item>
+          <el-descriptions-item label="最低良率">{{ detail.demand.minYield }}</el-descriptions-item>
+          <el-descriptions-item label="发布/意向开始">{{ fmtTime(detail.demand.publishedAt) }}</el-descriptions-item>
+          <el-descriptions-item label="意向截止">{{ fmtTime(detail.demand.intentionEndAt) }}</el-descriptions-item>
+          <el-descriptions-item label="硬交期">{{ detail.demand.deadlineHard }}</el-descriptions-item>
+          <el-descriptions-item label="交付地址">{{ detail.demand.deliveryAddress }}</el-descriptions-item>
+          <el-descriptions-item label="包装">{{ detail.demand.packaging }}</el-descriptions-item>
+          <el-descriptions-item label="检验方式">{{ detail.demand.inspectMode }}</el-descriptions-item>
+          <el-descriptions-item label="图号/版本">{{ detail.demand.partRevision }}</el-descriptions-item>
+          <el-descriptions-item label="分期交付">{{ detail.demand.deliveryTimes || 1 }} 期</el-descriptions-item>
+          <el-descriptions-item label="备注" :span="2">{{ detail.demand.remark || '-' }}</el-descriptions-item>
+        </el-descriptions>
+        <h4 style="margin:14px 0 6px">每期交付要求</h4>
+        <div v-if="deliveryPlanOf(detail.demand).length">
+          <div v-for="(t, i) in deliveryPlanOf(detail.demand)" :key="i" class="tip">第{{ i + 1 }}期：{{ t }}</div>
+        </div>
+        <div v-else class="tip">未分期</div>
+        <h4 style="margin:14px 0 6px">工序</h4>
+        <el-table :data="detail.processes || []" size="small" border>
+          <el-table-column prop="processNo" label="#" width="50" />
+          <el-table-column prop="processName" label="工序" />
+          <el-table-column prop="quantity" label="数量" width="90" />
+          <el-table-column prop="requirement" label="要求" />
+        </el-table>
+        <h4 style="margin:14px 0 6px">图纸/附件</h4>
+        <div v-if="(detail.attachments || []).length">
+          <div v-for="a in detail.attachments" :key="a.id">
+            <el-button link type="primary" @click="downloadAttachment(a.id)">{{ a.fileName }}</el-button>
+          </div>
+        </div>
+        <div v-else class="tip">无附件</div>
+      </el-dialog>
+
+      <!-- 意向报名：可多选工序，意向金按单收一次 -->
+      <el-dialog v-model="dialog" :title="'意向报名 - ' + current.title" width="640px" :close-on-click-modal="false">
+        <p class="tip">各工序是并行分包，不是流水线前后序，接哪几道就独立制造交货。可只报一道。意向金按单只收 1000 元。思考期结束前未填报且未退出，将扣除意向金并记失信。</p>
         <CoverageBars :items="coverage" />
-        <el-form label-width="120px">
-          <el-form-item label="工序">
-            <el-select v-model="form.processNo" placeholder="选工序" style="width:100%">
-              <el-option v-for="p in processes" :key="p.processNo" :label="p.processName" :value="p.processNo" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="投入设备" required>
-            <el-checkbox-group v-model="form.deviceIds">
-              <el-checkbox v-for="d in idleDevices" :key="d.id" :label="d.id">
-                {{ d.name }} {{ d.model || '' }}（{{ d.dailyCapacity || '-' }}件/天 · {{ d.status === 'IDLE' ? '空闲' : d.status }}）
+        <el-form label-width="110px">
+          <el-form-item label="选择工序" required>
+            <el-checkbox-group v-model="selectedProcessNos">
+              <el-checkbox v-for="p in processes" :key="p.processNo" :label="p.processNo">
+                {{ p.processName }}（需 {{ p.quantity }} 件）
               </el-checkbox>
             </el-checkbox-group>
-            <div class="tip" v-if="!idleDevices.length">暂无空闲设备，请先到「我的设备」添加</div>
           </el-form-item>
-          <el-form-item label="日产能(件)">
-            <span>{{ dailyCapacity || '见能力档案' }}</span>
-          </el-form-item>
-          <el-form-item label="最小承接量"><el-input-number v-model="form.minQty" :min="1" /></el-form-item>
-          <el-form-item label="最大承接量"><el-input-number v-model="form.maxQty" :min="1" /></el-form-item>
+        </el-form>
+        <div v-for="pno in selectedProcessNos" :key="pno" class="process-block">
+          <h4>{{ processName(pno) }}</h4>
+          <el-form label-width="110px">
+            <el-form-item label="最小承接量"><el-input-number v-model="itemForms[pno].minQty" :min="1" /></el-form-item>
+            <el-form-item label="最大承接量"><el-input-number v-model="itemForms[pno].maxQty" :min="1" /></el-form-item>
+          </el-form>
+        </div>
+        <el-form label-width="110px">
           <el-form-item label=" ">
-            <el-checkbox v-model="form.confirm">确认冻结意向金 1000 元</el-checkbox>
+            <el-checkbox v-model="confirmIntent">确认冻结意向金 1000 元（一单一次）</el-checkbox>
           </el-form-item>
         </el-form>
         <template #footer>
           <el-button @click="dialog=false">取消</el-button>
-          <el-button type="primary" :disabled="!form.confirm" @click="submitIntention">提交报名并支付意向金</el-button>
+          <el-button type="primary" :disabled="!confirmIntent" @click="submitIntention">提交报名并支付意向金</el-button>
         </template>
       </el-dialog>
 
-      <el-dialog v-model="lockDialog" title="锁定报价（绑定，取消将扣保证金）" width="560px">
-        <el-form label-width="120px">
-          <el-form-item label="工序">
-            <el-select v-model="lockForm.processNo" style="width:100%">
-              <el-option v-for="p in processes" :key="p.processNo" :label="p.processName" :value="p.processNo" />
-            </el-select>
+      <!-- 工厂思考期：填报实施方案 + 单价 + 分期交付内容，冻结 5% 保证金 -->
+      <el-dialog v-model="commitDialog" :title="'填报方案 - ' + current.title" width="680px" :close-on-click-modal="false">
+        <p class="tip">承接量沿用意向期填写，不可修改。提交后冻结总报价 5% 保证金；中标后保证金转为履约金，落选自动退回。</p>
+        <el-form label-width="110px">
+          <el-form-item label="实施方案" required>
+            <el-input v-model="commitForm.planText" type="textarea" :rows="3"
+                      placeholder="如何组织生产、工艺路线、质量控制措施等" />
           </el-form-item>
-          <el-form-item label="锁定报价"><el-input-number v-model="lockForm.price" :min="1" /></el-form-item>
-          <el-form-item label="良率承诺"><el-input-number v-model="lockForm.yieldRate" :min="0" :max="1" :step="0.01" /></el-form-item>
-          <el-form-item label="工期(天)"><el-input-number v-model="lockForm.promisedDays" :min="1" /></el-form-item>
-          <el-form-item label="分段数">
-            <el-input-number v-model="lockForm.stageCount" :min="1" :max="8" />
-            <span class="tip">大于 1 时按段拆工单，金额均分</span>
+          <el-form-item :label="`第${i + 1}期交付`" v-for="(t, i) in commitForm.deliveryPlan" :key="i" required>
+            <el-input v-model="commitForm.deliveryPlan[i]"
+                      :placeholder="buyerPlanHint(i) || '本期交付的内容与数量'" />
           </el-form-item>
-          <el-form-item label="最小承接量"><el-input-number v-model="lockForm.minQty" :min="1" /></el-form-item>
-          <el-form-item label="最大承接量"><el-input-number v-model="lockForm.maxQty" :min="1" /></el-form-item>
+        </el-form>
+        <el-table :data="commitForm.items" border size="small">
+          <el-table-column label="工序" width="120">
+            <template #default="{ row }">{{ processName(row.processNo) }}</template>
+          </el-table-column>
+          <el-table-column label="承接量(件)" width="100">
+            <template #default="{ row }">{{ row.quantity }}</template>
+          </el-table-column>
+          <el-table-column label="单价(元/件)" width="150">
+            <template #default="{ row }"><el-input-number v-model="row.unitPrice" :min="0.01" :precision="2" size="small" /></template>
+          </el-table-column>
+          <el-table-column label="工期(天)" width="130">
+            <template #default="{ row }"><el-input-number v-model="row.promisedDays" :min="1" size="small" /></template>
+          </el-table-column>
+          <el-table-column label="良率" width="130">
+            <template #default="{ row }"><el-input-number v-model="row.yieldRate" :min="0" :max="1" :step="0.01" size="small" /></template>
+          </el-table-column>
+          <el-table-column label="小计">
+            <template #default="{ row }">￥{{ subTotal(row) }}</template>
+          </el-table-column>
+        </el-table>
+        <div class="summary">
+          总报价：<b>￥{{ commitTotal }}</b>　需冻结保证金(5%)：<b>￥{{ commitDeposit }}</b>
+        </div>
+        <el-form label-width="110px">
           <el-form-item label=" ">
-            <el-checkbox v-model="lockForm.confirm">确认冻结保证金</el-checkbox>
+            <el-checkbox v-model="commitForm.confirm">确认提交并冻结保证金 ￥{{ commitDeposit }}</el-checkbox>
           </el-form-item>
         </el-form>
         <template #footer>
-          <el-button @click="lockDialog=false">取消</el-button>
-          <el-button type="warning" :disabled="!lockForm.confirm" @click="submitLock">提交锁定报价</el-button>
+          <el-button @click="commitDialog=false">取消</el-button>
+          <el-button type="warning" :disabled="!commitForm.confirm" @click="submitCommit">提交方案并冻结保证金</el-button>
         </template>
       </el-dialog>
   </div>
@@ -89,29 +171,53 @@
 import { ref, onMounted, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../../api'
-import { intention, lock } from '../../api/bidding'
+import { intention, commit, exitDemand, listMine } from '../../api/bidding'
 import { getCoverage } from '../../api/demand'
+import { downloadAttachment } from '../../api/file'
 import CoverageBars from '../../components/CoverageBars.vue'
 import IntentionCountdown from '../../components/IntentionCountdown.vue'
-import { ElMessage } from 'element-plus'
-import { DEMAND_STATUS, label } from '../../utils/labels'
+import PagedBox from '../../components/PagedBox.vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { DEMAND_STATUS, label, fmtTime } from '../../utils/labels'
 
 const router = useRouter()
 const demands = ref([])
 const processes = ref([])
 const dialog = ref(false)
-const lockDialog = ref(false)
+const detailDialog = ref(false)
+const commitDialog = ref(false)
 const current = ref({})
-const cap = ref({})
+const detail = ref({})
 const coverage = ref([])
-const form = reactive({ demandId: null, processNo: null, minQty: null, maxQty: null, deviceIds: [], confirm: false })
-const idleDevices = ref([])
-const lockForm = reactive({ demandId: null, processNo: null, price: null, yieldRate: 0.98, promisedDays: 10, minQty: null, maxQty: null, stageCount: 1, confirm: false })
+const selectedProcessNos = ref([])
+const itemForms = reactive({})
+const confirmIntent = ref(false)
+const commitForm = reactive({ demandId: null, planText: '', deliveryPlan: [], items: [], confirm: false })
+const buyerDeliveryPlan = ref([])
 
-const dailyCapacity = computed(() => {
-  const rows = cap.value.capacityByProcess || []
-  return rows[0]?.dailyCapacity || ''
-})
+const commitTotal = computed(() =>
+  commitForm.items.reduce((s, it) => s + (it.unitPrice || 0) * (it.quantity || 0), 0).toFixed(2))
+const commitDeposit = computed(() => (commitTotal.value * 0.05).toFixed(2))
+
+function subTotal(row) {
+  return ((row.unitPrice || 0) * (row.quantity || 0)).toFixed(2)
+}
+
+function processName(pno) {
+  return processes.value.find(p => p.processNo === pno)?.processName || ('工序' + pno)
+}
+
+function deliveryPlanOf(demand) {
+  try {
+    const arr = JSON.parse(demand?.deliveryPlanJson || '[]')
+    return Array.isArray(arr) ? arr : []
+  } catch { return [] }
+}
+
+function buyerPlanHint(i) {
+  const t = buyerDeliveryPlan.value[i]
+  return t ? `买家要求：${t}` : ''
+}
 
 async function load() {
   demands.value = await api.get('/demand/for-factory')
@@ -119,7 +225,6 @@ async function load() {
 
 async function ensureProfile() {
   const data = await api.get('/enterprise/capability')
-  cap.value = data.capability || {}
   if (!data.complete) {
     if (!(data.deviceCount > 0)) {
       ElMessage.warning('请先在「我的设备」中至少添加一台设备')
@@ -138,52 +243,41 @@ async function loadProcesses(row) {
   processes.value = ps.length ? ps : [{ processNo: 1, processName: '整单', quantity: row.quantity }]
 }
 
+async function openDetail(row) {
+  const d = await api.get(`/demand/${row.id}`)
+  detail.value = d
+  detailDialog.value = true
+}
+
 async function openIntention(row) {
   if (!(await ensureProfile())) return
   current.value = row
-  form.demandId = row.id
-  form.processNo = null
-  form.minQty = null
-  form.maxQty = null
-  form.deviceIds = []
-  form.confirm = false
-  idleDevices.value = await api.get('/device/idle')
+  selectedProcessNos.value = []
+  Object.keys(itemForms).forEach(k => delete itemForms[k])
+  confirmIntent.value = false
   await loadProcesses(row)
+  processes.value.forEach(p => {
+    itemForms[p.processNo] = { minQty: null, maxQty: null }
+  })
   const cov = await getCoverage(row.id)
   coverage.value = cov.processes || []
   dialog.value = true
 }
 
-async function openLock(row) {
-  current.value = row
-  lockForm.demandId = row.id
-  lockForm.processNo = null
-  lockForm.price = null
-  lockForm.minQty = null
-  lockForm.maxQty = null
-  lockForm.stageCount = 1
-  lockForm.confirm = false
-  await loadProcesses(row)
-  lockDialog.value = true
-}
-
 async function submitIntention() {
-  if (!form.processNo) return ElMessage.warning('请选择工序')
-  if (!form.minQty || !form.maxQty) return ElMessage.warning('请填写承接量')
-  if (form.minQty > form.maxQty) return ElMessage.warning('最小量不能大于最大量')
-  if (!form.deviceIds?.length) return ElMessage.warning('请勾选投入的设备')
-  const proc = processes.value.find(p => p.processNo === form.processNo)
-  const capQty = proc?.quantity || current.value.quantity
-  if (capQty && form.maxQty > capQty) {
-    return ElMessage.warning('最大承接量不能超过该工序需求数量')
+  if (!selectedProcessNos.value.length) return ElMessage.warning('请至少勾选一道工序')
+  const items = []
+  for (const pno of selectedProcessNos.value) {
+    const f = itemForms[pno]
+    if (!f.minQty || !f.maxQty) return ElMessage.warning(`请填写「${processName(pno)}」承接量`)
+    if (f.minQty > f.maxQty) return ElMessage.warning(`「${processName(pno)}」最小量不能大于最大量`)
+    const proc = processes.value.find(p => p.processNo === pno)
+    if (proc?.quantity && f.maxQty > proc.quantity) {
+      return ElMessage.warning(`「${processName(pno)}」最大承接量不能超过需求数量 ${proc.quantity}`)
+    }
+    items.push({ processNo: pno, minQty: f.minQty, maxQty: f.maxQty })
   }
-  const data = await intention({
-    demandId: form.demandId,
-    processNo: form.processNo,
-    minQty: form.minQty,
-    maxQty: form.maxQty,
-    deviceIds: form.deviceIds,
-  })
+  const data = await intention({ demandId: current.value.id, items })
   if (data?.payUrl) {
     window.open(data.payUrl, '_blank')
     ElMessage.success('已打开支付宝沙箱，付完 1000 元意向金后刷新「我的报名」')
@@ -194,25 +288,48 @@ async function submitIntention() {
   load()
 }
 
-async function submitLock() {
-  if (!lockForm.price) return ElMessage.warning('请填写锁定报价')
-  const n = lockForm.stageCount || 1
-  const days = Math.max(1, Math.floor((lockForm.promisedDays || n) / n))
-  const stageCurveJson = n > 1
-    ? JSON.stringify(Array.from({ length: n }, (_, i) => ({ name: '段' + (i + 1), days })))
-    : null
-  await lock({
-    demandId: lockForm.demandId,
-    processNo: lockForm.processNo,
-    price: lockForm.price,
-    yieldRate: lockForm.yieldRate,
-    promisedDays: lockForm.promisedDays,
-    minQty: lockForm.minQty,
-    maxQty: lockForm.maxQty,
-    stageCurveJson,
+async function openCommit(row) {
+  current.value = row
+  await loadProcesses(row)
+  const d = await api.get(`/demand/${row.id}`)
+  buyerDeliveryPlan.value = deliveryPlanOf(d.demand)
+  const times = d.demand?.deliveryTimes || 1
+  const mine = (await listMine()).filter(q => q.demandId === row.id && q.status === 'INTENTION')
+  if (!mine.length) return ElMessage.warning('没有可填报的报名')
+  commitForm.demandId = row.id
+  commitForm.planText = ''
+  commitForm.deliveryPlan = Array.from({ length: times }, () => '')
+  commitForm.items = mine.map(q => ({
+    processNo: q.processNo, quantity: q.maxQty, unitPrice: null, promisedDays: 10, yieldRate: 0.98,
+  }))
+  commitForm.confirm = false
+  commitDialog.value = true
+}
+
+async function submitCommit() {
+  if (!commitForm.planText.trim()) return ElMessage.warning('请填写实施方案')
+  if (commitForm.deliveryPlan.some(s => !s || !s.trim())) return ElMessage.warning('请填写每一期交付内容')
+  for (const it of commitForm.items) {
+    if (!it.unitPrice) return ElMessage.warning(`请填写「${processName(it.processNo)}」单价`)
+  }
+  await commit({
+    demandId: commitForm.demandId,
+    planText: commitForm.planText,
+    deliveryPlan: commitForm.deliveryPlan,
+    items: commitForm.items.map(it => ({
+      processNo: it.processNo, unitPrice: it.unitPrice,
+      yieldRate: it.yieldRate, promisedDays: it.promisedDays,
+    })),
   })
-  ElMessage.success('锁定报价成功，已冻结保证金')
-  lockDialog.value = false
+  ElMessage.success('方案已提交，保证金已冻结')
+  commitDialog.value = false
+  load()
+}
+
+async function exitThinking(row) {
+  await ElMessageBox.confirm('确认退出该需求？意向金将退回，退出后不能再参加。', '退出确认', { type: 'warning' })
+  await exitDemand(row.id)
+  ElMessage.success('已退出，意向金已退回')
   load()
 }
 
@@ -221,4 +338,7 @@ onMounted(load)
 
 <style scoped>
 .tip { color: #606266; font-size: 13px; margin: 0 0 12px; }
+.process-block { border: 1px solid #ebeef5; border-radius: 6px; padding: 10px 14px; margin-bottom: 10px; }
+.process-block h4 { margin: 0 0 8px; }
+.summary { margin: 12px 0; font-size: 14px; }
 </style>

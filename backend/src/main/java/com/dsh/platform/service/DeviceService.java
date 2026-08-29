@@ -39,7 +39,7 @@ public class DeviceService {
     public List<Device> listIdleMine() {
         return deviceMapper.selectList(new LambdaQueryWrapper<Device>()
                 .eq(Device::getTenantId, UserContext.tenantId())
-                .eq(Device::getStatus, "IDLE")
+                .eq(Device::getStatus, "GOOD")
                 .orderByDesc(Device::getId));
     }
 
@@ -59,7 +59,9 @@ public class DeviceService {
             d.setTenantId(tid);
             fill(d, req);
             if (!StringUtils.hasText(d.getStatus())) {
-                d.setStatus("IDLE");
+                d.setStatus("GOOD");
+            } else {
+                d.setStatus(normalizeStatus(d.getStatus()));
             }
             deviceMapper.insert(d);
             return d.getId();
@@ -78,8 +80,8 @@ public class DeviceService {
 
     @Transactional
     public void setStatus(Long id, String status) {
-        if (!List.of("IDLE", "IN_USE", "MAINTENANCE").contains(status)) {
-            throw new BizException("状态只能是空闲/使用中/维修中");
+        if (!"GOOD".equals(status) && !"FAULT".equals(status)) {
+            throw new BizException("状态只能是良好或故障");
         }
         Device d = requireMine(id);
         d.setStatus(status);
@@ -101,26 +103,147 @@ public class DeviceService {
         }
     }
 
-    @Transactional
-    public void markInUseByQuotation(Quotation q) {
-        for (Long id : parseIds(q == null ? null : q.getDeviceIdsJson())) {
-            Device d = deviceMapper.selectById(id);
-            if (d != null && q.getTenantId().equals(d.getTenantId()) && !"MAINTENANCE".equals(d.getStatus())) {
-                d.setStatus("IN_USE");
-                deviceMapper.updateById(d);
+    /** 报名工序必须勾选匹配该工序的设备：无匹配设备不能报该工序。 */
+    public void assertMatchProcess(List<Long> deviceIds, String processName) {
+        if (processName == null || processName.isBlank() || "整单".equals(processName)) {
+            return;
+        }
+        List<Device> devices = byIds(deviceIds);
+        boolean matched = devices.stream().anyMatch(d -> matchesProcess(d, processName));
+        if (!matched) {
+            throw new BizException("所选设备均不适用工序「" + processName + "」，没有对应设备不能承接该工序");
+        }
+    }
+
+    /** 设备是否适用某工序：按 processNames 精确匹配，未维护时按设备名关键字兜底。 */
+    public boolean matchesProcess(Device d, String processName) {
+        if (d == null || processName == null || processName.isBlank()) {
+            return false;
+        }
+        if (StringUtils.hasText(d.getProcessNames())) {
+            for (String p : d.getProcessNames().split("[,，、]")) {
+                String t = p.trim();
+                if (!t.isEmpty() && (processName.contains(t) || t.contains(processName))) {
+                    return true;
+                }
             }
+            return false;
+        }
+        String guessed = guessProcessNames(d.getName());
+        for (String p : guessed.split(",")) {
+            if (!p.isEmpty() && (processName.contains(p) || p.contains(processName))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 按适用工序聚合本厂设备日产能（能力档案只读展示用）。 */
+    public List<java.util.Map<String, Object>> capacityGroups(Long tenantId) {
+        List<Device> devices = deviceMapper.selectList(new LambdaQueryWrapper<Device>()
+                .eq(Device::getTenantId, tenantId));
+        java.util.Map<String, int[]> agg = new java.util.LinkedHashMap<>();
+        for (Device d : devices) {
+            if ("FAULT".equals(normalizeStatus(d.getStatus()))) {
+                continue;
+            }
+            String names = StringUtils.hasText(d.getProcessNames())
+                    ? d.getProcessNames() : guessProcessNames(d.getName());
+            for (String p : names.split("[,，、]")) {
+                String t = p.trim();
+                if (t.isEmpty()) {
+                    continue;
+                }
+                int[] a = agg.computeIfAbsent(t, k -> new int[2]);
+                a[0] += d.getDailyCapacity() == null ? 0 : d.getDailyCapacity();
+                a[1]++;
+            }
+        }
+        List<java.util.Map<String, Object>> out = new ArrayList<>();
+        agg.forEach((name, a) -> {
+            java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+            m.put("processName", name);
+            m.put("dailyCapacity", a[0]);
+            m.put("deviceCount", a[1]);
+            out.add(m);
+        });
+        return out;
+    }
+
+    /** 某工序的日产能 = 该厂适用该工序的设备日产能合计（能力档案只读展示用）。 */
+    public int processCapacityOf(Long tenantId, String processName) {
+        List<Device> devices = deviceMapper.selectList(new LambdaQueryWrapper<Device>()
+                .eq(Device::getTenantId, tenantId));
+        return devices.stream()
+                .filter(d -> matchesProcess(d, processName))
+                .mapToInt(d -> d.getDailyCapacity() == null ? 0 : d.getDailyCapacity())
+                .sum();
+    }
+
+    public String guessProcessNames(String name) {
+        if (name == null) {
+            return "通用加工";
+        }
+        List<String> ps = new ArrayList<>();
+        if (name.contains("车")) {
+            ps.add("车削");
+            ps.add("粗车");
+            ps.add("精车");
+        }
+        if (name.contains("铣") || name.contains("加工中心")) {
+            ps.add("铣削");
+            ps.add("精铣");
+            ps.add("CNC加工");
+        }
+        if (name.contains("磨")) {
+            ps.add("磨削");
+            ps.add("精磨");
+        }
+        if (name.contains("热处理") || name.contains("炉") || name.contains("淬")) {
+            ps.add("热处理");
+            ps.add("淬火");
+            ps.add("回火");
+        }
+        if (name.contains("钻")) {
+            ps.add("钻孔");
+        }
+        if (name.contains("镀") || name.contains("喷") || name.contains("氧化")) {
+            ps.add("表面处理");
+        }
+        if (name.contains("检") || name.contains("测量") || name.contains("三坐标")) {
+            ps.add("检测");
+        }
+        return ps.isEmpty() ? "通用加工" : String.join(",", ps);
+    }
+
+    @Transactional
+    public void fillMissingProcessNames() {
+        List<Device> list = deviceMapper.selectList(new LambdaQueryWrapper<Device>()
+                .isNull(Device::getProcessNames));
+        for (Device d : list) {
+            d.setProcessNames(guessProcessNames(d.getName()));
+            deviceMapper.updateById(d);
         }
     }
 
     @Transactional
-    public void releaseByQuotation(Quotation q) {
-        for (Long id : parseIds(q == null ? null : q.getDeviceIdsJson())) {
-            Device d = deviceMapper.selectById(id);
-            if (d != null && q.getTenantId().equals(d.getTenantId()) && "IN_USE".equals(d.getStatus())) {
-                d.setStatus("IDLE");
-                deviceMapper.updateById(d);
-            }
+    public void releaseByQuotations(List<Quotation> qs) {
+        if (qs == null) {
+            return;
         }
+        for (Quotation q : qs) {
+            releaseByQuotation(q);
+        }
+    }
+
+    @Transactional
+    public void markInUseByQuotation(Quotation q) {
+        // 设备状态由工厂维护（良好/故障），报名不再占用设备
+    }
+
+    @Transactional
+    public void releaseByQuotation(Quotation q) {
+        // 设备状态由工厂维护，解绑报名不改状态
     }
 
     @Transactional
@@ -220,7 +343,7 @@ public class DeviceService {
                 ent.setParts(mats.isEmpty() ? "通用零件" : String.join(",", mats));
                 ent.setMaterials(String.join(",", mats));
                 ent.setDailyCapacity(guessDailyCapacity(name));
-                ent.setStatus("IDLE");
+                ent.setStatus("GOOD");
                 deviceMapper.insert(ent);
             }
             // 每厂再补一台常用辅机，便于报名勾选
@@ -247,7 +370,7 @@ public class DeviceService {
                 extra.setMaterials("铝合金,不锈钢,合金钢");
             }
             extra.setDailyCapacity(guessDailyCapacity(extra.getName()));
-            extra.setStatus("IDLE");
+            extra.setStatus("GOOD");
             deviceMapper.insert(extra);
         }
     }
@@ -266,11 +389,14 @@ public class DeviceService {
         d.setPrecisionText(req.getPrecisionText());
         d.setParts(req.getParts());
         d.setMaterials(req.getMaterials());
+        d.setProcessNames(StringUtils.hasText(req.getProcessNames())
+                ? req.getProcessNames().trim()
+                : guessProcessNames(d.getName()));
         if (req.getDailyCapacity() != null && req.getDailyCapacity() > 0) {
             d.setDailyCapacity(req.getDailyCapacity());
         }
         if (StringUtils.hasText(req.getStatus())) {
-            d.setStatus(req.getStatus());
+            d.setStatus(normalizeStatus(req.getStatus()));
         }
     }
 
@@ -280,11 +406,18 @@ public class DeviceService {
             return 0;
         }
         for (Device d : devices) {
-            if (d != null && d.getDailyCapacity() != null) {
+            if (d != null && d.getDailyCapacity() != null && !"FAULT".equals(normalizeStatus(d.getStatus()))) {
                 sum += d.getDailyCapacity();
             }
         }
         return sum;
+    }
+
+    public static String normalizeStatus(String status) {
+        if ("FAULT".equals(status) || "MAINTENANCE".equals(status)) {
+            return "FAULT";
+        }
+        return "GOOD";
     }
 
     public int guessDailyCapacity(String name) {

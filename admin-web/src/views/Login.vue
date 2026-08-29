@@ -1,7 +1,8 @@
 <template>
   <div class="login-wrap">
     <el-card class="login-card">
-      <h3 style="text-align:center">运营/质检 登录</h3>
+      <h2 style="text-align:center;margin-bottom:4px">智能制造云平台</h2>
+      <p style="text-align:center;color:#909399;margin:0 0 16px">运营 / 质检 管理端</p>
       <el-form :model="form" label-width="60px">
         <el-form-item label="账号"><el-input v-model="form.phone" placeholder="admin" /></el-form-item>
         <el-form-item label="密码"><el-input v-model="form.password" type="password" show-password /></el-form-item>

@@ -48,7 +48,9 @@ public class ProcessCoverageService {
                 .eq(Quotation::getDemandId, demandId)
                 .in(Quotation::getStatus, "INTENTION", "LOCKED"));
         qs = qs.stream()
-                .filter(q -> "LOCKED".equals(q.getStatus()) || "FROZEN".equals(q.getIntentionStatus()))
+                .filter(q -> "LOCKED".equals(q.getStatus())
+                        || "FROZEN".equals(q.getIntentionStatus())
+                        || "COVERED".equals(q.getIntentionStatus()))
                 .toList();
         Map<Integer, Integer> covered = qs.stream().collect(Collectors.groupingBy(
                 q -> q.getProcessNo() == null ? 1 : q.getProcessNo(),

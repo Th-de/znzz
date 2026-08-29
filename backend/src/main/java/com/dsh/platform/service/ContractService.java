@@ -47,6 +47,7 @@ public class ContractService {
     private final DemandStateMachine stateMachine;
     private final SiteNotify siteNotify;
     private final ObjectMapper objectMapper;
+    private final AuditService auditService;
 
     public void createDrafts(Long orderId, String comboJson) {
         for (Long factoryId : factoryIdsFromCombo(comboJson)) {
@@ -104,6 +105,30 @@ public class ContractService {
             Solution s = o == null ? null : solutionMapper.selectById(o.getSolutionId());
             enrich(c, s);
         });
+        return list;
+    }
+
+    /** 合同管理台账：全量合同（含草拟/已签/已审），带需求标题与买家名。 */
+    public List<Contract> listAll(String status) {
+        LambdaQueryWrapper<Contract> q = new LambdaQueryWrapper<Contract>()
+                .orderByDesc(Contract::getId);
+        if (status != null && !status.isBlank()) {
+            q.eq(Contract::getStatus, status.trim());
+        }
+        List<Contract> list = contractMapper.selectList(q);
+        for (Contract c : list) {
+            Order o = orderMapper.selectById(c.getOrderId());
+            Solution s = o == null ? null : solutionMapper.selectById(o.getSolutionId());
+            enrich(c, s);
+            if (o != null) {
+                Demand d = demandMapper.selectById(o.getDemandId());
+                if (d != null) {
+                    c.setDemandTitle(d.getTitle());
+                    Enterprise buyer = enterpriseMapper.selectById(d.getTenantId());
+                    c.setBuyerName(buyer == null ? "" : buyer.getName());
+                }
+            }
+        }
         return list;
     }
 
@@ -216,6 +241,8 @@ public class ContractService {
         siteNotify.send(d.getTenantId(), "合同已审过#" + orderId + "-" + factoryTenantId,
                 "与该厂的合同已确认签署，该厂可以交付。");
         siteNotify.send(factoryTenantId, "合同已审过#" + orderId, "平台已确认你这份合同已签署，请按工单交付。");
+        auditService.record("合同审核通过", "CONTRACT", c.getId(),
+                "订单#" + orderId + " 工厂#" + factoryTenantId);
     }
 
     public boolean isSigned(Long orderId, Long factoryTenantId) {

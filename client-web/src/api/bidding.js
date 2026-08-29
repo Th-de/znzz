@@ -15,3 +15,11 @@ export function lock(body) {
 export function listMine() {
   return api.get('/bidding/mine')
 }
+
+export function commit(body) {
+  return api.post('/bidding/commit', body)
+}
+
+export function exitDemand(demandId) {
+  return api.post(`/bidding/exit/${demandId}`)
+}

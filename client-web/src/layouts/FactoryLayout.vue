@@ -15,7 +15,10 @@
     </el-aside>
     <el-container>
       <el-header class="top">
-        <span>{{ title }}</span>
+        <div class="top-left">
+          <el-button v-if="backTo" link type="primary" @click="goBack">← 返回</el-button>
+          <span>{{ title }}</span>
+        </div>
         <el-button @click="logout">退出</el-button>
       </el-header>
       <el-main class="main">
@@ -42,6 +45,11 @@ const active = computed(() => {
   return '/factory/home'
 })
 const title = computed(() => route.meta.title || '工厂工作台')
+const backTo = computed(() => route.meta.backTo || '')
+function goBack() {
+  if (window.history.length > 1) router.back()
+  else router.push(backTo.value)
+}
 function logout() {
   sessionStorage.clear()
   router.push('/login')
@@ -53,5 +61,6 @@ function logout() {
 .aside { background: #304156; }
 .logo { color: #fff; text-align: center; padding: 16px 0; font-weight: bold; }
 .top { display: flex; align-items: center; justify-content: space-between; background: #fff; border-bottom: 1px solid #eee; }
+.top-left { display: flex; align-items: center; gap: 8px; }
 .main { background: #f5f7fa; }
 </style>

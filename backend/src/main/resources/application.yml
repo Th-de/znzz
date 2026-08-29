@@ -42,7 +42,8 @@ dsh:
   fee:
     intention-fixed: 1000      # 意向金固定金额
     intention-rate: 0.001      # 意向金比例（已弃用，改走固定金额）
-    deposit-rate: 0.01         # 保证金比例 1%（可配置）
+    deposit-rate: 0.05         # 工厂保证金比例 5%（按总报价）
+    buyer-deposit-rate: 0.05   # 买家保证金比例 5%（按预估总价）
     commission-rate: 0.01      # 佣金费率 1%
     cancel-forfeit-rate: 0.5   # 买家反悔扣意向金比例 50%
   credit:
@@ -50,9 +51,11 @@ dsh:
     complete-weight: 0.3
     pass-weight: 0.3
   time:
-    thinking-hours: 12         # 思考期（演示模式可被覆盖）
-    review-hours: 6            # 审核期
-    locking-hours: 48          # 保证金期
+    factory-thinking-hours: 12 # 工厂思考期：决定是否参加并填报方案
+    buyer-thinking-hours: 24   # 买家思考期：决定是否继续并交保证金
+    thinking-hours: 12         # 旧流程思考期（兼容历史数据）
+    review-hours: 6            # 旧流程审核期
+    locking-hours: 48          # 旧流程保证金期
   upload:
     dir: uploads
   ai:

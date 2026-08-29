@@ -25,7 +25,8 @@ public class OrderDtos {
 
     public record OrderListView(Long id, Long demandId, String title, String productName,
                                 String factoryNames, BigDecimal totalAmount,
-                                BigDecimal commissionAmount, String status) {}
+                                BigDecimal commissionAmount, String status,
+                                LocalDateTime createdAt) {}
 
     public record ComboItem(Long factoryId, String factoryName, Integer processNo,
                             String processName, Integer quantity, Object price, Object days) {}

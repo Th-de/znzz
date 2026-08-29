@@ -10,10 +10,10 @@ const routes = [
       { path: 'home', component: () => import('../views/buyer/Home.vue'), meta: { title: '我的需求' } },
       { path: 'mine', component: () => import('../views/MyHome.vue'), meta: { title: '我的主页' } },
       { path: 'publish', component: () => import('../views/buyer/Publish.vue'), meta: { title: '发布需求' } },
-      { path: 'demand/:id', component: () => import('../views/buyer/DemandDetail.vue'), meta: { title: '需求详情' } },
-      { path: 'solutions/:demandId', component: () => import('../views/buyer/Solutions.vue'), meta: { title: '方案比选' } },
+      { path: 'demand/:id', component: () => import('../views/buyer/DemandDetail.vue'), meta: { title: '需求详情', backTo: '/buyer/home' } },
+      { path: 'solutions/:demandId', component: () => import('../views/buyer/Solutions.vue'), meta: { title: '方案比选', backTo: '/buyer/home' } },
       { path: 'orders', component: () => import('../views/buyer/Orders.vue'), meta: { title: '我的订单' } },
-      { path: 'order/:id', component: () => import('../views/buyer/OrderDetail.vue'), meta: { title: '订单履约' } },
+      { path: 'order/:id', component: () => import('../views/buyer/OrderDetail.vue'), meta: { title: '订单履约', backTo: '/buyer/orders' } },
       { path: 'notifies', component: () => import('../views/Notifies.vue'), meta: { title: '通知' } },
     ],
   },
@@ -36,6 +36,16 @@ const routes = [
 const router = createRouter({
   history: createWebHistory(),
   routes,
+})
+
+router.beforeEach((to) => {
+  if (to.path === '/login') return true
+  const token = sessionStorage.getItem('token')
+  if (!token) return '/login'
+  const role = sessionStorage.getItem('role')
+  if (to.path.startsWith('/buyer') && role !== 'BUYER') return role === 'FACTORY' ? '/factory/home' : '/login'
+  if (to.path.startsWith('/factory') && role !== 'FACTORY') return role === 'BUYER' ? '/buyer/home' : '/login'
+  return true
 })
 
 export default router

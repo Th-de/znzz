@@ -33,6 +33,10 @@ public class Contract {
     private String fileName;
     @com.baomidou.mybatisplus.annotation.TableField(exist = false)
     private String signHint;
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private String demandTitle;
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private String buyerName;
     private LocalDateTime signedAt;
     private LocalDateTime createdAt;
 }

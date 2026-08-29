@@ -2,10 +2,12 @@ package com.dsh.platform.domain.order;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.dsh.platform.common.BizException;
+import com.dsh.platform.entity.Demand;
 import com.dsh.platform.entity.Order;
 import com.dsh.platform.entity.Quotation;
 import com.dsh.platform.entity.Solution;
 import com.dsh.platform.entity.WorkStage;
+import com.dsh.platform.mapper.DemandMapper;
 import com.dsh.platform.mapper.QuotationMapper;
 import com.dsh.platform.mapper.WorkStageMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -30,6 +32,7 @@ public class WorkStageSplitter {
 
     private final WorkStageMapper workStageMapper;
     private final QuotationMapper quotationMapper;
+    private final DemandMapper demandMapper;
     private final ObjectMapper objectMapper;
 
     public void splitForFactory(Order order, Solution solution, Long factoryId) {
@@ -72,6 +75,30 @@ public class WorkStageSplitter {
                 .eq(Quotation::getProcessNo, processNo)
                 .in(Quotation::getStatus, "LOCKED", "WIN")
                 .last("limit 1"));
+        // 新流程：按买家规定的分期数拆段，段名带工厂填报的每期交付内容
+        Demand demand = demandMapper.selectById(order.getDemandId());
+        int periods = demand == null || demand.getDeliveryTimes() == null ? 0 : demand.getDeliveryTimes();
+        if (periods > 1) {
+            List<String> plan = readPlan(q == null ? null : q.getDeliveryPlanJson());
+            BigDecimal usedAmt = BigDecimal.ZERO;
+            int usedQty = 0;
+            int usedDays = 0;
+            for (int i = 0; i < periods; i++) {
+                boolean last = i == periods - 1;
+                BigDecimal amt = last ? price.subtract(usedAmt)
+                        : price.divide(BigDecimal.valueOf(periods), 2, RoundingMode.DOWN);
+                usedAmt = usedAmt.add(amt);
+                int segQty = last ? Math.max(0, quantity - usedQty) : quantity / periods;
+                usedQty += segQty;
+                int segDays = last ? Math.max(1, days - usedDays) : Math.max(1, days / periods);
+                usedDays += segDays;
+                String content = i < plan.size() && plan.get(i) != null && !plan.get(i).isBlank()
+                        ? "：" + plan.get(i) : "";
+                insertStage(order, factoryId, processNo,
+                        processName + "·第" + (i + 1) + "期" + content, segQty, segDays, amt);
+            }
+            return;
+        }
         List<JsonNode> segs = readCurve(q == null ? null : q.getStageCurveJson());
         if (segs.isEmpty()) {
             insertStage(order, factoryId, processNo, processName, quantity, days, price);
@@ -95,6 +122,17 @@ public class WorkStageSplitter {
                     ? processName + "·段" + (i + 1)
                     : processName + "·" + seg.path("name").asText();
             insertStage(order, factoryId, processNo, name, quantity, d, amt);
+        }
+    }
+
+    private List<String> readPlan(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        try {
+            return objectMapper.readValue(json, new TypeReference<List<String>>() {});
+        } catch (Exception e) {
+            return List.of();
         }
     }
 

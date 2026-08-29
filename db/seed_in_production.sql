@@ -163,7 +163,7 @@ INSERT INTO stage_progress_log (stage_id, done_qty, progress, remark, created_at
   (@ws_heat, 800, 100, '800 件热处理全部完成，已装箱待平台质检。', DATE_SUB(NOW(), INTERVAL 1 DAY)),
   (@ws_fine, 120, 15, '已精磨 120 件安装面，φ42h6 抽检在公差内。', DATE_SUB(NOW(), INTERVAL 2 DAY));
 
-UPDATE device SET status='IN_USE' WHERE id IN (@dev_rough, @dev_heat, @dev_fine);
+UPDATE device SET status='GOOD' WHERE id IN (@dev_rough, @dev_heat, @dev_fine);
 
 INSERT INTO fund_flow (demand_id, tenant_id, type, direction, amount, status, idempotent_no, created_at) VALUES
   (@did, @f_rough, 'INTENTION', 'FREEZE', 1000.00, 'SUCCESS', CONCAT('INTENTION-FREEZE-', @qid_rough), DATE_SUB(NOW(), INTERVAL 16 DAY)),

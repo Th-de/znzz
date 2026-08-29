@@ -68,6 +68,7 @@ public class OrderService {
     private final AttachmentMapper attachmentMapper;
     private final DeviceService deviceService;
     private final FundLedger fundLedger;
+    private final AuditService auditService;
 
     @Value("${dsh.fee.commission-rate}")
     private BigDecimal commissionRate;
@@ -130,30 +131,42 @@ public class OrderService {
         o.setStatus("CREATED");
         orderMapper.insert(o);
         contractService.createDrafts(o.getId(), s.getFinalComboJson());
-        List<Long> winFactoryIds = new java.util.ArrayList<>();
+        // 同工序可多厂分量：按 (厂, 工序) 组合判定 WIN/LOSE，落选逐一退款
+        java.util.Set<String> winPairs = new java.util.HashSet<>();
+        Map<Long, java.util.List<String>> winProcessNames = new LinkedHashMap<>();
         for (Map<String, Object> c : combo) {
             Long fid = Long.valueOf(c.get("factoryId").toString());
-            winFactoryIds.add(fid);
             Integer pno = Integer.valueOf(c.get("processNo").toString());
-            quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
-                    .eq(Quotation::getDemandId, demandId).eq(Quotation::getProcessNo, pno))
-                    .forEach(q -> {
-                        q.setStatus(q.getTenantId().equals(fid) ? "WIN" : "LOSE");
-                        quotationMapper.updateById(q);
-                    });
+            winPairs.add(fid + "-" + pno);
+            String pname = c.get("processName") == null ? ("工序" + pno) : c.get("processName").toString();
+            Integer qty = c.get("quantity") == null ? null
+                    : new BigDecimal(c.get("quantity").toString()).intValue();
+            winProcessNames.computeIfAbsent(fid, k -> new java.util.ArrayList<>())
+                    .add(pname + (qty == null ? "" : "×" + qty + "件"));
         }
-        List<Quotation> losers = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
+        List<Quotation> allQuotes = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
                 .eq(Quotation::getDemandId, demandId)
-                .eq(Quotation::getStatus, "LOSE"));
-        for (Quotation q : losers) {
-            fundLedger.refundLoser(q);
+                .in(Quotation::getStatus, "LOCKED", "INTENTION"));
+        for (Quotation q : allQuotes) {
+            Integer pno = q.getProcessNo() == null ? 1 : q.getProcessNo();
+            boolean win = winPairs.contains(q.getTenantId() + "-" + pno);
+            q.setStatus(win ? "WIN" : "LOSE");
+            quotationMapper.updateById(q);
+            if (!win) {
+                fundLedger.refundLoser(q);
+            }
         }
+        List<Long> winFactoryIds = new java.util.ArrayList<>(winProcessNames.keySet());
         deviceService.releaseLosers(demandId, winFactoryIds);
         stateMachine.transit(d, DemandStatus.SOLUTION_SELECTED);
         demandMapper.updateById(d);
         siteNotify.send(d.getTenantId(), "请按厂上传合同#" + o.getId(), "方案已派单。请按中标厂分别上传你们拟定的合同并签名。");
-        combo.stream().map(c -> Long.valueOf(c.get("factoryId").toString())).distinct()
-                .forEach(fid -> siteNotify.send(fid, "请签合同#" + o.getId(), "你已中标。买家上传与你的合同后，请阅读并签名。"));
+        // 只把各厂自己承接的那部分发给它，不发整体方案
+        winProcessNames.forEach((fid, names) -> siteNotify.send(fid, "请签合同#" + o.getId(),
+                "你已中标，承接内容：" + String.join("、", names)
+                        + "。买家上传与你的合同后，请阅读并签名。"));
+        auditService.record("派单", "DEMAND", demandId,
+                "订单#" + o.getId() + " 总额" + total + " 中标厂" + winFactoryIds);
         return o.getId();
     }
 
@@ -345,6 +358,8 @@ public class OrderService {
             siteNotify.send(d.getTenantId(), "阶段问卷#" + stageId, "请对本阶段填写 4 题问卷。");
         }
         siteNotify.send(ws.getTenantId(), "阶段问卷#" + stageId, "请对本阶段填写 4 题问卷。");
+        auditService.record("工单质检", "STAGE", stageId,
+                "结果" + result + " 工序「" + ws.getProcessName() + "」");
     }
 
     @Transactional
@@ -367,6 +382,26 @@ public class OrderService {
         BigDecimal amount = ws.getAmount() == null ? BigDecimal.ZERO : ws.getAmount();
         if (amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new BizException("阶段金额无效");
+        }
+        // 尾款抵扣：最后一笔未付阶段款用买家保证金冲抵
+        Long unpaid = workStageMapper.selectCount(new LambdaQueryWrapper<WorkStage>()
+                .eq(WorkStage::getOrderId, ws.getOrderId())
+                .in(WorkStage::getEscrowStatus, "NONE", "PENDING_PAY"));
+        if (unpaid != null && unpaid <= 1) {
+            BigDecimal offset = fundLedger.applyBuyerDepositToEscrow(
+                    o.getId(), d.getId(), d.getTenantId(), ws.getId(), amount);
+            if (offset.compareTo(BigDecimal.ZERO) > 0) {
+                d.setBuyerDepositStatus("DEDUCTED");
+                demandMapper.updateById(d);
+                amount = amount.subtract(offset);
+                siteNotify.send(d.getTenantId(), "保证金已抵扣尾款#" + ws.getId(),
+                        "你的保证金 ¥" + offset + " 已抵扣本阶段尾款，还需支付 ¥" + amount + "。");
+            }
+            if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+                ws.setEscrowStatus("HELD");
+                workStageMapper.updateById(ws);
+                return new com.dsh.platform.domain.pay.EscrowStart(true, null);
+            }
         }
         var started = paymentChannel.startEscrow(o.getId(), ws.getId(), d.getTenantId(), amount);
         ws.setEscrowStatus(started.held() ? "HELD" : "PENDING_PAY");
@@ -439,6 +474,16 @@ public class OrderService {
         }
         o.setStatus("COMPLETED");
         orderMapper.updateById(o);
+        // 保证金若有剩余（抵扣后余额或未触发抵扣），完工时退还买家
+        BigDecimal depositLeft = fundLedger.buyerDepositRemaining(d.getId(), d.getTenantId());
+        if (depositLeft.compareTo(BigDecimal.ZERO) > 0) {
+            fundLedger.refundBuyerDeposit(d.getId(), d.getTenantId());
+            siteNotify.send(d.getTenantId(), "保证金已退还#" + orderId,
+                    "订单完成，剩余保证金 ¥" + depositLeft + " 已退回。");
+        }
+        if (!"DEDUCTED".equals(d.getBuyerDepositStatus())) {
+            d.setBuyerDepositStatus("RELEASED");
+        }
         DemandStatus st = DemandStatus.of(d.getStatus());
         if (st == DemandStatus.CONTRACTED) {
             stateMachine.transit(d, DemandStatus.IN_PRODUCTION);

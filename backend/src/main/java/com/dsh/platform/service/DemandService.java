@@ -42,6 +42,8 @@ public class DemandService {
     private final ProcessCoverageService coverageService;
     private final QuotationMapper quotationMapper;
     private final DeviceService deviceService;
+    private final AuditService auditService;
+    private final EnterprisePublicService enterprisePublicService;
 
     @Transactional
     public Long publish(PublishRequest req) {
@@ -77,6 +79,7 @@ public class DemandService {
         demandMapper.update(null, new LambdaUpdateWrapper<Demand>()
                 .eq(Demand::getId, d.getId())
                 .set(Demand::getIntentionEndAt, null)
+                .set(Demand::getPublishedAt, null)
                 .set(Demand::getReturnReason, ""));
         replaceProcesses(d, req);
         if (req.attachmentId() != null) {
@@ -100,7 +103,8 @@ public class DemandService {
         demandMapper.updateById(d);
         demandMapper.update(null, new LambdaUpdateWrapper<Demand>()
                 .eq(Demand::getId, d.getId())
-                .set(Demand::getIntentionEndAt, null));
+                .set(Demand::getIntentionEndAt, null)
+                .set(Demand::getPublishedAt, null));
         fundLedger.unfreezeIntentionsOfDemand(demandId);
         deviceService.releaseByDemand(demandId);
     }
@@ -137,10 +141,13 @@ public class DemandService {
             }
             stateMachine.transit(d, DemandStatus.PUBLISHED);
             d.setReturnReason("");
+            d.setPublishedAt(LocalDateTime.now());
             d.setIntentionEndAt(intentionDeadline(d.getIntentionDays() == null ? 5 : d.getIntentionDays()));
             demandMapper.updateById(d);
+            auditService.record("需求审核通过", "DEMAND", demandId, "「" + d.getTitle() + "」已发布");
             return;
         }
+        auditService.record("需求退回", "DEMAND", demandId, req.reason());
         returnToBuyer(demandId, new ReturnRequest(req.reason()));
     }
 
@@ -151,11 +158,43 @@ public class DemandService {
         boolean staff = "OPERATOR".equals(role) || "SUPER_ADMIN".equals(role);
         boolean factoryOk = "FACTORY".equals(role)
                 && (DemandStatus.PUBLISHED.name().equals(d.getStatus())
+                || DemandStatus.FACTORY_THINKING.name().equals(d.getStatus())
                 || DemandStatus.LOCKING.name().equals(d.getStatus()));
         if (!owner && !staff && !factoryOk) {
             throw new BizException(403, "无权查看该需求");
         }
         return new DemandDetailView(d, processes(id), fileService.listByBiz("DEMAND", id));
+    }
+
+    /** 买家/运营查看已报名工厂：名称、信誉、能力档案、设备状态。 */
+    public List<Map<String, Object>> listBidFactories(Long demandId) {
+        Demand d = get(demandId);
+        String role = UserContext.role();
+        boolean owner = UserContext.tenantId() != null && UserContext.tenantId().equals(d.getTenantId());
+        boolean staff = "OPERATOR".equals(role) || "SUPER_ADMIN".equals(role);
+        if (!owner && !staff) {
+            throw new BizException(403, "无权查看报名工厂");
+        }
+        List<Quotation> qs = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
+                .eq(Quotation::getDemandId, demandId)
+                .in(Quotation::getStatus, "INTENTION", "LOCKED", "WIN"));
+        Map<Long, List<Quotation>> byFactory = qs.stream()
+                .filter(q -> q.getTenantId() != null)
+                .collect(Collectors.groupingBy(Quotation::getTenantId, java.util.LinkedHashMap::new, Collectors.toList()));
+        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        for (Map.Entry<Long, List<Quotation>> e : byFactory.entrySet()) {
+            Map<String, Object> row = new java.util.LinkedHashMap<>(enterprisePublicService.publicProfile(e.getKey()));
+            List<Integer> processNos = e.getValue().stream()
+                    .map(Quotation::getProcessNo)
+                    .filter(n -> n != null)
+                    .distinct()
+                    .toList();
+            row.put("processNos", processNos);
+            boolean committed = e.getValue().stream().anyMatch(q -> "LOCKED".equals(q.getStatus()) || "WIN".equals(q.getStatus()));
+            row.put("bidStage", committed ? "QUOTED" : "INTENTION");
+            out.add(row);
+        }
+        return out;
     }
 
     public CoverageView coverage(Long id) {
@@ -186,7 +225,8 @@ public class DemandService {
 
     public List<Demand> listForFactory() {
         List<Demand> list = demandMapper.selectList(new LambdaQueryWrapper<Demand>()
-                .in(Demand::getStatus, DemandStatus.PUBLISHED.name(), DemandStatus.LOCKING.name())
+                .in(Demand::getStatus, DemandStatus.PUBLISHED.name(),
+                        DemandStatus.FACTORY_THINKING.name(), DemandStatus.LOCKING.name())
                 .orderByDesc(Demand::getId));
         attachFactoryApply(list);
         return list;
@@ -274,6 +314,13 @@ public class DemandService {
         d.setGeneralTolerance(req.generalTolerance());
         d.setPartRevision(req.partRevision());
         d.setExtraJson(req.extraJson());
+        d.setDeliveryTimes(req.deliveryTimes() == null || req.deliveryTimes() <= 0 ? 1 : req.deliveryTimes());
+        try {
+            d.setDeliveryPlanJson(objectMapper.writeValueAsString(
+                    req.deliveryPlan() == null ? List.of() : req.deliveryPlan()));
+        } catch (Exception e) {
+            d.setDeliveryPlanJson("[]");
+        }
     }
 
     private void replaceProcesses(Demand d, PublishRequest req) {
@@ -290,7 +337,10 @@ public class DemandService {
                 p.setDemandId(d.getId());
                 p.setProcessNo(item.processNo() == null ? i : item.processNo());
                 p.setProcessName(item.processName().trim());
-                p.setQuantity(item.quantity() == null ? d.getQuantity() : item.quantity());
+                if (item.quantity() == null || item.quantity() <= 0) {
+                    throw new BizException("工序「" + item.processName().trim() + "」必须填写本工序数量，不会默认成总需求量");
+                }
+                p.setQuantity(item.quantity());
                 p.setRequirement(item.requirement());
                 processMapper.insert(p);
                 i++;
@@ -367,11 +417,27 @@ public class DemandService {
         if (!StringUtils.hasText(extra.path("heatTreatment").asText(null))) {
             throw new BizException("请填写热处理");
         }
-        long named = req.processes() == null ? 0 : req.processes().stream()
+        List<ProcessItem> namedItems = req.processes() == null ? List.of() : req.processes().stream()
                 .filter(p -> p != null && StringUtils.hasText(p.processName()))
-                .count();
-        if (req.multiProcess() == null || req.multiProcess() != 1 || named < 2) {
-            throw new BizException("请按工序拆开，至少填写 2 道工序（不要用整单承包）");
+                .toList();
+        if (namedItems.isEmpty()) {
+            throw new BizException("请至少填写 1 道工序");
+        }
+        int processSum = namedItems.stream()
+                .mapToInt(p -> p.quantity() == null ? 0 : p.quantity())
+                .sum();
+        if (req.quantity() == null || processSum != req.quantity()) {
+            throw new BizException("各工序零件数量之和必须等于总需求量（" + req.quantity() + " 件）");
+        }
+        int times = req.deliveryTimes() == null ? 1 : req.deliveryTimes();
+        if (times < 1 || times > 10) {
+            throw new BizException("分期交付次数须在 1~10 之间");
+        }
+        if (times > 1) {
+            if (req.deliveryPlan() == null || req.deliveryPlan().size() != times
+                    || req.deliveryPlan().stream().anyMatch(s -> !StringUtils.hasText(s))) {
+                throw new BizException("请填写每一期的交付要求（共 " + times + " 期）");
+            }
         }
     }
 

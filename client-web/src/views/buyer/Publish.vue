@@ -1,6 +1,6 @@
 <template>
   <div>
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="130px" style="max-width:800px">
+      <el-form ref="formRef" :model="form" :rules="rules" label-width="130px" style="max-width:800px" @submit.prevent>
         <el-card shadow="never" class="block">
           <template #header>基础</template>
           <el-form-item label="需求标题" prop="title"><el-input v-model="form.title" /></el-form-item>
@@ -60,11 +60,11 @@
             </el-select>
           </el-form-item>
           <el-form-item label="认证要求" prop="certList">
-            <el-select v-model="form.certList" multiple style="width:100%">
-              <el-option label="ISO9001" value="ISO9001" />
-              <el-option label="IATF16949" value="IATF16949" />
-              <el-option label="CE" value="CE" />
+            <el-select v-model="form.certList" multiple filterable allow-create default-first-option
+                       placeholder="下拉选平台常用项，也可输入后回车自定义" style="width:100%">
+              <el-option v-for="c in CERT_OPTIONS" :key="c" :label="c" :value="c" />
             </el-select>
+            <div class="hint" style="margin-left:0">ISO9001 / IATF16949 / CE 是常用项，不是平台限定。可输入 AS9100、ISO13485 等后回车添加。</div>
           </el-form-item>
           <el-form-item label="最低良率" prop="minYield"><el-input-number v-model="form.minYield" :min="0" :max="1" :step="0.01" /></el-form-item>
           <el-form-item label="最低信用分"><el-input-number v-model="form.minCreditScore" :min="0" :max="100" /></el-form-item>
@@ -76,12 +76,25 @@
           <el-form-item label="弹性交期"><el-date-picker v-model="form.deadlineFlexible" type="date" value-format="YYYY-MM-DD" /></el-form-item>
           <el-form-item label="交付地址" prop="deliveryAddress"><el-input v-model="form.deliveryAddress" /></el-form-item>
           <el-form-item label="包装要求" prop="packaging"><el-input v-model="form.packaging" /></el-form-item>
+          <el-form-item label="分期交付次数">
+            <div class="step">
+              <button type="button" class="step-btn" @click="setTimes(deliveryTimes - 1)">−</button>
+              <span class="step-num">{{ deliveryTimes }}</span>
+              <button type="button" class="step-btn" @click="setTimes(deliveryTimes + 1)">+</button>
+            </div>
+          </el-form-item>
+          <el-form-item v-for="(row, i) in deliveryPlan" :key="'plan-' + i" :label="`第${i + 1}期交什么`">
+            <el-input v-model="row.text" placeholder="本期交付内容/数量/节点" />
+          </el-form-item>
         </el-card>
 
         <el-card shadow="never" class="block">
           <template #header>工序 / 意向 / 图纸</template>
           <el-form-item label="工序列表" prop="processes">
-            <div class="hint" style="margin:0 0 8px">至少 2 道工序。数量是该工序要加工的件数。</div>
+            <div class="hint" style="margin:0 0 8px">
+              每道工序是并行分包（不是流水线前后序），工厂各自制造交货。
+              各工序件数之和必须等于总需求 {{ form.quantity || 0 }} 件，当前合计 {{ processQtySum }} 件。
+            </div>
             <div class="row head">
               <span class="col-name">工序名</span>
               <span class="col-qty">本工序数量(件)</span>
@@ -89,13 +102,19 @@
             </div>
             <div v-for="(p, i) in form.processes" :key="i" class="row">
               <el-input v-model="p.processName" placeholder="如 粗车 / 热处理" class="col-name" />
-              <el-input-number v-model="p.quantity" :min="1" class="col-qty" />
+              <el-input-number v-model="p.quantity" :min="1" class="col-qty" placeholder="必填" />
               <el-input v-model="p.requirement" placeholder="该工序特殊要求，可空" class="col-req" />
-              <el-button @click="form.processes.splice(i,1)">删</el-button>
+              <el-button type="danger" :icon="Delete" circle plain @click="removeProcess(i)" />
             </div>
-            <el-button @click="addProcess">加工序</el-button>
+            <el-button type="primary" :icon="Plus" plain @click="addProcess">添加工序</el-button>
           </el-form-item>
-          <el-form-item label="意向期天数"><el-input-number v-model="form.intentionDays" :min="1" :max="30" /></el-form-item>
+          <el-form-item label="意向期天数">
+            <div class="step">
+              <button type="button" class="step-btn" @click="form.intentionDays = Math.max(1, form.intentionDays - 1)">−</button>
+              <span class="step-num">{{ form.intentionDays }}</span>
+              <button type="button" class="step-btn" @click="form.intentionDays = Math.min(30, form.intentionDays + 1)">+</button>
+            </div>
+          </el-form-item>
           <el-form-item label="图纸/文档" prop="fileName">
             <input type="file" accept=".md,.pdf,.png,.jpg,.jpeg,.dwg,.dxf,.stp,.step,.zip" @change="onFile" />
             <span v-if="form.fileName" class="hint">已选：{{ form.fileName }}</span>
@@ -113,17 +132,18 @@
         />
         <el-alert v-if="editingId" type="warning" :closable="false" title="改完后先交运营审核，通过前工厂看不到。" style="margin-bottom:12px" />
         <el-alert v-else-if="copyFromId" type="info" :closable="false" :title="'将发布新需求，来源单 #' + copyFromId + ' 已取消并留档。'" style="margin-bottom:12px" />
-        <el-button type="primary" :loading="saving" @click="submit">提交申请发布</el-button>
+        <el-button type="primary" native-type="button" :loading="saving" @click="submit">提交申请发布</el-button>
       </el-form>
   </div>
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import api from '../../api'
 import { getDetail, publish, republish, getCancelStats } from '../../api/demand'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Plus, Delete } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -158,16 +178,22 @@ const rules = {
   packaging: require('请填写包装要求'),
   processes: [{
     validator: (_r, _v, cb) => {
-      const n = (form.processes || []).filter(p => p.processName && p.processName.trim()).length
-      n < 2 ? cb(new Error('请至少填写 2 道工序')) : cb()
+      const named = (form.processes || []).filter(p => p.processName && p.processName.trim())
+      if (named.length < 1) return cb(new Error('请至少填写 1 道工序'))
+      if (named.some(p => !p.quantity || p.quantity < 1)) return cb(new Error('每道工序都必须填写本工序数量'))
+      const sum = named.reduce((s, p) => s + Number(p.quantity || 0), 0)
+      if (form.quantity && sum !== Number(form.quantity)) {
+        return cb(new Error('各工序数量之和必须等于总需求量（' + form.quantity + ' 件）'))
+      }
+      cb()
     },
-    trigger: 'blur',
+    trigger: ['blur', 'change'],
   }],
   fileName: [{
     validator: (_r, _v, cb) => {
       (file.value || existingAttachmentId.value) ? cb() : cb(new Error('请上传图纸或文档'))
     },
-    trigger: 'change',
+    trigger: ['blur', 'change'],
   }],
 }
 const form = reactive({
@@ -181,19 +207,54 @@ const form = reactive({
   deliveryAddress: '', packaging: '',
   multiProcess: 1, intentionDays: 5,
   remark: '', fileName: '', processes: [
-    { processNo: 1, processName: '粗车', quantity: null, requirement: '' },
-    { processNo: 2, processName: '热处理', quantity: null, requirement: '' },
-    { processNo: 3, processName: '精磨', quantity: null, requirement: '' },
+    { processNo: 1, processName: '', quantity: null, requirement: '' },
   ],
 })
 
+const CERT_OPTIONS = ['ISO9001', 'IATF16949', 'CE', 'ISO14001', 'AS9100', 'ISO13485']
+const deliveryTimes = ref(1)
+const deliveryPlan = ref([])
+
+function setTimes(n) {
+  const times = Math.min(10, Math.max(1, Number(n) || 1))
+  deliveryTimes.value = times
+  const kept = deliveryPlan.value.map(r => r.text || '')
+  deliveryPlan.value = times > 1
+    ? Array.from({ length: times }, (_, i) => ({ text: kept[i] || '' }))
+    : []
+}
+
+const processQtySum = computed(() =>
+  (form.processes || []).filter(p => p.processName?.trim()).reduce((s, p) => s + Number(p.quantity || 0), 0)
+)
+
+watch(() => form.quantity, (qty) => {
+  if (!qty) return
+  if (form.processes.length === 1 && form.processes[0].quantity == null) {
+    form.processes[0].quantity = qty
+  }
+})
+
 function addProcess() {
-  form.processes.push({ processNo: form.processes.length + 1, processName: '', quantity: form.quantity || 1, requirement: '' })
+  form.processes.push({ processNo: form.processes.length + 1, processName: '', quantity: form.quantity || null, requirement: '' })
+}
+
+async function removeProcess(i) {
+  if (form.processes.length <= 1) {
+    ElMessage.warning('至少保留 1 道工序')
+    return
+  }
+  const p = form.processes[i]
+  if (p.processName?.trim()) {
+    await ElMessageBox.confirm(`删除工序「${p.processName}」？`, '删除确认', { type: 'warning' })
+  }
+  form.processes.splice(i, 1)
 }
 
 function onFile(e) {
   file.value = e.target.files?.[0] || null
   form.fileName = file.value ? file.value.name : ''
+  formRef.value?.validateField?.('fileName')
 }
 
 function dateOnly(v) {
@@ -235,6 +296,8 @@ function buildBody(attachmentId) {
     attachmentId,
     processes: form.processes,
     sourceDemandId: copyFromId.value,
+    deliveryTimes: deliveryTimes.value,
+    deliveryPlan: deliveryTimes.value > 1 ? deliveryPlan.value.map(r => r.text) : [],
   }
 }
 
@@ -280,8 +343,18 @@ async function fillFrom(id, mode) {
   form.multiProcess = d.multiProcess || 0
   form.intentionDays = d.intentionDays || 5
   form.remark = d.remark || ''
+  try {
+    const plan = JSON.parse(d.deliveryPlanJson || '[]')
+    const texts = Array.isArray(plan) ? plan.map(x => (typeof x === 'string' ? x : (x?.text || ''))) : []
+    setTimes(d.deliveryTimes || 1)
+    if (texts.length) {
+      deliveryPlan.value = deliveryPlan.value.map((row, i) => ({ text: texts[i] || row.text }))
+    }
+  } catch {
+    setTimes(d.deliveryTimes || 1)
+  }
   const named = (view.processes || []).filter(p => p.processName && p.processName !== '整单')
-  form.processes = named.length >= 2 ? named.map(p => ({
+  form.processes = named.length >= 1 ? named.map(p => ({
     processNo: p.processNo,
     processName: p.processName,
     quantity: p.quantity,
@@ -294,14 +367,47 @@ async function fillFrom(id, mode) {
 }
 
 function takeSnap() {
-  snapshot.value = JSON.stringify(form)
+  snapshot.value = JSON.stringify({ form, deliveryTimes: deliveryTimes.value, deliveryPlan: deliveryPlan.value })
 }
 function dirty() {
-  return snapshot.value && snapshot.value !== JSON.stringify(form)
+  return snapshot.value && snapshot.value !== JSON.stringify({ form, deliveryTimes: deliveryTimes.value, deliveryPlan: deliveryPlan.value })
+}
+
+function firstError() {
+  if (!form.title?.trim()) return '请填写需求标题'
+  if (!form.productName?.trim()) return '请填写产品名称'
+  if (!form.partRevision?.trim()) return '请填写图号/版本'
+  if (!form.quantity || form.quantity < 1) return '请填写数量'
+  if (!form.material?.trim()) return '请填写材料牌号'
+  if (!form.tolerance?.trim()) return '请填写关键公差'
+  if (!form.surfaceTreatment?.trim()) return '请填写表面处理'
+  if (!form.heatTreatment?.trim()) return '请填写热处理'
+  if (!form.certList?.length) return '请选择或添加认证要求'
+  if (!form.deadlineHard) return '请选择硬交期'
+  const hard = String(form.deadlineHard).slice(0, 10)
+  const today = new Date()
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  if (hard <= todayStr) return '硬交期必须晚于今天'
+  if (!form.deliveryAddress?.trim()) return '请填写交付地址'
+  if (!form.packaging?.trim()) return '请填写包装要求'
+  if (deliveryTimes.value > 1 && deliveryPlan.value.some(r => !r.text?.trim())) return '请填写每一期的交付内容'
+  const named = (form.processes || []).filter(p => p.processName?.trim())
+  if (named.length < 1) return '请至少填写 1 道工序'
+  if (named.some(p => !p.quantity || p.quantity < 1)) return '每道工序都必须填写本工序数量'
+  const sum = named.reduce((s, p) => s + Number(p.quantity || 0), 0)
+  if (sum !== Number(form.quantity)) return '各工序数量之和必须等于总需求量'
+  if (!file.value && !existingAttachmentId.value) return '请上传图纸或文档'
+  return ''
 }
 
 async function submit() {
-  await formRef.value.validate()
+  const err = firstError()
+  if (err) {
+    ElMessage.warning(err)
+    try { await formRef.value?.validate() } catch { /* 标红必填项 */ }
+    document.querySelector('.el-form-item.is-error')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    return
+  }
   saving.value = true
   try {
     let attachmentId = existingAttachmentId.value
@@ -310,7 +416,11 @@ async function submit() {
       fd.append('file', file.value)
       fd.append('bizType', 'DEMAND')
       const up = await api.post('/file/upload', fd)
-      attachmentId = up.id
+      attachmentId = up?.id ?? up
+    }
+    if (!attachmentId) {
+      ElMessage.warning('请上传图纸或文档')
+      return
     }
     const body = buildBody(attachmentId)
     if (editingId.value) {
@@ -322,6 +432,8 @@ async function submit() {
     }
     saved.value = true
     router.push('/buyer/home')
+  } catch (e) {
+    if (!e?.message) ElMessage.error('提交失败，请检查填写内容或稍后重试')
   } finally {
     saving.value = false
   }
@@ -347,10 +459,36 @@ onMounted(async () => {
 
 <style scoped>
 .block { margin-bottom: 12px; }
-.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.row.head { color: #606266; font-size: 12px; margin-bottom: 4px; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.row.head { color: #606266; font-size: 12px; margin-bottom: 8px; }
 .col-name { width: 160px; }
 .col-qty { width: 150px; }
 .col-req { width: 220px; }
 .hint { margin-left: 8px; color: #909399; font-size: 12px; }
+.step {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  overflow: hidden;
+  width: 150px;
+  height: 32px;
+}
+.step-btn {
+  width: 32px;
+  border: 0;
+  background: #f5f7fa;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 32px;
+}
+.step-btn:hover { color: #409eff; }
+.step-num {
+  flex: 1;
+  text-align: center;
+  line-height: 32px;
+  border-left: 1px solid #dcdfe6;
+  border-right: 1px solid #dcdfe6;
+  background: #fff;
+}
 </style>

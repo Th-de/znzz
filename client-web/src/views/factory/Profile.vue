@@ -1,7 +1,7 @@
 <template>
   <div style="max-width:860px">
       <el-alert type="info" :closable="false"
-        title="不填完不能参与意向报名。设备请在「我的设备」维护（至少一台）；此处填写材料、工艺、合格率和工序产能。"
+        title="不填完不能参与意向报名。设备请在「我的设备」维护（至少一台）；此处填写材料、工艺、合格率和企业介绍，工序产能由设备自动推导。"
         style="margin-bottom:16px" />
 
       <el-form label-width="120px">
@@ -29,14 +29,22 @@
           <span class="hint">0~1，如 0.98 表示 98%</span>
         </el-form-item>
 
-        <h4>工序产能（件/天）</h4>
-        <div v-for="(c, i) in form.capacityByProcess" :key="'c'+i" class="row">
-          <el-input v-model="c.processName" placeholder="工序名" style="width:160px" />
-          <el-input-number v-model="c.dailyCapacity" :min="1" placeholder="件/天" />
-          <el-input-number v-model="c.loadPct" :min="0" :max="100" placeholder="负荷%" />
-          <el-button @click="form.capacityByProcess.splice(i,1)">删</el-button>
-        </div>
-        <el-button size="small" @click="form.capacityByProcess.push({ processName:'', dailyCapacity:1000, loadPct:50 })">加产能行</el-button>
+        <h4>企业介绍（买家可见）</h4>
+        <el-form-item label="介绍">
+          <el-input v-model="introduction" type="textarea" :rows="4"
+                    placeholder="主营方向、核心设备、质量体系、代表客户等" />
+        </el-form-item>
+
+        <h4>工序产能（件/天，由设备自动推导）</h4>
+        <el-alert type="info" :closable="false"
+          title="产能不可手填：按「我的设备」里每台设备的适用工序与日产能自动合计。要调整请去改设备。"
+          style="margin-bottom:10px" />
+        <el-table :data="deviceCapacity" border size="small" style="max-width:520px">
+          <el-table-column prop="processName" label="工序" />
+          <el-table-column prop="dailyCapacity" label="日产能(件/天)" width="140" />
+          <el-table-column prop="deviceCount" label="设备数" width="90" />
+        </el-table>
+        <el-empty v-if="!deviceCapacity.length" description="暂无设备，请先到「我的设备」添加" :image-size="60" />
 
         <div style="margin-top:20px">
           <el-button type="primary" @click="save">保存档案</el-button>
@@ -61,8 +69,9 @@ const form = reactive({
   certs: [],
   inspectDevices: '',
   yieldRate: 0.97,
-  capacityByProcess: [{ processName: '整单', dailyCapacity: 1000, loadPct: 50 }],
 })
+const deviceCapacity = ref([])
+const introduction = ref('')
 const snapshot = ref('')
 function takeSnap() { snapshot.value = JSON.stringify(form) }
 function dirty() { return snapshot.value && snapshot.value !== JSON.stringify(form) }
@@ -75,12 +84,17 @@ async function load() {
   if (c.certs) form.certs = c.certs
   if (c.inspectDevices) form.inspectDevices = c.inspectDevices
   if (c.yieldRate != null) form.yieldRate = c.yieldRate
-  if (c.capacityByProcess?.length) form.capacityByProcess = c.capacityByProcess
+  deviceCapacity.value = data.deviceCapacity || []
+  try {
+    const mine = await api.get('/enterprise/mine')
+    introduction.value = mine.introduction || ''
+  } catch { /* 忽略 */ }
   takeSnap()
 }
 
 async function save() {
   await api.put('/enterprise/capability', { ...form })
+  await api.put('/enterprise/introduction', { introduction: introduction.value })
   takeSnap()
   ElMessage.success('档案已保存，可以去报名')
 }

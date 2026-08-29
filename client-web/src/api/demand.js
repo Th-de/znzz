@@ -12,8 +12,8 @@ export function getCoverage(id) {
   return api.get(`/demand/${id}/coverage`)
 }
 
-export function getPanorama(id) {
-  return api.get(`/demand/${id}/panorama`)
+export function listBidFactories(id) {
+  return api.get(`/demand/${id}/factories`)
 }
 
 export function getCancelStats() {
@@ -34,4 +34,8 @@ export function cancelPublished(id, reason) {
 
 export function decide(id, action, reason) {
   return api.post(`/flow/${id}/decide?action=${action}`, reason ? { reason } : {})
+}
+
+export function buyerDecide(id, action, reason) {
+  return api.post(`/flow/${id}/buyer-decide?action=${action}`, reason ? { reason } : {})
 }

@@ -30,4 +30,11 @@ public class AuthController {
         authService.createUser(req);
         return R.ok();
     }
+
+    /** 修改本账号密码：所有已登录角色可用 */
+    @PostMapping("/change-password")
+    public R<Void> changePassword(@RequestBody ChangePasswordRequest req) {
+        authService.changePassword(com.dsh.platform.security.UserContext.userId(), req);
+        return R.ok();
+    }
 }

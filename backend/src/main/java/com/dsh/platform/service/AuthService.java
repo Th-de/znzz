@@ -119,14 +119,96 @@ public class AuthService {
                 .eq(SysUser::getPhone, req.phone().trim())) > 0) {
             throw new BizException("该手机号已存在");
         }
+        // 质检账号必须挂在独立的质检机构企业上，否则不会出现在用户管理的质检方列表
+        Long tenantId;
+        if ("INSPECTION".equals(req.role())) {
+            String orgName = StringUtils.hasText(req.orgName())
+                    ? req.orgName().trim()
+                    : req.realName().trim() + "质检工作室";
+            Enterprise org = enterpriseMapper.selectOne(new LambdaQueryWrapper<Enterprise>()
+                    .eq(Enterprise::getType, "INSPECTION")
+                    .eq(Enterprise::getName, orgName)
+                    .last("limit 1"));
+            if (org == null) {
+                org = new Enterprise();
+                org.setType("INSPECTION");
+                org.setName(orgName);
+                org.setCreditScore(100);
+                org.setAuthStatus("APPROVED");
+                org.setContactName(req.realName().trim());
+                enterpriseMapper.insert(org);
+                accountService.ensure(org.getId());
+            }
+            tenantId = org.getId();
+        } else {
+            tenantId = platformTenantId();
+        }
         SysUser u = new SysUser();
-        u.setTenantId(1L);
+        u.setTenantId(tenantId);
         u.setPhone(req.phone().trim());
         u.setPassword(passwordEncoder.encode(req.password()));
         u.setRole(req.role());
         u.setRealName(req.realName().trim());
         u.setStatus("ENABLED");
         userMapper.insert(u);
+    }
+
+    private Long platformTenantId() {
+        Enterprise p = enterpriseMapper.selectOne(new LambdaQueryWrapper<Enterprise>()
+                .eq(Enterprise::getType, "PLATFORM")
+                .last("limit 1"));
+        return p == null ? 1L : p.getId();
+    }
+
+    /** 修改密码：任何已登录角色可用。 */
+    public void changePassword(Long userId, ChangePasswordRequest req) {
+        if (req == null || !StringUtils.hasText(req.oldPassword()) || !StringUtils.hasText(req.newPassword())) {
+            throw new BizException("请填写原密码和新密码");
+        }
+        if (req.newPassword().length() < 6) {
+            throw new BizException("新密码至少 6 位");
+        }
+        SysUser u = userMapper.selectById(userId);
+        if (u == null) {
+            throw new BizException("账号不存在");
+        }
+        if (!passwordEncoder.matches(req.oldPassword(), u.getPassword())) {
+            throw new BizException("原密码错误");
+        }
+        u.setPassword(passwordEncoder.encode(req.newPassword()));
+        userMapper.updateById(u);
+    }
+
+    /** 存量修复：把挂在平台租户下的质检账号迁到各自独立的质检机构企业（幂等）。 */
+    public void migrateInspectionAccounts() {
+        Long platformId = platformTenantId();
+        List<SysUser> list = userMapper.selectList(new LambdaQueryWrapper<SysUser>()
+                .eq(SysUser::getRole, "INSPECTION"));
+        for (SysUser u : list) {
+            Enterprise cur = enterpriseMapper.selectById(u.getTenantId());
+            if (cur != null && "INSPECTION".equals(cur.getType())) {
+                continue;
+            }
+            String orgName = (StringUtils.hasText(u.getRealName()) ? u.getRealName() : u.getPhone()) + "质检工作室";
+            Enterprise org = enterpriseMapper.selectOne(new LambdaQueryWrapper<Enterprise>()
+                    .eq(Enterprise::getType, "INSPECTION")
+                    .eq(Enterprise::getName, orgName)
+                    .last("limit 1"));
+            if (org == null) {
+                org = new Enterprise();
+                org.setType("INSPECTION");
+                org.setName(orgName);
+                org.setCreditScore(100);
+                org.setAuthStatus("APPROVED");
+                org.setContactName(u.getRealName());
+                enterpriseMapper.insert(org);
+                accountService.ensure(org.getId());
+            }
+            if (!org.getId().equals(u.getTenantId()) || u.getTenantId().equals(platformId)) {
+                u.setTenantId(org.getId());
+                userMapper.updateById(u);
+            }
+        }
     }
 
     public List<Enterprise> listEnterprises() {

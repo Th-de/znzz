@@ -1,6 +1,8 @@
 <template>
   <div class="login-wrap">
     <el-card class="login-card">
+      <h2 class="site-title">智能制造云平台</h2>
+      <p class="site-sub">需求方 / 工厂 服务门户</p>
       <el-tabs v-model="tab">
         <el-tab-pane label="登录" name="login">
           <el-form ref="loginRef" :model="loginForm" :rules="loginRules" label-width="80px">
@@ -95,4 +97,6 @@ async function doRegister() {
 <style scoped>
 .login-wrap { height: 100vh; display: flex; align-items: center; justify-content: center; }
 .login-card { width: 420px; }
+.site-title { text-align: center; margin: 4px 0 2px; }
+.site-sub { text-align: center; color: #909399; margin: 0 0 12px; font-size: 13px; }
 </style>

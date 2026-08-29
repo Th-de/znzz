@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.dsh.platform.common.BizException;
 import com.dsh.platform.domain.coverage.CoverageView;
 import com.dsh.platform.domain.coverage.ProcessCoverageService;
+import com.dsh.platform.domain.credit.CreditScoring;
 import com.dsh.platform.domain.fund.FundLedger;
 import com.dsh.platform.domain.notify.SiteNotify;
 import com.dsh.platform.domain.status.DemandStateMachine;
@@ -13,7 +14,9 @@ import com.dsh.platform.entity.Enterprise;
 import com.dsh.platform.entity.Quotation;
 import com.dsh.platform.mapper.DemandMapper;
 import com.dsh.platform.mapper.EnterpriseMapper;
+import com.dsh.platform.mapper.ProcessMapper;
 import com.dsh.platform.mapper.QuotationMapper;
+import com.dsh.platform.security.UserContext;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +36,9 @@ public class FlowService {
     private final DemandMapper demandMapper;
     private final QuotationMapper quotationMapper;
     private final EnterpriseMapper enterpriseMapper;
+    private final ProcessMapper processMapper;
+    private final CreditScoring creditScoring;
+    private final AuditService auditService;
     private final DemandStateMachine stateMachine;
     private final ProcessCoverageService coverageService;
     private final SiteNotify siteNotify;
@@ -50,30 +56,210 @@ public class FlowService {
     @Value("${dsh.time.locking-hours:48}")
     private int lockingHours;
 
+    @Value("${dsh.time.factory-thinking-hours:12}")
+    private int factoryThinkingHours;
+
+    @Value("${dsh.time.buyer-thinking-hours:24}")
+    private int buyerThinkingHours;
+
+    @Value("${dsh.fee.buyer-deposit-rate:0.05}")
+    private BigDecimal buyerDepositRate;
+
+    /** 意向期结束 → 工厂思考期（12h）：报名厂决定是否参加并填报方案。 */
     @Transactional
     public void endIntention(Long demandId) {
         Demand d = get(demandId);
         if (DemandStatus.of(d.getStatus()) != DemandStatus.PUBLISHED) {
             return;
         }
-        stateMachine.transit(d, DemandStatus.THINKING);
-        d.setThinkingEndAt(LocalDateTime.now().plusHours(Math.max(thinkingHours, 1)));
+        stateMachine.transit(d, DemandStatus.FACTORY_THINKING);
+        d.setFactoryThinkingAt(LocalDateTime.now());
+        d.setFactoryThinkingEndAt(LocalDateTime.now().plusHours(Math.max(factoryThinkingHours, 1)));
         demandMapper.updateById(d);
 
         CoverageView view = coverageService.of(demandId);
-        if (!view.allSatisfied()) {
-            siteNotify.send(d.getTenantId(), "意向期结束#" + demandId,
-                    "需求「" + d.getTitle() + "」意向期已结束，以下工序产能未满足（不含价格）："
-                            + coverageService.unsatisfiedText(view));
+        siteNotify.send(d.getTenantId(), "意向期结束#" + demandId,
+                "需求「" + d.getTitle() + "」意向期已结束，进入 " + factoryThinkingHours + " 小时工厂思考期。"
+                        + (view.allSatisfied() ? "各工序报名产能已满足。"
+                        : "以下工序产能未满足：" + coverageService.unsatisfiedText(view)));
+        notifyFactories(demandId, "工厂思考期开始",
+                "需求「" + d.getTitle() + "」进入工厂思考期（" + factoryThinkingHours
+                        + " 小时）。参加请填报实施方案、单件报价和分期交付内容，并冻结总报价 5% 保证金；"
+                        + "不参加可退出并退回意向金。逾期未填报将扣除意向金并记失信。");
+        auditService.record("结束意向期", "DEMAND", demandId, "进入工厂思考期");
+    }
+
+    /** 工厂思考期结束：填报覆盖则进买家思考期，否则流拍全退。 */
+    @Transactional
+    public void endFactoryThinking(Long demandId) {
+        Demand d = get(demandId);
+        if (DemandStatus.of(d.getStatus()) != DemandStatus.FACTORY_THINKING) {
+            return;
         }
-        List<Quotation> qs = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
-                .eq(Quotation::getDemandId, demandId).eq(Quotation::getStatus, "INTENTION"));
-        if (qs.size() > 1) {
-            for (Quotation q : qs) {
-                siteNotify.send(q.getTenantId(), "竞标提醒",
-                        "您参与的「" + d.getTitle() + "」已有其他人报名，请等待后续通知");
+        if (!committedCovered(d)) {
+            stateMachine.transit(d, DemandStatus.FLOW_FAILED);
+            demandMapper.updateById(d);
+            fundLedger.unfreezeIntentionsOfDemand(demandId);
+            fundLedger.unfreezeDepositsOfDemand(demandId);
+            deviceService.releaseByDemand(demandId);
+            siteNotify.send(d.getTenantId(), "需求流拍#" + demandId,
+                    "需求「" + d.getTitle() + "」工厂思考期结束后各工序填报产能不足，已流拍，相关资金已退回。");
+            notifyFactories(demandId, "需求流拍#" + demandId,
+                    "需求「" + d.getTitle() + "」已流拍，意向金/保证金已退回。");
+            return;
+        }
+        forfeitSilentFactories(d);
+        BigDecimal estimate = estimateTotal(d);
+        stateMachine.transit(d, DemandStatus.BUYER_THINKING);
+        d.setBuyerThinkingAt(LocalDateTime.now());
+        d.setBuyerThinkingEndAt(LocalDateTime.now().plusHours(Math.max(buyerThinkingHours, 1)));
+        d.setEstimatedTotal(estimate);
+        demandMapper.updateById(d);
+        BigDecimal deposit = buyerDepositOf(d);
+        siteNotify.send(d.getTenantId(), "请决定是否继续#" + demandId,
+                "需求「" + d.getTitle() + "」工厂填报已完成，进入买家思考期（" + buyerThinkingHours
+                        + " 小时）。AI 预估总价 ¥" + estimate + "，继续需冻结 5% 保证金 ¥" + deposit
+                        + "（履约后抵扣尾款）；取消或超时未操作将结束订单并退回各方资金。");
+        auditService.record("结束工厂思考期", "DEMAND", demandId,
+                "进入买家思考期，预估总价 " + estimate);
+    }
+
+    /** 买家思考期决定：CONTINUE 交保证金并触发 AI 方案；CANCEL 结束订单全退。 */
+    @Transactional
+    public void buyerDecide(Long demandId, String action, String reason) {
+        Demand d = get(demandId);
+        if (DemandStatus.of(d.getStatus()) != DemandStatus.BUYER_THINKING) {
+            throw new BizException("当前不是买家思考期");
+        }
+        if (!UserContext.tenantId().equals(d.getTenantId())) {
+            throw new BizException(403, "只能操作自己的需求");
+        }
+        if ("CONTINUE".equals(action)) {
+            BigDecimal deposit = buyerDepositOf(d);
+            fundLedger.freezeBuyerDeposit(demandId, d.getTenantId(), deposit);
+            d.setBuyerDepositStatus("FROZEN");
+            stateMachine.transit(d, DemandStatus.SOLUTION_GENERATED);
+            demandMapper.updateById(d);
+            siteNotify.send(d.getTenantId(), "保证金已冻结#" + demandId,
+                    "已冻结保证金 ¥" + deposit + "（履约后抵扣尾款）。AI 正在生成方案，经运营审核后下发。");
+            solutionService.aiGenerateFor(d);
+            return;
+        }
+        if ("CANCEL".equals(action)) {
+            failBuyerThinking(d, DemandStatus.CANCELLED,
+                    reason == null || reason.isBlank() ? "买家思考期取消" : reason.trim(),
+                    "买家已取消，意向金/保证金已退回。");
+            return;
+        }
+        throw new BizException("非法操作");
+    }
+
+    /** 买家思考期超时未交保证金：自动流单，全退。 */
+    @Transactional
+    public void timeoutBuyerThinking(Long demandId) {
+        Demand d = get(demandId);
+        if (DemandStatus.of(d.getStatus()) != DemandStatus.BUYER_THINKING) {
+            return;
+        }
+        failBuyerThinking(d, DemandStatus.FLOW_FAILED, "买家思考期超时未交保证金，自动流单",
+                "买家超时未交保证金，订单已流单，意向金/保证金已退回。");
+    }
+
+    private void failBuyerThinking(Demand d, DemandStatus target, String reason, String factoryMsg) {
+        stateMachine.transit(d, target);
+        d.setCancelReason(reason);
+        demandMapper.updateById(d);
+        fundLedger.unfreezeIntentionsOfDemand(d.getId());
+        fundLedger.unfreezeDepositsOfDemand(d.getId());
+        deviceService.releaseByDemand(d.getId());
+        siteNotify.send(d.getTenantId(), "订单已结束#" + d.getId(),
+                "需求「" + d.getTitle() + "」" + reason + "。");
+        notifyFactories(d.getId(), "订单已结束#" + d.getId(),
+                "需求「" + d.getTitle() + "」" + factoryMsg);
+    }
+
+    /** 各工序已填报（COMMITTED/LOCKED）承接量合计是否覆盖需求量（同工序允许多厂分摊）。 */
+    private boolean committedCovered(Demand d) {
+        List<com.dsh.platform.entity.Process> processes = processMapper.selectList(
+                new LambdaQueryWrapper<com.dsh.platform.entity.Process>()
+                        .eq(com.dsh.platform.entity.Process::getDemandId, d.getId()));
+        List<Quotation> committed = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
+                .eq(Quotation::getDemandId, d.getId())
+                .eq(Quotation::getStatus, "LOCKED"));
+        if (processes.isEmpty()) {
+            int need = d.getQuantity() == null ? 0 : d.getQuantity();
+            int got = committed.stream().mapToInt(q -> q.getMaxQty() == null ? 0 : q.getMaxQty()).sum();
+            return need > 0 && got >= need;
+        }
+        for (com.dsh.platform.entity.Process p : processes) {
+            int need = p.getQuantity() == null ? 0 : p.getQuantity();
+            Integer no = p.getProcessNo() == null ? 1 : p.getProcessNo();
+            int got = committed.stream()
+                    .filter(q -> no.equals(q.getProcessNo() == null ? 1 : q.getProcessNo()))
+                    .mapToInt(q -> q.getMaxQty() == null ? 0 : q.getMaxQty())
+                    .sum();
+            if (need <= 0 || got < need) {
+                return false;
             }
         }
+        return true;
+    }
+
+    /** 逾期既不填报也不退出的厂：扣意向金并记失信（按厂去重）。 */
+    private void forfeitSilentFactories(Demand d) {
+        java.util.Set<Long> done = new java.util.HashSet<>();
+        for (Quotation q : fundLedger.forfeitUnlockedIntentions(d.getId())) {
+            if (!done.add(q.getTenantId())) {
+                continue;
+            }
+            creditScoring.applyNoLock(q.getTenantId(), d.getId());
+            siteNotify.send(q.getTenantId(), "未填报扣除意向金#" + d.getId(),
+                    "需求「" + d.getTitle() + "」工厂思考期已结束，你未填报方案也未退出，意向金已扣除并记失信。");
+        }
+    }
+
+    /** 预估总价：各工序取已填报的最低单价 × 工序数量后求和。 */
+    private BigDecimal estimateTotal(Demand d) {
+        List<Quotation> committed = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
+                .eq(Quotation::getDemandId, d.getId())
+                .eq(Quotation::getStatus, "LOCKED"));
+        List<com.dsh.platform.entity.Process> processes = processMapper.selectList(
+                new LambdaQueryWrapper<com.dsh.platform.entity.Process>()
+                        .eq(com.dsh.platform.entity.Process::getDemandId, d.getId()));
+        BigDecimal total = BigDecimal.ZERO;
+        if (processes.isEmpty()) {
+            for (Quotation q : committed) {
+                total = total.add(q.getPrice() == null ? BigDecimal.ZERO : q.getPrice());
+            }
+            return total.setScale(2, java.math.RoundingMode.HALF_UP);
+        }
+        for (com.dsh.platform.entity.Process p : processes) {
+            Integer no = p.getProcessNo() == null ? 1 : p.getProcessNo();
+            int qty = p.getQuantity() == null ? 0 : p.getQuantity();
+            BigDecimal minUnit = committed.stream()
+                    .filter(q -> no.equals(q.getProcessNo() == null ? 1 : q.getProcessNo()))
+                    .map(q -> unitPriceOf(q))
+                    .filter(u -> u != null && u.compareTo(BigDecimal.ZERO) > 0)
+                    .min(BigDecimal::compareTo)
+                    .orElse(BigDecimal.ZERO);
+            total = total.add(minUnit.multiply(BigDecimal.valueOf(qty)));
+        }
+        return total.setScale(2, java.math.RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal unitPriceOf(Quotation q) {
+        if (q.getUnitPrice() != null && q.getUnitPrice().compareTo(BigDecimal.ZERO) > 0) {
+            return q.getUnitPrice();
+        }
+        if (q.getPrice() != null && q.getMaxQty() != null && q.getMaxQty() > 0) {
+            return q.getPrice().divide(BigDecimal.valueOf(q.getMaxQty()), 2, java.math.RoundingMode.HALF_UP);
+        }
+        return null;
+    }
+
+    public BigDecimal buyerDepositOf(Demand d) {
+        BigDecimal base = d.getEstimatedTotal() == null ? BigDecimal.ZERO : d.getEstimatedTotal();
+        return base.multiply(buyerDepositRate).setScale(2, java.math.RoundingMode.HALF_UP);
     }
 
     @Transactional

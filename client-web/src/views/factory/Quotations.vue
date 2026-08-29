@@ -1,6 +1,7 @@
 <template>
   <div>
-      <el-table :data="quotations" border>
+      <PagedBox :data="quotations" v-slot="{ rows }">
+      <el-table :data="rows" border>
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="demandId" label="需求ID" width="80" />
         <el-table-column prop="demandTitle" label="需求标题" min-width="160" />
@@ -8,9 +9,22 @@
         <el-table-column label="承接区间" width="140">
           <template #default="{ row }">{{ row.minQty }} ~ {{ row.maxQty }}</template>
         </el-table-column>
-        <el-table-column prop="price" label="锁定报价" width="110" />
+        <el-table-column label="单价" width="90">
+          <template #default="{ row }">{{ row.unitPrice ?? '-' }}</template>
+        </el-table-column>
+        <el-table-column prop="price" label="总报价" width="110" />
         <el-table-column label="阶段" width="120">
-          <template #default="{ row }">{{ label(QUOTE_STATUS, row.status) }}</template>
+          <template #default="{ row }">
+            <el-tag v-if="row.status==='WIN'" type="success">中标</el-tag>
+            <el-tag v-else-if="row.status==='LOSE'" type="info">未中标(已退)</el-tag>
+            <span v-else>{{ label(QUOTE_STATUS, row.status) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="报名时间" width="160">
+          <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
+        </el-table-column>
+        <el-table-column label="更新时间" width="160">
+          <template #default="{ row }">{{ fmtTime(row.updatedAt) }}</template>
         </el-table-column>
         <el-table-column label="意向金" width="130">
           <template #default="{ row }">{{ label(INTENTION_STATUS, row.intentionStatus) }}</template>
@@ -23,6 +37,7 @@
           </template>
         </el-table-column>
       </el-table>
+      </PagedBox>
   </div>
 </template>
 
@@ -31,7 +46,8 @@ import { ref, onMounted } from 'vue'
 import api from '../../api'
 import { ElMessage } from 'element-plus'
 import { payIntention } from '../../api/bidding'
-import { QUOTE_STATUS, INTENTION_STATUS, label } from '../../utils/labels'
+import PagedBox from '../../components/PagedBox.vue'
+import { QUOTE_STATUS, INTENTION_STATUS, label, fmtTime } from '../../utils/labels'
 
 const quotations = ref([])
 

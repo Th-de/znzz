@@ -2,21 +2,30 @@
   <div>
       <el-alert type="info" :closable="false" title="合同未双签且平台未审过时，不能交付。质检合格后工钱先托管，完工才结算。" style="margin-bottom:12px" />
       <h4 v-if="pendingOrders.length">待签合同</h4>
-      <el-table v-if="pendingOrders.length" :data="pendingOrders" border style="margin-bottom:16px">
+      <PagedBox v-if="pendingOrders.length" :data="pendingOrders" v-slot="{ rows }" style="margin-bottom:16px">
+      <el-table :data="rows" border>
         <el-table-column prop="title" label="需求" />
         <el-table-column prop="productName" label="产品" width="140" />
         <el-table-column prop="totalAmount" label="金额" width="120" />
+        <el-table-column label="下单时间" width="160">
+          <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
+        </el-table-column>
         <el-table-column label="操作" width="120">
           <template #default="{ row }">
             <el-button size="small" type="primary" @click="openSign(row)">签合同</el-button>
           </template>
         </el-table-column>
       </el-table>
+      </PagedBox>
       <h4>工单</h4>
-      <el-table :data="stageList" border>
+      <PagedBox :data="stageList" v-slot="{ rows }">
+      <el-table :data="rows" border>
         <el-table-column prop="processName" label="工序" />
         <el-table-column prop="quantity" label="数量" width="80" />
         <el-table-column prop="promisedDate" label="承诺交期" width="120" />
+        <el-table-column label="创建时间" width="160">
+          <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
+        </el-table-column>
         <el-table-column label="进度" width="140">
           <template #default="{ row }">
             <el-progress :percentage="row.actualProgress || 0" :stroke-width="10" />
@@ -43,20 +52,28 @@
           </template>
         </el-table-column>
       </el-table>
+      </PagedBox>
 
-    <el-dialog v-model="signOpen" title="阅读并签署与你的合同" width="520px">
+    <el-dialog v-model="signOpen" :title="alreadySigned ? '合同详情' : '阅读并签署与你的合同'" width="520px" :close-on-click-modal="false">
       <p>订单 #{{ signOrderId }} · {{ contract.factoryName || '' }}</p>
+      <p>状态：{{ alreadySigned ? '已签约' : (contract.status || '待签署') }}</p>
+      <p>创建时间：{{ fmtTime(contract.createdAt) }}　签署时间：{{ fmtTime(contract.signedAt) }}</p>
       <p v-if="contract.attachmentId">
         合同文件
         <el-button size="small" link type="primary" @click="openFile(contract.attachmentId)">{{ contract.fileName || ('附件 #' + contract.attachmentId) }}</el-button>
       </p>
       <p v-else>买家尚未上传与你的合同</p>
-      <el-checkbox v-model="read">我已阅读合同全文</el-checkbox>
-      <p>手写签名</p>
-      <SignPad @change="sign = $event" />
+      <template v-if="!alreadySigned">
+        <el-checkbox v-model="read">我已阅读合同全文</el-checkbox>
+        <p>手写签名</p>
+        <SignPad @change="sign = $event" />
+      </template>
       <template #footer>
-        <el-button @click="signOpen=false">取消</el-button>
-        <el-button type="primary" :disabled="!read || !sign || !contract.attachmentId" @click="doSign">提交签名</el-button>
+        <el-button v-if="alreadySigned" type="primary" @click="signOpen=false">关闭</el-button>
+        <template v-else>
+          <el-button @click="signOpen=false">取消</el-button>
+          <el-button type="primary" :disabled="!read || !sign || !contract.attachmentId" @click="doSign">提交签名</el-button>
+        </template>
       </template>
     </el-dialog>
 
@@ -108,8 +125,9 @@
 import { computed, reactive, ref, onMounted } from 'vue'
 import { myStages, deliver, factorySign, getContract, submitSurvey, listOrders, downloadAttachment, startStage, reportProgress, inspectionOf, uploadFile } from '../../api/order'
 import SignPad from '../../components/SignPad.vue'
+import PagedBox from '../../components/PagedBox.vue'
 import { ElMessage } from 'element-plus'
-import { STAGE_STATUS, ESCROW_STATUS, label } from '../../utils/labels'
+import { STAGE_STATUS, ESCROW_STATUS, label, fmtTime } from '../../utils/labels'
 
 const stageList = ref([])
 const pendingOrders = ref([])
@@ -118,6 +136,7 @@ const signOrderId = ref(null)
 const contract = ref({})
 const read = ref(false)
 const sign = ref('')
+const alreadySigned = computed(() => contract.value.status === 'SIGNED')
 const surveyOpen = ref(false)
 const surveyStage = ref(null)
 const scores = reactive({ q1: 5, q2: 5, q3: 5, q4: 5 })

@@ -57,6 +57,9 @@ public class FundLedger {
             write("INTENTION", "UNFREEZE", amt, q.getDemandId(), q.getTenantId(), null,
                     "INTENTION-UNFREEZE-" + q.getId());
             q.setIntentionStatus("RELEASED");
+        } else if ("COVERED".equals(q.getIntentionStatus())) {
+            // 意向金按单收一次：并入报名无冻结资金，直接释放
+            q.setIntentionStatus("RELEASED");
         }
         q.setStatus("INVALID");
         quotationMapper.updateById(q);
@@ -179,6 +182,64 @@ public class FundLedger {
             q.setDepositStatus("RELEASED");
         }
         quotationMapper.updateById(q);
+    }
+
+    /** 买家思考期继续：按预估总价冻结买家保证金。 */
+    public void freezeBuyerDeposit(Long demandId, Long buyerTenantId, BigDecimal amount) {
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+        accountService.freeze(buyerTenantId, amount);
+        write("BUYER_DEPOSIT", "FREEZE", amount, demandId, buyerTenantId, null,
+                "BUYER-DEPOSIT-FREEZE-" + demandId);
+    }
+
+    /** 买家保证金剩余冻结额（FREEZE - UNFREEZE/OUT）。 */
+    public BigDecimal buyerDepositRemaining(Long demandId, Long buyerTenantId) {
+        List<FundFlow> flows = fundFlowMapper.selectList(new LambdaQueryWrapper<FundFlow>()
+                .eq(FundFlow::getDemandId, demandId)
+                .eq(FundFlow::getTenantId, buyerTenantId)
+                .eq(FundFlow::getType, "BUYER_DEPOSIT"));
+        BigDecimal remain = BigDecimal.ZERO;
+        for (FundFlow f : flows) {
+            if ("FREEZE".equals(f.getDirection())) {
+                remain = remain.add(nvl(f.getAmount()));
+            } else if ("UNFREEZE".equals(f.getDirection()) || "OUT".equals(f.getDirection())) {
+                remain = remain.subtract(nvl(f.getAmount()));
+            }
+        }
+        return remain.max(BigDecimal.ZERO).setScale(2, RoundingMode.DOWN);
+    }
+
+    /** 买家保证金退还（订单异常结束等）。 */
+    public void refundBuyerDeposit(Long demandId, Long buyerTenantId) {
+        BigDecimal remain = buyerDepositRemaining(demandId, buyerTenantId);
+        if (remain.compareTo(BigDecimal.ZERO) > 0) {
+            accountService.unfreeze(buyerTenantId, remain);
+            write("BUYER_DEPOSIT", "UNFREEZE", remain, demandId, buyerTenantId, null,
+                    "BUYER-DEPOSIT-UNFREEZE-" + demandId);
+        }
+    }
+
+    /**
+     * 尾款抵扣：把买家保证金（不超过 amount）转入平台托管，返回实际抵扣额。
+     * 调用方只需再补足 amount - 返回值。
+     */
+    public BigDecimal applyBuyerDepositToEscrow(Long orderId, Long demandId, Long buyerTenantId,
+                                                Long stageId, BigDecimal amount) {
+        BigDecimal remain = buyerDepositRemaining(demandId, buyerTenantId);
+        BigDecimal use = remain.min(amount == null ? BigDecimal.ZERO : amount);
+        if (use.compareTo(BigDecimal.ZERO) <= 0) {
+            return BigDecimal.ZERO;
+        }
+        Long platformId = platformTenantId();
+        accountService.deductFrozen(buyerTenantId, use);
+        accountService.credit(platformId, use);
+        write("BUYER_DEPOSIT", "OUT", use, demandId, buyerTenantId, orderId,
+                "BUYER-DEPOSIT-OFFSET-" + stageId);
+        write("ESCROW", "IN", use, demandId, platformId, orderId,
+                "ESCROW-IN-DEPOSIT-" + stageId);
+        return use;
     }
 
     public void freezeDeposit(Quotation q, BigDecimal amount) {

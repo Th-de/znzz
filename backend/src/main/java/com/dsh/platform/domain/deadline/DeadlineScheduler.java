@@ -55,6 +55,26 @@ public class DeadlineScheduler {
             }
         }
         for (Demand d : demandMapper.selectList(new LambdaQueryWrapper<Demand>()
+                .eq(Demand::getStatus, DemandStatus.FACTORY_THINKING.name())
+                .isNotNull(Demand::getFactoryThinkingEndAt)
+                .le(Demand::getFactoryThinkingEndAt, now))) {
+            try {
+                flowService.endFactoryThinking(d.getId());
+            } catch (Exception e) {
+                log.warn("工厂思考期到期处理失败 demandId={}: {}", d.getId(), e.getMessage());
+            }
+        }
+        for (Demand d : demandMapper.selectList(new LambdaQueryWrapper<Demand>()
+                .eq(Demand::getStatus, DemandStatus.BUYER_THINKING.name())
+                .isNotNull(Demand::getBuyerThinkingEndAt)
+                .le(Demand::getBuyerThinkingEndAt, now))) {
+            try {
+                flowService.timeoutBuyerThinking(d.getId());
+            } catch (Exception e) {
+                log.warn("买家思考期超时处理失败 demandId={}: {}", d.getId(), e.getMessage());
+            }
+        }
+        for (Demand d : demandMapper.selectList(new LambdaQueryWrapper<Demand>()
                 .eq(Demand::getStatus, DemandStatus.THINKING.name())
                 .isNotNull(Demand::getThinkingEndAt)
                 .le(Demand::getThinkingEndAt, now))) {

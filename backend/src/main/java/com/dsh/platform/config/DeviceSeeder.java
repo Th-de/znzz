@@ -19,6 +19,7 @@ public class DeviceSeeder implements CommandLineRunner {
     public void run(String... args) {
         deviceService.migrateFromCapability();
         deviceService.fillMissingCapacity();
-        log.info("工厂设备已从能力档案迁移（如有），并回填日产能");
+        deviceService.fillMissingProcessNames();
+        log.info("工厂设备已从能力档案迁移（如有），并回填日产能/适用工序");
     }
 }

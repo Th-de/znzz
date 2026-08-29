@@ -9,7 +9,7 @@
           <el-descriptions-item label="状态">{{ label(ORDER_STATUS, order.status) }}</el-descriptions-item>
           <el-descriptions-item label="总金额">{{ order.totalAmount ?? '-' }}</el-descriptions-item>
           <el-descriptions-item label="佣金">{{ order.commissionAmount ?? '-' }}</el-descriptions-item>
-          <el-descriptions-item label="下单时间">{{ order.createdAt || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="下单时间">{{ fmtTime(order.createdAt) }}</el-descriptions-item>
         </el-descriptions>
         <el-steps :active="order.flowActive ?? 0" finish-status="success" align-center style="margin-top:20px">
           <el-step v-for="(s, i) in (order.flowSteps || defaultSteps)" :key="i" :title="s" />
@@ -18,17 +18,20 @@
       </el-card>
 
       <el-card header="按厂承包（方案里分给各厂的工序）" style="margin-top:16px">
-        <el-table :data="order.combo || []" border>
+        <PagedBox :data="order.combo || []" :page-size="8" v-slot="{ rows }">
+        <el-table :data="rows" border>
           <el-table-column prop="factoryName" label="工厂" />
           <el-table-column prop="processName" label="工序" />
           <el-table-column prop="quantity" label="数量" width="90" />
           <el-table-column prop="price" label="价格" width="100" />
           <el-table-column prop="days" label="工期(天)" width="90" />
         </el-table>
+        </PagedBox>
       </el-card>
 
       <el-card header="按厂合同（正文你们自己拟定，一厂一份；平台只确认签过）" style="margin-top:16px">
-        <el-table :data="contractList" border>
+        <PagedBox :data="contractList" :page-size="8" v-slot="{ rows }">
+        <el-table :data="rows" border>
           <el-table-column prop="factoryName" label="工厂" />
           <el-table-column prop="processNames" label="承包工序" />
           <el-table-column label="合同文件" min-width="180">
@@ -36,6 +39,12 @@
               <span v-if="!row.attachmentId">未上传</span>
               <el-button v-else size="small" link type="primary" @click="openFile(row.attachmentId)">{{ row.fileName || ('附件 #' + row.attachmentId) }}</el-button>
             </template>
+          </el-table-column>
+          <el-table-column label="创建时间" width="160">
+            <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
+          </el-table-column>
+          <el-table-column label="签署时间" width="160">
+            <template #default="{ row }">{{ fmtTime(row.signedAt) }}</template>
           </el-table-column>
           <el-table-column label="签署" min-width="220">
             <template #default="{ row }">
@@ -49,14 +58,19 @@
             </template>
           </el-table-column>
         </el-table>
+        </PagedBox>
       </el-card>
 
       <el-card header="工单与阶段款" style="margin-top:16px">
-        <el-table :data="stageList" border>
+        <PagedBox :data="stageList" :page-size="8" v-slot="{ rows }">
+        <el-table :data="rows" border>
           <el-table-column prop="factoryName" label="工厂" min-width="140" />
           <el-table-column prop="processName" label="工序" />
           <el-table-column prop="quantity" label="数量" width="80" />
           <el-table-column prop="promisedDate" label="承诺交期" width="120" />
+          <el-table-column label="创建时间" width="160">
+            <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
+          </el-table-column>
           <el-table-column label="进度" width="140">
             <template #default="{ row }">
               <el-progress :percentage="row.actualProgress || 0" :stroke-width="10" />
@@ -79,6 +93,7 @@
             </template>
           </el-table-column>
         </el-table>
+        </PagedBox>
         <el-button
           v-if="order.status==='IN_PRODUCTION'"
           type="success"
@@ -143,8 +158,9 @@ import { computed, reactive, ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { getOrder, listContracts, uploadContract, buyerSign, stages, payStage, accept, submitSurvey, uploadFile, downloadAttachment, progressLog, inspectionOf } from '../../api/order'
 import SignPad from '../../components/SignPad.vue'
+import PagedBox from '../../components/PagedBox.vue'
 import { ElMessage } from 'element-plus'
-import { ORDER_STATUS, STAGE_STATUS, ESCROW_STATUS, label } from '../../utils/labels'
+import { ORDER_STATUS, STAGE_STATUS, ESCROW_STATUS, label, fmtTime } from '../../utils/labels'
 
 const route = useRoute()
 const orderId = route.params.id

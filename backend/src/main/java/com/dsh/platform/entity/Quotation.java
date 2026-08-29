@@ -19,12 +19,18 @@ public class Quotation {
     private Long demandId;
     private Integer processNo;
     private BigDecimal intentionPrice;
+    /** 单件报价（工厂思考期填），总报价 = unitPrice × maxQty */
+    private BigDecimal unitPrice;
     private BigDecimal price;
     private BigDecimal yieldRate;
     private Integer promisedDays;
     private Integer minQty;
     private Integer maxQty;
     private String stageCurveJson;
+    /** 实施方案（工厂思考期填） */
+    private String planText;
+    /** 每期交付内容（工厂填，期数由买家 deliveryTimes 决定） */
+    private String deliveryPlanJson;
     private Integer validDays;
     private String extraJson;
     private String deviceIdsJson;

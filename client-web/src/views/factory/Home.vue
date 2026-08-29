@@ -11,13 +11,22 @@
         </el-card>
       </div>
       <h3>信用事件</h3>
-      <el-table :data="credits" border>
+      <PagedBox :data="credits" v-slot="{ rows }">
+      <el-table :data="rows" border>
+        <el-table-column label="时间" width="170">
+          <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
+        </el-table-column>
         <el-table-column prop="type" label="类型" width="140" />
         <el-table-column prop="scoreChange" label="分数变化" width="100" />
         <el-table-column prop="remark" label="说明" />
       </el-table>
+      </PagedBox>
       <h3 style="margin-top:20px">我的资金流水</h3>
-      <el-table :data="funds" border>
+      <PagedBox :data="funds" v-slot="{ rows }">
+      <el-table :data="rows" border>
+        <el-table-column label="时间" width="170">
+          <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
+        </el-table-column>
         <el-table-column label="类型" width="120">
           <template #default="{ row }">{{ label(FUND_TYPE, row.type) }}</template>
         </el-table-column>
@@ -26,13 +35,15 @@
         </el-table-column>
         <el-table-column prop="amount" label="金额" />
       </el-table>
+      </PagedBox>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
 import api from '../../api'
-import { FUND_TYPE, FUND_DIR, label } from '../../utils/labels'
+import PagedBox from '../../components/PagedBox.vue'
+import { FUND_TYPE, FUND_DIR, label, fmtTime } from '../../utils/labels'
 
 const funds = ref([])
 const credits = ref([])

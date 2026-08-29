@@ -65,6 +65,13 @@ public class OrderController {
         return R.ok(contractService.listPendingReview());
     }
 
+    /** 合同管理台账：全量合同（可按状态筛），运营用 */
+    @GetMapping("/contracts/all")
+    @PreAuthorize("hasAnyRole('OPERATOR','SUPER_ADMIN')")
+    public R<List<Contract>> allContracts(@RequestParam(required = false) String status) {
+        return R.ok(contractService.listAll(status));
+    }
+
     @PostMapping("/{orderId}/contract/upload")
     @PreAuthorize("hasRole('BUYER')")
     public R<Void> uploadContract(@PathVariable Long orderId, @RequestBody UploadContractRequest req) {

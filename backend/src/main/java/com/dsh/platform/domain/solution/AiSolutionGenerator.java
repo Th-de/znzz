@@ -98,10 +98,20 @@ public class AiSolutionGenerator {
     private String buildPrompt(Demand demand, List<Process> processes, List<Quotation> locked) {
         StringBuilder sb = new StringBuilder();
         sb.append("你是制造业订单评审专家。综合产能可行性、历史履约记录、信用状况、质量表现、价格与工期，");
-        sb.append("为每道工序选出最合适的工厂，产出一份完整的履约方案。\n");
-        sb.append("只能从候选工厂里选，不能发明工厂或价格。只返回 JSON。\n");
-        sb.append("产能核算：需要的日产出 ≈ 工序数量 ÷ 承诺工期（天）。对比该厂勾选设备的日产能合计，判断是否可行、余量多少。\n");
-        sb.append("给出 1 套主方案，最多再给 1 套备选。\n\n");
+        sb.append("为每个并行分包分配最合适的工厂，产出完整可执行的履约方案。\n");
+        sb.append("各工序是并行分包批次，不是同一批零件的流水线前后序；工厂各自独立制造并交货，互不等待。\n");
+        sb.append("只能从候选工厂里选，不能发明工厂、价格或承接量。只返回 JSON。\n");
+        sb.append("同一分包可以拆给多家工厂按量分摊：该工序所有分配量之和必须等于该工序数量，");
+        sb.append("且每家分配量不得超过该厂承接量 maxQty。全部工序数量之和等于需求总数量。\n");
+        sb.append("产能核算：需要的日产出 ≈ 分配数量 ÷ 承诺工期（天）。对比该厂勾选设备的日产能合计，判断是否可行、余量多少。\n");
+        sb.append("生成 3~5 套推荐方案（至少 3 套，视候选丰富程度而定），每套给出总费用与分阶段交付节点。\n\n");
+        if (demand.getDeliveryTimes() != null && demand.getDeliveryTimes() > 0) {
+            sb.append("买家要求分 ").append(demand.getDeliveryTimes()).append(" 期交付");
+            if (demand.getDeliveryPlanJson() != null && !demand.getDeliveryPlanJson().isBlank()) {
+                sb.append("，每期要求：").append(demand.getDeliveryPlanJson());
+            }
+            sb.append('\n');
+        }
         sb.append("需求：").append(demand.getTitle()).append(" / ").append(demand.getProductName()).append('\n');
         sb.append("数量：").append(demand.getQuantity())
                 .append(" 材料：").append(nvl(demand.getMaterial()))
@@ -132,7 +142,8 @@ public class AiSolutionGenerator {
                     .append(" credit=").append(e == null ? "" : e.getCreditScore())
                     .append(" auth=").append(e == null ? "" : e.getAuthStatus())
                     .append(" processNo=").append(q.getProcessNo())
-                    .append(" price=").append(q.getPrice())
+                    .append(" unitPrice=").append(q.getUnitPrice())
+                    .append(" totalPrice=").append(q.getPrice())
                     .append(" days=").append(q.getPromisedDays())
                     .append(" yield=").append(q.getYieldRate())
                     .append(" maxQty=").append(q.getMaxQty())
@@ -140,6 +151,12 @@ public class AiSolutionGenerator {
                     .append(" ").append(factoryProfile(q.getTenantId()))
                     .append(" capability=").append(e == null ? "" : nvl(e.getCapabilityJson()))
                     .append('\n');
+            if (q.getPlanText() != null && !q.getPlanText().isBlank()) {
+                sb.append("  实施方案：").append(q.getPlanText()).append('\n');
+            }
+            if (q.getDeliveryPlanJson() != null && !q.getDeliveryPlanJson().isBlank()) {
+                sb.append("  分期交付承诺：").append(q.getDeliveryPlanJson()).append('\n');
+            }
             for (Device d : devices) {
                 sb.append("  device=").append(nvl(d.getName()))
                         .append(" model=").append(nvl(d.getModel()))
@@ -149,9 +166,12 @@ public class AiSolutionGenerator {
             }
         }
         sb.append("\n输出格式：{\"schemes\":[{\"type\":\"AI1\",\"rationale\":\"整套方案总述\",\"risks\":[\"风险提示\"],");
-        sb.append("\"items\":[{\"processNo\":1,\"factoryId\":15,\"reason\":\"选这家的具体理由\",");
-        sb.append("\"capacityCheck\":\"该厂勾选设备日产能合计300件/天，需求需200件/天，余量50%\"}]}]}\n");
-        sb.append("type 只能是 AI1/AI2，每套覆盖全部工序，factoryId 必须来自候选。每道工序必须写 reason 和 capacityCheck。价格用锁定报价，不要自编。");
+        sb.append("\"milestones\":[\"第1期：完成粗加工600件并交检\",\"第2期：…\"],");
+        sb.append("\"items\":[{\"processNo\":1,\"factoryId\":15,\"quantity\":600,\"reason\":\"选这家承接600件的具体理由\",");
+        sb.append("\"capacityCheck\":\"该厂勾选设备日产能合计300件/天，分配600件需2天+，工期10天余量充足\"}]}]}\n");
+        sb.append("type 依次为 AI1/AI2/AI3/AI4/AI5。每套必须覆盖全部工序且各工序 quantity 合计=工序数量；");
+        sb.append("factoryId 必须来自候选且 quantity<=该厂 maxQty。每个 item 必须写 quantity、reason 和 capacityCheck。");
+        sb.append("单价用候选 unitPrice，不要自编。milestones 按买家分期要求给出每阶段任务与交付节点。");
         return sb.toString();
     }
 
@@ -291,7 +311,7 @@ public class AiSolutionGenerator {
         List<SolutionCombo> result = new ArrayList<>();
         int i = 1;
         for (JsonNode scheme : schemes) {
-            if (result.size() >= 3) {
+            if (result.size() >= 5) {
                 break;
             }
             List<Map<String, Object>> items = new ArrayList<>();
@@ -301,28 +321,34 @@ public class AiSolutionGenerator {
                 continue;
             }
             for (Process p : processes) {
-                JsonNode chosen = null;
+                int need = p.getQuantity() == null ? 0 : p.getQuantity();
+                int allocated = 0;
+                List<Map<String, Object>> processItems = new ArrayList<>();
                 for (JsonNode it : arr) {
-                    if (p.getProcessNo() != null && p.getProcessNo() == it.path("processNo").asInt()) {
-                        chosen = it;
+                    if (p.getProcessNo() == null || p.getProcessNo() != it.path("processNo").asInt()) {
+                        continue;
+                    }
+                    Long factoryId = it.path("factoryId").asLong();
+                    int qty = it.path("quantity").asInt(0);
+                    if (qty <= 0) {
+                        qty = need; // 兼容 AI 未给量：单厂承接全量
+                    }
+                    Quotation q = findLocked(locked, factoryId, p.getProcessNo(), qty);
+                    if (q == null) {
+                        processItems.clear();
                         break;
                     }
+                    allocated += qty;
+                    processItems.add(hydrate(p, q, qty,
+                            it.path("reason").asText(""), it.path("capacityCheck").asText("")));
                 }
-                if (chosen == null) {
+                if (processItems.isEmpty() || allocated != need) {
                     ok = false;
                     break;
                 }
-                Long factoryId = chosen.path("factoryId").asLong();
-                int need = p.getQuantity() == null ? 0 : p.getQuantity();
-                Quotation q = findLocked(locked, factoryId, p.getProcessNo(), need);
-                if (q == null) {
-                    ok = false;
-                    break;
-                }
-                items.add(hydrate(p, q, chosen.path("reason").asText(""),
-                        chosen.path("capacityCheck").asText("")));
+                items.addAll(processItems);
             }
-            if (!ok || items.size() != processes.size()) {
+            if (!ok || items.isEmpty()) {
                 continue;
             }
             String type = scheme.path("type").asText("AI" + i);
@@ -335,7 +361,7 @@ public class AiSolutionGenerator {
         return result;
     }
 
-    private Map<String, Object> hydrate(Process p, Quotation q, String reason, String capacityCheck) {
+    private Map<String, Object> hydrate(Process p, Quotation q, int quantity, String reason, String capacityCheck) {
         Enterprise e = enterpriseMapper.selectById(q.getTenantId());
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("processNo", p.getProcessNo());
@@ -343,10 +369,11 @@ public class AiSolutionGenerator {
         item.put("factoryId", q.getTenantId());
         item.put("factoryName", e == null ? ("厂" + q.getTenantId()) : e.getName());
         item.put("creditScore", e == null || e.getCreditScore() == null ? 60 : e.getCreditScore());
-        item.put("price", q.getPrice() == null ? BigDecimal.ZERO : q.getPrice());
+        item.put("unitPrice", unitPriceOf(q));
+        item.put("price", priceFor(q, quantity));
         item.put("yieldRate", q.getYieldRate() == null ? BigDecimal.ZERO : q.getYieldRate());
         item.put("days", q.getPromisedDays() == null ? 0 : q.getPromisedDays());
-        item.put("quantity", p.getQuantity() == null ? 0 : p.getQuantity());
+        item.put("quantity", quantity);
         item.put("maxQty", q.getMaxQty());
         if (reason != null && !reason.isBlank()) {
             item.put("reason", reason);
@@ -355,6 +382,25 @@ public class AiSolutionGenerator {
             item.put("capacityCheck", capacityCheck);
         }
         return item;
+    }
+
+    /** 分配量的费用 = 单价 × 分配量；无单价时按总价折算。 */
+    private BigDecimal priceFor(Quotation q, int quantity) {
+        BigDecimal unit = unitPriceOf(q);
+        if (unit.compareTo(BigDecimal.ZERO) > 0) {
+            return unit.multiply(BigDecimal.valueOf(quantity)).setScale(2, java.math.RoundingMode.HALF_UP);
+        }
+        return q.getPrice() == null ? BigDecimal.ZERO : q.getPrice();
+    }
+
+    private BigDecimal unitPriceOf(Quotation q) {
+        if (q.getUnitPrice() != null && q.getUnitPrice().compareTo(BigDecimal.ZERO) > 0) {
+            return q.getUnitPrice();
+        }
+        if (q.getPrice() != null && q.getMaxQty() != null && q.getMaxQty() > 0) {
+            return q.getPrice().divide(BigDecimal.valueOf(q.getMaxQty()), 2, java.math.RoundingMode.HALF_UP);
+        }
+        return BigDecimal.ZERO;
     }
 
     private String packRationale(JsonNode scheme) {
@@ -370,6 +416,15 @@ public class AiSolutionGenerator {
                 });
             }
             m.put("risks", risks);
+            List<String> milestones = new ArrayList<>();
+            if (scheme.path("milestones").isArray()) {
+                scheme.path("milestones").forEach(n -> {
+                    if (n != null && !n.asText("").isBlank()) {
+                        milestones.add(n.asText());
+                    }
+                });
+            }
+            m.put("milestones", milestones);
             return objectMapper.writeValueAsString(m);
         } catch (Exception e) {
             return scheme.path("rationale").asText("");

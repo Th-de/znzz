@@ -44,9 +44,25 @@ public class Demand {
     private String cancelReason;
     private Long sourceDemandId;
     private java.time.LocalDateTime intentionEndAt;
+    private LocalDateTime factoryThinkingEndAt;
+    private LocalDateTime buyerThinkingEndAt;
     private LocalDateTime thinkingEndAt;
     private LocalDateTime reviewEndAt;
     private LocalDateTime lockingEndAt;
+    /** 审核通过、进入意向期的时间 */
+    private LocalDateTime publishedAt;
+    /** 进入工厂思考期的时间 */
+    private LocalDateTime factoryThinkingAt;
+    /** 进入买家思考期的时间 */
+    private LocalDateTime buyerThinkingAt;
+    /** 分期交付次数（买家发布时定，工厂不可改） */
+    private Integer deliveryTimes;
+    /** 每期交付要求，JSON 数组（买家填） */
+    private String deliveryPlanJson;
+    /** 预估总价：买家保证金计费基数 */
+    private BigDecimal estimatedTotal;
+    /** 买家保证金状态 NONE/FROZEN/DEDUCTED/RELEASED */
+    private String buyerDepositStatus;
     private String status;
     @TableField(exist = false)
     private Boolean applied;

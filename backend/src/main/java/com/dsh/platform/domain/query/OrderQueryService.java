@@ -167,7 +167,8 @@ public class OrderQueryService {
                 factories,
                 o.getTotalAmount(),
                 o.getCommissionAmount(),
-                o.getStatus()
+                o.getStatus(),
+                o.getCreatedAt()
         );
     }
 

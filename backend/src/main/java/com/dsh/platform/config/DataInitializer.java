@@ -23,5 +23,11 @@ public class DataInitializer implements CommandLineRunner {
         } catch (Exception e) {
             log.error("初始化超级管理员失败", e);
         }
+        try {
+            authService.migrateInspectionAccounts();
+            log.info("存量质检账号已迁移到独立质检机构（幂等）");
+        } catch (Exception e) {
+            log.error("质检账号迁移失败", e);
+        }
     }
 }

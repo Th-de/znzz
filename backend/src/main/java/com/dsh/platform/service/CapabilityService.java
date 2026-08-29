@@ -30,11 +30,13 @@ public class CapabilityService {
         Map<String, Object> capability = node == null || node.isNull()
                 ? Map.of()
                 : objectMapper.convertValue(node, Map.class);
-        return Map.of(
-                "complete", isComplete(node) && deviceCount > 0,
-                "deviceCount", deviceCount,
-                "capability", capability
-        );
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("complete", isComplete(node) && deviceCount > 0);
+        out.put("deviceCount", deviceCount);
+        out.put("capability", capability);
+        // 工序产能由设备推导，只读展示
+        out.put("deviceCapacity", deviceService.capacityGroups(UserContext.tenantId()));
+        return out;
     }
 
     public Map<String, Object> mineProfile() {
@@ -52,11 +54,18 @@ public class CapabilityService {
         m.put("address", e.getAddress());
         m.put("balance", a.getBalance());
         m.put("frozen", a.getFrozen());
+        m.put("introduction", e.getIntroduction());
         return m;
     }
 
     public void save(Map<String, Object> body) {
         try {
+            // 工序产能不再手填：由设备的适用工序+日产能自动推导后落库
+            var groups = deviceService.capacityGroups(UserContext.tenantId());
+            if (!groups.isEmpty()) {
+                body = new LinkedHashMap<>(body);
+                body.put("capacityByProcess", groups);
+            }
             String json = objectMapper.writeValueAsString(body);
             JsonNode node = objectMapper.readTree(json);
             if (!isComplete(node)) {

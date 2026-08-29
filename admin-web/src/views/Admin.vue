@@ -1,20 +1,69 @@
 <template>
   <el-container style="height:100vh">
     <el-aside width="200px" class="aside">
-      <div class="logo">平台运营端</div>
-      <div style="padding:0 16px 12px"><el-button size="small" @click="logout">退出</el-button></div>
+      <div class="logo">智能制造云平台</div>
+      <div class="sub-logo">{{ isInspector ? '质检工作台' : '运营指挥中心' }}</div>
+      <div style="padding:0 16px 12px;display:flex;gap:6px">
+        <el-button size="small" @click="logout">退出</el-button>
+        <el-button size="small" @click="pwdOpen=true">改密码</el-button>
+      </div>
       <el-menu :default-active="active" @select="active=$event" background-color="#304156" text-color="#bfcbd9" active-text-color="#409EFF">
-        <el-menu-item index="demands">📋 需求管理</el-menu-item>
-        <el-menu-item index="solutions">📊 方案查看</el-menu-item>
-        <el-menu-item index="contracts">📝 合同审核</el-menu-item>
+        <template v-if="!isInspector">
+          <el-menu-item index="overview">🧭 工作台</el-menu-item>
+          <el-menu-item index="demands">📋 需求管理</el-menu-item>
+          <el-menu-item index="solutions">📊 方案查看</el-menu-item>
+          <el-menu-item index="contracts">📝 合同管理</el-menu-item>
+        </template>
         <el-menu-item index="inspect">🔍 工单质检</el-menu-item>
-        <el-menu-item index="funds">💰 资金流水</el-menu-item>
-        <el-menu-item index="enterprises">👥 用户信息管理</el-menu-item>
-        <el-menu-item index="users" v-if="isSuper">👤 账号管理</el-menu-item>
+        <template v-if="!isInspector">
+          <el-menu-item index="funds">💰 资金流水</el-menu-item>
+          <el-menu-item index="enterprises">👥 用户信息管理</el-menu-item>
+          <el-menu-item index="audit">📜 操作日志</el-menu-item>
+          <el-menu-item index="users" v-if="isSuper">👤 账号管理</el-menu-item>
+        </template>
       </el-menu>
     </el-aside>
 
     <el-main>
+      <!-- 工作台概览 -->
+      <div v-if="active==='overview'">
+        <div class="toolbar"><span class="title">运营工作台 · 全平台一屏看</span><el-button @click="loadOverview">刷新</el-button></div>
+        <el-row :gutter="12" style="margin-bottom:12px">
+          <el-col :span="4" v-for="k in overviewKpis" :key="k.key">
+            <el-card shadow="never" :class="{ clickable: true }" @click="k.go && k.go()">
+              <div class="kpi">{{ k.label }}</div>
+              <div class="kpi-v" :style="k.warn && overview[k.key] > 0 ? 'color:#f56c6c' : ''">{{ overview[k.key] ?? 0 }}</div>
+            </el-card>
+          </el-col>
+        </el-row>
+        <h4>待办与关注（按阶段截止排序处理）</h4>
+        <PagedBox :data="overview.attention || []" v-slot="{ rows }">
+        <el-table :data="rows" border size="small">
+          <el-table-column prop="demandId" label="需求" width="70" />
+          <el-table-column prop="title" label="标题" min-width="160" />
+          <el-table-column prop="buyerName" label="买家" min-width="120" />
+          <el-table-column label="状态" width="130">
+            <template #default="{row}"><el-tag :type="tagType(row.status)">{{ statusText(row.status) }}</el-tag></template>
+          </el-table-column>
+          <el-table-column label="提交时间" width="160">
+            <template #default="{row}">{{ fmtTime(row.createdAt) }}</template>
+          </el-table-column>
+          <el-table-column label="阶段开始" width="160">
+            <template #default="{row}">{{ fmtTime(row.startAt) }}</template>
+          </el-table-column>
+          <el-table-column label="阶段截止" width="160">
+            <template #default="{row}">{{ fmtTime(row.endAt) }}</template>
+          </el-table-column>
+          <el-table-column prop="action" label="下一步" min-width="180" />
+          <el-table-column label="操作" width="100">
+            <template #default>
+              <el-button size="small" @click="active='demands'; loadDemands()">去处理</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        </PagedBox>
+      </div>
+
       <!-- 需求管理 -->
       <div v-if="active==='demands'">
         <div class="toolbar">
@@ -32,23 +81,31 @@
           <el-tab-pane :label="'履约 (' + countGroup('fulfill') + ')'" name="fulfill" />
           <el-tab-pane :label="'收口 (' + countGroup('close') + ')'" name="close" />
         </el-tabs>
-        <el-table :data="filteredDemands" border>
+        <PagedBox :data="filteredDemands" v-slot="{ rows }">
+        <el-table :data="rows" border>
           <el-table-column prop="id" label="ID" width="60" />
           <el-table-column prop="title" label="标题" width="200" />
           <el-table-column prop="quantity" label="数量" width="100" />
           <el-table-column prop="status" label="当前状态" width="170">
             <template #default="{row}"><el-tag :type="tagType(row.status)">{{ statusText(row.status) }}</el-tag></template>
           </el-table-column>
-          <el-table-column label="锁价截止" width="160">
-            <template #default="{row}">{{ row.status==='LOCKING' ? (row.lockingEndAt || '-') : '-' }}</template>
+          <el-table-column label="提交时间" width="160">
+            <template #default="{row}">{{ fmtTime(row.createdAt) }}</template>
+          </el-table-column>
+          <el-table-column label="阶段开始" width="160">
+            <template #default="{row}">{{ stageStart(row) }}</template>
+          </el-table-column>
+          <el-table-column label="阶段截止" width="160">
+            <template #default="{row}">{{ stageEnd(row) }}</template>
           </el-table-column>
           <el-table-column label="可执行操作" min-width="420">
             <template #default="{ row }">
               <el-button size="small" @click="openDetail(row)">详情</el-button>
-              <el-button size="small" type="primary" plain @click="openPanorama(row)">全景</el-button>
               <el-button v-if="row.status==='PENDING_AUDIT'" size="small" type="primary" @click="audit(row,'PASS')">审核通过</el-button>
               <el-button v-if="['PENDING_AUDIT','PUBLISHED'].includes(row.status)" size="small" type="danger" @click="openReturn(row)">退回修改</el-button>
               <el-button v-if="row.status==='PUBLISHED'" size="small" type="warning" @click="endIntention(row)">结束意向期</el-button>
+              <el-button v-if="row.status==='FACTORY_THINKING'" size="small" type="warning" @click="endFactoryThinking(row)">结束工厂思考期</el-button>
+              <el-button v-if="row.status==='BUYER_THINKING'" size="small" type="danger" @click="endBuyerThinking(row)">超时流单</el-button>
               <el-button v-if="row.status==='REVIEWING'" size="small" type="primary" @click="review(row,true)">同意取消</el-button>
               <el-button v-if="row.status==='REVIEWING'" size="small" type="danger" @click="review(row,false)">驳回取消</el-button>
               <el-button v-if="row.status==='LOCKING'" size="small" type="warning" @click="endLocking(row)">结束保证金期</el-button>
@@ -58,6 +115,7 @@
             </template>
           </el-table-column>
         </el-table>
+        </PagedBox>
         <el-alert style="margin-top:10px" type="info" :closable="false"
           title="每次发布先申请发布，运营通过后工厂才能看到。退回改完须再审。已发布买家不能改字段，只能取消后发新单。" />
         <el-drawer v-model="detailOpen" title="需求详情" size="640px">
@@ -69,7 +127,13 @@
             <el-descriptions-item label="数量">{{ detail.demand?.quantity }}</el-descriptions-item>
             <el-descriptions-item label="硬交期">{{ detail.demand?.deadlineHard }}</el-descriptions-item>
             <el-descriptions-item label="交付地址">{{ detail.demand?.deliveryAddress }}</el-descriptions-item>
-            <el-descriptions-item label="意向截止">{{ detail.demand?.intentionEndAt || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="提交时间">{{ fmtTime(detail.demand?.createdAt) }}</el-descriptions-item>
+            <el-descriptions-item label="发布/意向开始">{{ fmtTime(detail.demand?.publishedAt) }}</el-descriptions-item>
+            <el-descriptions-item label="意向截止">{{ fmtTime(detail.demand?.intentionEndAt) }}</el-descriptions-item>
+            <el-descriptions-item label="工厂思考开始">{{ fmtTime(detail.demand?.factoryThinkingAt) }}</el-descriptions-item>
+            <el-descriptions-item label="工厂思考截止">{{ fmtTime(detail.demand?.factoryThinkingEndAt) }}</el-descriptions-item>
+            <el-descriptions-item label="买家思考开始">{{ fmtTime(detail.demand?.buyerThinkingAt) }}</el-descriptions-item>
+            <el-descriptions-item label="买家思考截止">{{ fmtTime(detail.demand?.buyerThinkingEndAt) }}</el-descriptions-item>
             <el-descriptions-item label="来源需求">{{ detail.demand?.sourceDemandId || '-' }}</el-descriptions-item>
             <el-descriptions-item label="取消原因">{{ detail.demand?.cancelReason || '-' }}</el-descriptions-item>
             <el-descriptions-item label="备注">{{ detail.demand?.remark || '-' }}</el-descriptions-item>
@@ -100,6 +164,9 @@
             <el-table-column prop="fileName" label="文件名" />
             <el-table-column prop="fileType" label="类型" width="80" />
             <el-table-column prop="fileSize" label="大小" width="100" />
+            <el-table-column label="上传时间" width="160">
+              <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
+            </el-table-column>
             <el-table-column label="操作" width="90">
               <template #default="{ row }">
                 <el-button size="small" link type="primary" @click="viewFile(row)">查看</el-button>
@@ -110,58 +177,10 @@
             <el-button type="danger" @click="openReturn(detail.demand)">退回修改</el-button>
           </div>
         </el-drawer>
-        <el-drawer v-model="panoOpen" title="需求全景" size="720px">
-          <el-descriptions :column="1" border size="small" title="阶段与买家">
-            <el-descriptions-item label="阶段">{{ label(DEMAND_STATUS, pano.stage) }}</el-descriptions-item>
-            <el-descriptions-item label="买家">{{ pano.buyer?.name }}</el-descriptions-item>
-            <el-descriptions-item label="买家余额">¥ {{ pano.buyer?.balance }} / 冻结 ¥ {{ pano.buyer?.frozen }}</el-descriptions-item>
-            <el-descriptions-item label="订单">{{ pano.orderId || '-' }} {{ pano.orderStatus || '' }}</el-descriptions-item>
-            <el-descriptions-item label="整体进度">{{ pano.progressPercent ?? 0 }}%</el-descriptions-item>
-          </el-descriptions>
-          <h4 v-if="(pano.stages || []).length">工单进度</h4>
-          <el-table v-if="(pano.stages || []).length" :data="pano.stages" border size="small" style="margin-bottom:12px">
-            <el-table-column prop="processName" label="工序" />
-            <el-table-column prop="factoryName" label="工厂" />
-            <el-table-column label="完成" width="110">
-              <template #default="{ row }">{{ row.doneQty || 0 }} / {{ row.quantity || 0 }}</template>
-            </el-table-column>
-            <el-table-column label="进度" width="140">
-              <template #default="{ row }">
-                <el-progress :percentage="row.progress || 0" :stroke-width="10" />
-              </template>
-            </el-table-column>
-            <el-table-column prop="promisedDate" label="承诺交期" width="120" />
-            <el-table-column prop="status" label="状态" width="110" />
-          </el-table>
-          <h4>报名 / 工厂 / 设备</h4>
-          <el-table :data="pano.bids || []" border size="small">
-            <el-table-column prop="processNo" label="工序#" width="70" />
-            <el-table-column prop="factoryName" label="工厂" min-width="120" />
-            <el-table-column prop="status" label="报名状态" width="100" />
-            <el-table-column prop="intentionStatus" label="意向金" width="100" />
-            <el-table-column prop="price" label="锁价" width="90" />
-            <el-table-column label="设备" min-width="160">
-              <template #default="{ row }">
-                {{ (row.devices || []).map(d => d.name).join('、') || '-' }}
-              </template>
-            </el-table-column>
-          </el-table>
-          <h4>资金小计 ¥ {{ pano.fundSubtotal || 0 }}</h4>
-          <el-table :data="pano.funds || []" border size="small">
-            <el-table-column prop="enterpriseName" label="企业" min-width="120" />
-            <el-table-column label="类型" width="100">
-              <template #default="{row}">{{ label(FUND_TYPE, row.type) }}</template>
-            </el-table-column>
-            <el-table-column label="方向" width="90">
-              <template #default="{row}">{{ label(FUND_DIR, row.direction) }}</template>
-            </el-table-column>
-            <el-table-column prop="amount" label="金额" width="100" />
-          </el-table>
-        </el-drawer>
         <el-dialog v-model="fileOpen" :title="fileTitle" width="720px">
           <pre class="file-preview">{{ fileText }}</pre>
         </el-dialog>
-        <el-dialog v-model="returnOpen" title="退回买家修改" width="480px">
+        <el-dialog v-model="returnOpen" title="退回买家修改" width="480px" :close-on-click-modal="false">
           <el-form label-width="80px">
             <el-form-item label="原因" required>
               <el-input v-model="returnReason" type="textarea" :rows="3" placeholder="必填，买家会看到原文" />
@@ -177,19 +196,32 @@
       <!-- 方案查看 -->
       <div v-if="active==='solutions'">
         <div class="toolbar"><span class="title">方案查看</span><el-button @click="loadDemands">刷新</el-button></div>
-        <el-table :data="demands.filter(d=>['SOLUTION_GENERATED','SOLUTION_CONFIRMED','SOLUTION_SELECTED','CONTRACTED','IN_PRODUCTION','COMPLETED'].includes(d.status))" border @row-click="viewSolutions">
+        <PagedBox :data="solutionDemands" v-slot="{ rows }">
+        <el-table :data="rows" border @row-click="viewSolutions">
           <el-table-column prop="id" label="需求ID" width="80" />
           <el-table-column prop="title" label="标题" />
           <el-table-column prop="status" label="状态" width="150" />
+          <el-table-column label="提交时间" width="160">
+            <template #default="{row}">{{ fmtTime(row.createdAt) }}</template>
+          </el-table-column>
+          <el-table-column label="发布时间" width="160">
+            <template #default="{row}">{{ fmtTime(row.publishedAt) }}</template>
+          </el-table-column>
           <el-table-column label="操作" width="120">
             <template #default="{row}"><el-button size="small" @click="viewSolutions(row)">查看方案</el-button></template>
           </el-table-column>
         </el-table>
-        <el-dialog v-model="solDialog" title="方案详情（全部先审再下发）" width="920px">
-          <el-button type="warning" :loading="aiLoading" style="margin-bottom:10px" @click="genAiFromDialog">生成 AI 综合方案</el-button>
+        </PagedBox>
+        <el-dialog v-model="solDialog" title="方案详情（全部先审再下发）" width="920px" :close-on-click-modal="false">
+          <el-tooltip v-if="currentSolDemand && currentSolDemand.status !== 'SOLUTION_GENERATED'"
+                      content="AI 方案在买家交保证金后自动生成；仅方案阶段（买家确认前）可手动重试" placement="right">
+            <el-button type="warning" disabled style="margin-bottom:10px">重试 AI 方案（当前阶段不可用）</el-button>
+          </el-tooltip>
+          <el-button v-else type="warning" :loading="aiLoading" style="margin-bottom:10px" @click="genAiFromDialog">重试生成 AI 方案</el-button>
           <div v-for="s in solutions" :key="s.id" style="margin-bottom:16px">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
               <el-tag type="primary">方案 {{ s.type }}</el-tag>
+              <span class="hint">生成 {{ fmtTime(s.createdAt) }}</span>
               <el-tag size="small" :type="s.status==='ACTIVE'?'success':'warning'">{{ s.status==='ACTIVE' ? '已下发买家' : '待下发' }}</el-tag>
               <el-button v-if="s.status!=='ACTIVE'" size="small" type="success" @click="publish(s)">下发给买家</el-button>
             </div>
@@ -202,12 +234,19 @@
               :title="r"
               style="margin-bottom:8px"
             />
-            <el-table :data="parse(s.finalComboJson || s.suggestedComboJson)" size="small" border>
+            <PagedBox :data="parse(s.finalComboJson || s.suggestedComboJson)" :page-size="8" v-slot="{ rows }">
+            <el-table :data="rows" size="small" border>
               <el-table-column prop="processName" label="工序" width="80" />
               <el-table-column prop="factoryName" label="工厂" width="140" />
+              <el-table-column label="分量(件)" width="80">
+                <template #default="{ row }">{{ row.quantity ?? '-' }}</template>
+              </el-table-column>
+              <el-table-column label="单价" width="70">
+                <template #default="{ row }">{{ row.unitPrice ?? '-' }}</template>
+              </el-table-column>
               <el-table-column prop="reason" label="选厂理由" min-width="160" />
-              <el-table-column prop="capacityCheck" label="产能核算" min-width="160" />
-              <el-table-column prop="price" label="价格" width="90" />
+              <el-table-column prop="capacityCheck" label="产能核算" min-width="140" />
+              <el-table-column prop="price" label="小计" width="90" />
               <el-table-column prop="days" label="工期" width="60" />
               <el-table-column prop="yieldRate" label="良率" width="70" />
               <el-table-column v-if="currentSolDemand && currentSolDemand.status==='SOLUTION_GENERATED'" label="修改" width="80">
@@ -216,11 +255,13 @@
                 </template>
               </el-table-column>
             </el-table>
+            </PagedBox>
           </div>
         </el-dialog>
-        <el-dialog v-model="repOpen" title="换厂（价格不变）" width="640px">
+        <el-dialog v-model="repOpen" title="换厂（价格不变）" width="640px" :close-on-click-modal="false">
           <p>工序 {{ currentProcess?.processName }}，原价 {{ currentProcess?.price }} 不可改。</p>
-          <el-table :data="alts" size="small" border>
+          <PagedBox :data="alts" :page-size="8" v-slot="{ rows }">
+          <el-table :data="rows" size="small" border>
             <el-table-column prop="factoryName" label="工厂" />
             <el-table-column prop="creditScore" label="信用" width="70" />
             <el-table-column prop="maxQty" label="承接量" width="80" />
@@ -231,34 +272,102 @@
               </template>
             </el-table-column>
           </el-table>
+          </PagedBox>
         </el-dialog>
       </div>
 
-      <!-- 合同审核 -->
+      <!-- 合同管理 -->
       <div v-if="active==='contracts'">
-        <div class="toolbar"><span class="title">待确认合同（只确认该厂这份已双签，不审正文）</span><el-button @click="loadContracts">刷新</el-button></div>
-        <el-table :data="contracts" border>
-          <el-table-column prop="orderId" label="订单" width="80" />
-          <el-table-column prop="factoryName" label="工厂" />
-          <el-table-column prop="processNames" label="工序" />
-          <el-table-column prop="attachmentId" label="附件" width="80" />
-          <el-table-column prop="status" label="状态" width="140" />
-          <el-table-column label="操作" width="160">
+        <div class="toolbar">
+          <span class="title">合同管理台账</span>
+          <div style="display:flex;gap:8px;align-items:center">
+            <el-select v-model="contractStatus" clearable placeholder="全部状态" style="width:160px" @change="loadAllContracts">
+              <el-option label="待上传" value="PENDING_UPLOAD" />
+              <el-option label="签署中" value="PENDING_SIGN" />
+              <el-option label="待运营确认" value="PENDING_REVIEW" />
+              <el-option label="已签署" value="SIGNED" />
+            </el-select>
+            <el-button @click="loadAllContracts">刷新</el-button>
+          </div>
+        </div>
+        <PagedBox :data="allContracts" v-slot="{ rows }">
+        <el-table :data="rows" border>
+          <el-table-column prop="id" label="ID" width="60" />
+          <el-table-column prop="orderId" label="订单" width="70" />
+          <el-table-column prop="demandTitle" label="需求" min-width="150" />
+          <el-table-column prop="buyerName" label="买家" min-width="120" />
+          <el-table-column prop="factoryName" label="工厂" min-width="120" />
+          <el-table-column prop="processNames" label="工序" min-width="100" />
+          <el-table-column label="附件" width="90">
+            <template #default="{ row }">
+              <el-button v-if="row.attachmentId" size="small" link type="primary" @click="downloadPhoto(row.attachmentId)">下载</el-button>
+              <span v-else>-</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="创建时间" width="160">
+            <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
+          </el-table-column>
+          <el-table-column label="签署时间" width="160">
+            <template #default="{ row }">{{ fmtTime(row.signedAt) }}</template>
+          </el-table-column>
+          <el-table-column label="状态" width="120">
+            <template #default="{ row }">
+              <el-tag :type="row.status==='SIGNED'?'success':row.status==='PENDING_REVIEW'?'warning':'info'">{{ contractStatusText(row.status) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="150">
             <template #default="{ row }">
               <el-button v-if="row.status==='PENDING_REVIEW'" size="small" type="success" @click="approve(row)">确认该厂已签</el-button>
             </template>
           </el-table-column>
         </el-table>
+        </PagedBox>
+        <el-alert style="margin-top:10px" type="info" :closable="false"
+          title="运营只确认双签事实并触发拆工单，不审合同正文。台账可跟踪每份合同从上传到签署的全程。" />
+      </div>
+
+      <!-- 操作日志 -->
+      <div v-if="active==='audit'">
+        <div class="toolbar">
+          <span class="title">关键操作日志</span>
+          <div style="display:flex;gap:8px;align-items:center">
+            <el-select v-model="auditAction" clearable placeholder="全部动作" style="width:180px" @change="loadAudit">
+              <el-option v-for="a in AUDIT_ACTIONS" :key="a" :label="a" :value="a" />
+            </el-select>
+            <el-button @click="loadAudit">刷新</el-button>
+          </div>
+        </div>
+        <PagedBox :data="auditLogs" v-slot="{ rows }">
+        <el-table :data="rows" border size="small">
+          <el-table-column prop="id" label="ID" width="70" />
+          <el-table-column label="时间" width="170">
+            <template #default="{row}">{{ fmtTime(row.createdAt) }}</template>
+          </el-table-column>
+          <el-table-column prop="actorName" label="操作人" width="120" />
+          <el-table-column prop="action" label="动作" width="150" />
+          <el-table-column label="对象" width="140">
+            <template #default="{row}">{{ row.targetType }} #{{ row.targetId }}</template>
+          </el-table-column>
+          <el-table-column prop="afterJson" label="详情" min-width="240" show-overflow-tooltip />
+        </el-table>
+        </PagedBox>
       </div>
 
       <!-- 工单质检 -->
       <div v-if="active==='inspect'">
         <div class="toolbar"><span class="title">工单质检</span><el-button @click="loadStages">刷新</el-button></div>
-        <el-table :data="sortedStages" border>
+        <PagedBox :data="sortedStages" v-slot="{ rows }">
+        <el-table :data="rows" border>
           <el-table-column prop="id" label="工单ID" width="70" />
           <el-table-column prop="orderId" label="订单ID" width="70" />
           <el-table-column prop="factoryName" label="工厂" min-width="120" />
           <el-table-column prop="processName" label="工序" />
+          <el-table-column label="创建时间" width="160">
+            <template #default="{row}">{{ fmtTime(row.createdAt) }}</template>
+          </el-table-column>
+          <el-table-column label="更新时间" width="160">
+            <template #default="{row}">{{ fmtTime(row.updatedAt) }}</template>
+          </el-table-column>
           <el-table-column label="进度" width="140">
             <template #default="{row}">
               <el-progress :percentage="row.actualProgress || 0" :stroke-width="10" />
@@ -280,6 +389,7 @@
             </template>
           </el-table-column>
         </el-table>
+        </PagedBox>
         <el-dialog v-model="progOpen" title="进度记录" width="560px">
           <el-timeline>
             <el-timeline-item v-for="p in progLogs" :key="p.id" :timestamp="p.createdAt">
@@ -291,7 +401,7 @@
           </el-timeline>
           <p v-if="!progLogs.length">暂无上报</p>
         </el-dialog>
-        <el-dialog v-model="inspOpen" :title="inspForm.result==='PASS' ? '合格报告' : '不合格报告'" width="520px">
+        <el-dialog v-model="inspOpen" :title="inspForm.result==='PASS' ? '合格报告' : '不合格报告'" width="520px" :close-on-click-modal="false">
           <el-form label-width="120px">
             <el-form-item label="抽检数"><el-input-number v-model="inspForm.sampleCount" :min="0" /></el-form-item>
             <el-form-item label="不合格数"><el-input-number v-model="inspForm.failCount" :min="0" /></el-form-item>
@@ -321,33 +431,47 @@
           <el-tab-pane label="按需求分组" name="byDemand">
             <el-collapse>
               <el-collapse-item v-for="g in fundByDemand" :key="g.demandId" :title="'#' + g.demandId + ' ' + (g.demandTitle || '') + ' · 小计 ¥' + g.subtotal">
-                <el-table :data="g.flows" border size="small">
+                <PagedBox :data="g.flows" :page-size="8" v-slot="{ rows }">
+                <el-table :data="rows" border size="small">
+                  <el-table-column label="时间" width="160">
+                    <template #default="{row}">{{ fmtTime(row.createdAt) }}</template>
+                  </el-table-column>
                   <el-table-column prop="enterpriseName" label="企业" min-width="120" />
                   <el-table-column label="类型" width="100"><template #default="{row}">{{ label(FUND_TYPE, row.type) }}</template></el-table-column>
                   <el-table-column label="方向" width="90"><template #default="{row}">{{ label(FUND_DIR, row.direction) }}</template></el-table-column>
                   <el-table-column prop="amount" label="金额" width="100" />
                 </el-table>
+                </PagedBox>
               </el-collapse-item>
             </el-collapse>
           </el-tab-pane>
           <el-tab-pane label="企业账户" name="accounts">
-            <el-table :data="fundAccounts" border>
+            <PagedBox :data="fundAccounts" v-slot="{ rows }">
+            <el-table :data="rows" border>
               <el-table-column prop="tenantId" label="企业ID" width="80" />
               <el-table-column prop="enterpriseName" label="企业" min-width="140" />
               <el-table-column prop="enterpriseType" label="类型" width="90" />
               <el-table-column prop="balance" label="可用余额" width="120" />
               <el-table-column prop="frozen" label="冻结" width="120" />
             </el-table>
+            </PagedBox>
           </el-tab-pane>
           <el-tab-pane label="全部流水" name="all">
-            <el-table :data="funds" border>
+            <PagedBox :data="funds" v-slot="{ rows }">
+            <el-table :data="rows" border>
               <el-table-column prop="id" label="ID" width="60" />
-              <el-table-column prop="tenantId" label="企业ID" width="80" />
+              <el-table-column label="时间" width="160">
+                <template #default="{row}">{{ fmtTime(row.createdAt) }}</template>
+              </el-table-column>
+              <el-table-column label="需求" min-width="140">
+                <template #default="{row}">{{ row.demandTitle || (row.demandId ? '#' + row.demandId : '-') }}</template>
+              </el-table-column>
               <el-table-column prop="enterpriseName" label="企业" min-width="140" />
               <el-table-column label="类型" width="120"><template #default="{row}">{{ label(FUND_TYPE, row.type) }}</template></el-table-column>
               <el-table-column label="方向" width="100"><template #default="{row}">{{ label(FUND_DIR, row.direction) }}</template></el-table-column>
               <el-table-column prop="amount" label="金额" width="120" />
             </el-table>
+            </PagedBox>
           </el-tab-pane>
         </el-tabs>
       </div>
@@ -367,7 +491,8 @@
           <el-tab-pane label="工厂方" name="FACTORY" />
           <el-tab-pane label="质检方" name="INSPECTION" />
         </el-tabs>
-        <el-table :data="enterprises" border>
+        <PagedBox :data="enterprises" v-slot="{ rows }">
+        <el-table :data="rows" border>
           <el-table-column prop="id" label="企业ID" width="80" />
           <el-table-column prop="name" label="企业名称" min-width="140" />
           <el-table-column prop="creditCode" label="信用代码" min-width="150" />
@@ -375,20 +500,56 @@
           <el-table-column prop="address" label="地址" min-width="160" />
           <el-table-column prop="creditScore" label="信用分" width="80" />
           <el-table-column prop="authStatus" label="认证" width="90" />
+          <el-table-column label="注册时间" width="160">
+            <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
+          </el-table-column>
           <el-table-column prop="accountPhone" label="登录手机" width="120" />
           <el-table-column prop="realName" label="账号姓名" width="100" />
           <el-table-column label="账号状态" width="90">
             <template #default="{ row }">{{ row.userStatus === 'DISABLED' ? '停用' : (row.userStatus || '-') }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="160" fixed="right">
+          <el-table-column label="操作" width="220" fixed="right">
             <template #default="{ row }">
+              <el-button v-if="entTab==='FACTORY'" size="small" type="primary" plain @click="openFactoryProfile(row.id)">详情</el-button>
               <el-button size="small" @click="openEntEdit(row)">编辑</el-button>
               <el-button size="small" type="danger" @click="removeEnterprise(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
+        </PagedBox>
 
-        <el-dialog v-model="entEditOpen" title="编辑用户信息" width="560px">
+        <el-drawer v-model="factoryProfileOpen" title="工厂详情" size="600px">
+          <el-descriptions :column="1" border size="small">
+            <el-descriptions-item label="名称">{{ factoryProfile.name }}</el-descriptions-item>
+            <el-descriptions-item label="信用分">{{ factoryProfile.creditScore ?? '-' }}</el-descriptions-item>
+            <el-descriptions-item label="认证">{{ factoryProfile.authStatus === 'APPROVED' ? '已认证' : (factoryProfile.authStatus || '-') }}</el-descriptions-item>
+            <el-descriptions-item label="质检合格率(平台计算)">{{ factoryProfile.inspectionPassRate != null ? factoryProfile.inspectionPassRate + '%（共 ' + factoryProfile.inspectionCount + ' 次质检）' : '暂无质检记录' }}</el-descriptions-item>
+            <el-descriptions-item label="已结算工单">{{ factoryProfile.settledStages ?? 0 }} 单</el-descriptions-item>
+            <el-descriptions-item label="买家评分">{{ factoryProfile.surveyAvg != null ? factoryProfile.surveyAvg + ' 分' : '暂无评价' }}</el-descriptions-item>
+            <el-descriptions-item label="报名后未填报次数">{{ factoryProfile.noLockCount ?? 0 }}</el-descriptions-item>
+            <el-descriptions-item label="违约/处罚次数">{{ factoryProfile.penaltyCount ?? 0 }}</el-descriptions-item>
+            <el-descriptions-item label="体系认证">{{ factoryProfile.certs || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="企业介绍">{{ factoryProfile.introduction || '-' }}</el-descriptions-item>
+          </el-descriptions>
+          <h4>设备与产能（日产能合计 {{ factoryProfile.dailyCapacitySum ?? 0 }} 件/天）</h4>
+          <PagedBox :data="factoryProfile.devices || []" :page-size="8" v-slot="{ rows }">
+          <el-table :data="rows" border size="small">
+            <el-table-column prop="name" label="设备" min-width="120" />
+            <el-table-column prop="processNames" label="适用工序" min-width="120" />
+            <el-table-column prop="dailyCapacity" label="日产能" width="80" />
+            <el-table-column label="添加时间" width="160">
+              <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
+            </el-table-column>
+            <el-table-column label="状态" width="80">
+              <template #default="{ row }">
+                <el-tag :type="deviceStatusType(row.status)" size="small">{{ label(DEVICE_STATUS, row.status) }}</el-tag>
+              </template>
+            </el-table-column>
+          </el-table>
+          </PagedBox>
+        </el-drawer>
+
+        <el-dialog v-model="entEditOpen" title="编辑用户信息" width="560px" :close-on-click-modal="false">
           <h4 style="margin:0 0 8px">企业信息</h4>
           <el-form label-width="100px">
             <el-form-item label="企业名称" required><el-input v-model="entEdit.name" /></el-form-item>
@@ -439,9 +600,23 @@
               <el-radio value="INSPECTION">质检</el-radio>
             </el-radio-group>
           </el-form-item>
+          <el-form-item v-if="userForm.role==='INSPECTION'" label="质检机构名">
+            <el-input v-model="userForm.orgName" placeholder="如 华检质量检测（上海）有限公司，不填按姓名生成" />
+          </el-form-item>
           <el-button type="primary" @click="createUser">创建账号</el-button>
         </el-form>
       </div>
+      <el-dialog v-model="pwdOpen" title="修改登录密码" width="420px" :close-on-click-modal="false">
+        <el-form label-width="90px">
+          <el-form-item label="原密码"><el-input v-model="pwd.oldPassword" type="password" show-password /></el-form-item>
+          <el-form-item label="新密码"><el-input v-model="pwd.newPassword" type="password" show-password placeholder="至少 6 位" /></el-form-item>
+          <el-form-item label="确认新密码"><el-input v-model="pwd.confirm" type="password" show-password /></el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="pwdOpen=false">取消</el-button>
+          <el-button type="primary" @click="changePwd">修改</el-button>
+        </template>
+      </el-dialog>
     </el-main>
   </el-container>
 </template>
@@ -451,25 +626,30 @@ import { ref, onMounted, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api'
 import { listAll, getDetail, getCoverage, returnToBuyer, audit as auditDemand } from '../api/demand'
-import { pendingContracts, approveContract, inspect as inspectStage, progressLog } from '../api/order'
+import { approveContract, inspect as inspectStage, progressLog } from '../api/order'
 import { fetchAttachment, saveBlob } from '../api/file'
 import CoverageBars from '../components/CoverageBars.vue'
+import PagedBox from '../components/PagedBox.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { DEMAND_STATUS, FUND_TYPE, FUND_DIR, STAGE_STATUS, ESCROW_STATUS, label } from '../utils/labels'
+import { DEMAND_STATUS, FUND_TYPE, FUND_DIR, STAGE_STATUS, ESCROW_STATUS, DEVICE_STATUS, label, fmtTime, deviceStatusType } from '../utils/labels'
 
 const router = useRouter()
-const active = ref('demands')
+const role = localStorage.getItem('role') || ''
+const isInspector = role === 'INSPECTION'
+const active = ref(isInspector ? 'inspect' : 'overview')
 const demandTab = ref('audit')
 const DEMAND_GROUPS = {
   audit: ['PENDING_AUDIT'],
   returned: ['RETURNED'],
-  match: ['PUBLISHED', 'THINKING', 'REVIEWING'],
+  match: ['PUBLISHED', 'FACTORY_THINKING', 'BUYER_THINKING', 'THINKING', 'REVIEWING'],
   quote: ['LOCKING', 'SOLUTION_GENERATED', 'SOLUTION_CONFIRMED'],
   fulfill: ['SOLUTION_SELECTED', 'CONTRACTED', 'IN_PRODUCTION'],
   close: ['COMPLETED', 'CANCELLED', 'FLOW_FAILED'],
 }
 const demands = ref([])
 const filteredDemands = computed(() => demands.value.filter(d => (DEMAND_GROUPS[demandTab.value] || []).includes(d.status)))
+const solutionDemands = computed(() => demands.value.filter(d =>
+  ['SOLUTION_GENERATED', 'SOLUTION_CONFIRMED', 'SOLUTION_SELECTED', 'CONTRACTED', 'IN_PRODUCTION', 'COMPLETED'].includes(d.status)))
 function countGroup(key) {
   return demands.value.filter(d => (DEMAND_GROUPS[key] || []).includes(d.status)).length
 }
@@ -485,8 +665,6 @@ const fundOverview = ref({})
 const fundByDemand = ref([])
 const fundAccounts = ref([])
 const fundTab = ref('byDemand')
-const panoOpen = ref(false)
-const pano = ref({})
 const enterprises = ref([])
 const entTab = ref('BUYER')
 const entKeyword = ref('')
@@ -496,7 +674,7 @@ const entEdit = reactive({
   userId: null, accountPhone: '', realName: '', userStatus: 'ENABLED', password: '',
 })
 const userFormRef = ref()
-const userForm = reactive({ phone: '', password: '123456', realName: '', role: 'OPERATOR' })
+const userForm = reactive({ phone: '', password: '123456', realName: '', role: 'OPERATOR', orgName: '' })
 const userRules = {
   phone: [{ required: true, message: '请填写手机号', trigger: 'blur' }],
   password: [{ required: true, message: '请填写密码', trigger: 'blur' }, { min: 6, message: '至少 6 位', trigger: 'blur' }],
@@ -510,7 +688,29 @@ const repOpen = ref(false)
 const alts = ref([])
 const currentSol = ref(null)
 const currentProcess = ref(null)
-const isSuper = localStorage.getItem('role') === 'SUPER_ADMIN'
+const isSuper = role === 'SUPER_ADMIN'
+
+const overview = ref({})
+const overviewKpis = [
+  { key: 'pendingAudit', label: '待审核发布', warn: true },
+  { key: 'published', label: '意向期' },
+  { key: 'factoryThinking', label: '工厂思考期' },
+  { key: 'buyerThinking', label: '买家思考期' },
+  { key: 'solutionGenerated', label: '方案待审/待选', warn: true },
+  { key: 'solutionConfirmed', label: '待派单', warn: true },
+  { key: 'inProduction', label: '履约中' },
+  { key: 'completed', label: '已完成' },
+  { key: 'contractsPending', label: '合同待确认', warn: true },
+  { key: 'stagesPendingInspection', label: '待质检', warn: true },
+  { key: 'stagesOverdue', label: '逾期工单', warn: true },
+]
+const allContracts = ref([])
+const contractStatus = ref('')
+const auditLogs = ref([])
+const auditAction = ref('')
+const AUDIT_ACTIONS = ['需求审核通过', '需求退回', '结束意向期', '结束工厂思考期', '下发方案', '派单', '合同审核通过', '工单质检']
+const factoryProfileOpen = ref(false)
+const factoryProfile = ref({})
 
 const fileOpen = ref(false)
 const fileTitle = ref('')
@@ -521,15 +721,39 @@ const returnOpen = ref(false)
 const returnReason = ref('')
 const returnTarget = ref(null)
 const coverage = ref([])
-const contracts = ref([])
 const inspOpen = ref(false)
 const inspTarget = ref(null)
 const inspForm = reactive({ result: 'PASS', sampleCount: 10, failCount: 0, keyDimensions: '', meetsRequirement: true, remark: '' })
 
 function statusText(s) { return label(DEMAND_STATUS, s) === s ? label(STAGE_STATUS, s) : label(DEMAND_STATUS, s) }
+function stageStart(row) {
+  const v = ({
+    PENDING_AUDIT: row.createdAt,
+    PUBLISHED: row.publishedAt,
+    FACTORY_THINKING: row.factoryThinkingAt,
+    BUYER_THINKING: row.buyerThinkingAt,
+    LOCKING: row.createdAt,
+  })[row.status]
+  return fmtTime(v)
+}
+function stageEnd(row) {
+  const v = ({
+    PUBLISHED: row.intentionEndAt,
+    FACTORY_THINKING: row.factoryThinkingEndAt,
+    BUYER_THINKING: row.buyerThinkingEndAt,
+    LOCKING: row.lockingEndAt,
+  })[row.status]
+  return fmtTime(v)
+}
+function buyerDepositText(s) {
+  return ({ NONE: '未收', FROZEN: '已冻结(5%)', DEDUCTED: '已抵扣尾款', RELEASED: '已退回' })[s] || '-'
+}
+function contractStatusText(s) {
+  return ({ PENDING_UPLOAD: '待上传', PENDING_SIGN: '签署中', PENDING_REVIEW: '待运营确认', SIGNED: '已签署' })[s] || s
+}
 function tagType(s) {
   if (['PENDING_AUDIT','PUBLISHED','LOCKING','RETURNED'].includes(s)) return 'warning'
-  if (['THINKING','REVIEWING'].includes(s)) return 'primary'
+  if (['THINKING','REVIEWING','FACTORY_THINKING','BUYER_THINKING'].includes(s)) return 'primary'
   if (['SOLUTION_GENERATED','SOLUTION_CONFIRMED','SOLUTION_SELECTED'].includes(s)) return 'success'
   if (['COMPLETED'].includes(s)) return 'success'
   if (['CANCELLED','FLOW_FAILED','FAIL'].includes(s)) return 'danger'
@@ -615,11 +839,6 @@ async function removeEnterprise(row) {
   loadEnterprises()
 }
 
-async function openPanorama(row) {
-  pano.value = await api.get(`/demand/${row.id}/panorama`)
-  panoOpen.value = true
-}
-
 function isTextFile(row, fileName) {
   const t = (row.fileType || '').toLowerCase()
   const n = (fileName || row.fileName || '').toLowerCase()
@@ -663,7 +882,19 @@ async function submitReturn() {
   loadDemands()
 }
 async function audit(row, result) { await auditDemand(row.id, result); ElMessage.success('操作成功'); loadDemands() }
-async function endIntention(row) { await api.post(`/flow/${row.id}/end-intention`); ElMessage.success('已进入思考期'); loadDemands() }
+async function endIntention(row) { await api.post(`/flow/${row.id}/end-intention`); ElMessage.success('已进入工厂思考期'); loadDemands() }
+async function endFactoryThinking(row) {
+  await ElMessageBox.confirm('未填报的工厂将没收意向金；已填报覆盖不足会流单全退。确定结束工厂思考期？', '结束工厂思考期', { type: 'warning' })
+  await api.post(`/flow/${row.id}/end-factory-thinking`)
+  ElMessage.success('已进入买家思考期')
+  loadDemands()
+}
+async function endBuyerThinking(row) {
+  await ElMessageBox.confirm('买家未在期内交保证金，将视为流单：全部工厂保证金/意向金退回。确定执行？', '超时流单', { type: 'warning' })
+  await api.post(`/flow/${row.id}/end-buyer-thinking`)
+  ElMessage.success('已流单，相关资金退回')
+  loadDemands()
+}
 async function review(row, pass) { await api.post(`/flow/${row.id}/review?pass=${pass}`); ElMessage.success('操作成功'); loadDemands() }
 async function endLocking(row) { await api.post(`/flow/${row.id}/end-locking`); ElMessage.success('保证金期已结束，请到方案查看里审阅 AI 方案并下发'); loadDemands() }
 async function dispatchOrder(row) {
@@ -707,8 +938,18 @@ async function doReplace(row) {
   repOpen.value = false
   solutions.value = await api.get(`/solution/${currentSol.value.demandId}`)
 }
-async function loadContracts() { contracts.value = await pendingContracts() }
-async function approve(row) { await approveContract(row.orderId, row.tenantId); ElMessage.success('已确认该厂合同，已拆该厂工单'); loadContracts(); loadStages(); loadDemands() }
+async function loadAllContracts() {
+  allContracts.value = await api.get('/order/contracts/all', { params: { status: contractStatus.value || undefined } })
+}
+async function approve(row) { await approveContract(row.orderId, row.tenantId); ElMessage.success('已确认该厂合同，已拆该厂工单'); loadAllContracts(); loadStages(); loadDemands() }
+async function loadOverview() { overview.value = await api.get('/audit/overview') }
+async function loadAudit() {
+  auditLogs.value = await api.get('/audit/logs', { params: { action: auditAction.value || undefined, limit: 200 } })
+}
+async function openFactoryProfile(id) {
+  factoryProfile.value = await api.get(`/enterprise/${id}/public-profile`)
+  factoryProfileOpen.value = true
+}
 function openInspect(row, result) {
   inspTarget.value = row
   inspForm.result = result
@@ -750,20 +991,39 @@ async function downloadPhoto(id) {
   }
 }
 
+const pwdOpen = ref(false)
+const pwd = reactive({ oldPassword: '', newPassword: '', confirm: '' })
+async function changePwd() {
+  if (!pwd.oldPassword) return ElMessage.warning('请填写原密码')
+  if (!pwd.newPassword || pwd.newPassword.length < 6) return ElMessage.warning('新密码至少 6 位')
+  if (pwd.newPassword !== pwd.confirm) return ElMessage.warning('两次输入的新密码不一致')
+  await api.post('/auth/change-password', { oldPassword: pwd.oldPassword, newPassword: pwd.newPassword })
+  ElMessage.success('密码已修改，下次登录请用新密码')
+  pwdOpen.value = false
+  pwd.oldPassword = pwd.newPassword = pwd.confirm = ''
+}
+
 function logout() { localStorage.clear(); router.push('/login') }
 
 onMounted(() => {
-  loadDemands()
   loadStages()
-  loadFundViews()
-  loadContracts()
-  loadEnterprises()
+  if (!isInspector) {
+    loadOverview()
+    loadDemands()
+    loadFundViews()
+    loadAllContracts()
+    loadEnterprises()
+    loadAudit()
+  }
 })
 </script>
 
 <style scoped>
 .aside { background:#304156; }
-.logo { color:#fff; text-align:center; padding:16px 0; font-weight:bold; }
+.logo { color:#fff; text-align:center; padding:16px 0 2px; font-weight:bold; }
+.sub-logo { color:#bfcbd9; text-align:center; font-size:12px; padding-bottom:12px; }
+.clickable { cursor: pointer; }
+.plan-text { display:inline-block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom; }
 .toolbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
 .title { font-size:16px; font-weight:bold; }
 .file-preview { white-space: pre-wrap; word-break: break-word; margin: 0; font-size: 13px; line-height: 1.6; }

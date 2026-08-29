@@ -24,6 +24,8 @@ public class Enterprise {
     private String legalPerson;
     private String bankAccount;
     private String capabilityJson;
+    /** 企业介绍（工厂自填，买家可见） */
+    private String introduction;
     private String address;
     @TableField(exist = false)
     private String accountPhone;

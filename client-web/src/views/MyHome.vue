@@ -14,17 +14,37 @@
     </el-descriptions>
     <el-alert style="margin-top:12px" type="info" :closable="false"
       title="演示环境企业账户默认 100 万。意向金/保证金从可用余额冻结；余额不足将无法报名或锁价。" />
+
+    <el-card shadow="never" style="margin-top:16px">
+      <template #header>修改登录密码</template>
+      <el-form label-width="90px" style="max-width:420px">
+        <el-form-item label="原密码"><el-input v-model="pwd.oldPassword" type="password" show-password /></el-form-item>
+        <el-form-item label="新密码"><el-input v-model="pwd.newPassword" type="password" show-password placeholder="至少 6 位" /></el-form-item>
+        <el-form-item label="确认新密码"><el-input v-model="pwd.confirm" type="password" show-password /></el-form-item>
+        <el-button type="primary" @click="changePwd">修改密码</el-button>
+      </el-form>
+    </el-card>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import api from '../api'
+import { ElMessage } from 'element-plus'
 
 const info = ref({})
+const pwd = reactive({ oldPassword: '', newPassword: '', confirm: '' })
 function money(v) {
   if (v == null) return '0.00'
   return Number(v).toFixed(2)
+}
+async function changePwd() {
+  if (!pwd.oldPassword) return ElMessage.warning('请填写原密码')
+  if (!pwd.newPassword || pwd.newPassword.length < 6) return ElMessage.warning('新密码至少 6 位')
+  if (pwd.newPassword !== pwd.confirm) return ElMessage.warning('两次输入的新密码不一致')
+  await api.post('/auth/change-password', { oldPassword: pwd.oldPassword, newPassword: pwd.newPassword })
+  ElMessage.success('密码已修改，下次登录请用新密码')
+  pwd.oldPassword = pwd.newPassword = pwd.confirm = ''
 }
 onMounted(async () => {
   info.value = await api.get('/enterprise/mine')

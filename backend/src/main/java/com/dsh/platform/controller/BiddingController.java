@@ -49,6 +49,22 @@ public class BiddingController {
         return R.ok(biddingService.lock(req));
     }
 
+    /** 工厂思考期填报：实施方案+单价+分期交付，冻结 5% 保证金 */
+    @PostMapping("/commit")
+    @PreAuthorize("hasRole('FACTORY')")
+    public R<Void> commit(@RequestBody CommitRequest req) {
+        biddingService.commit(req);
+        return R.ok();
+    }
+
+    /** 工厂思考期退出：不参加，退回意向金 */
+    @PostMapping("/exit/{demandId}")
+    @PreAuthorize("hasRole('FACTORY')")
+    public R<Void> exit(@PathVariable Long demandId) {
+        biddingService.exitDemand(demandId);
+        return R.ok();
+    }
+
     @GetMapping("/mine")
     @PreAuthorize("hasRole('FACTORY')")
     public R<List<Quotation>> mine() {

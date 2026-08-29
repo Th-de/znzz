@@ -22,7 +22,8 @@ public class DemandDtos {
             List<ProcessItem> processes,
             String inspectMode, String generalTolerance, String partRevision,
             String extraJson, Long attachmentId,
-            Long sourceDemandId) {}
+            Long sourceDemandId,
+            Integer deliveryTimes, List<String> deliveryPlan) {}
 
     public record ReturnRequest(String reason) {}
 

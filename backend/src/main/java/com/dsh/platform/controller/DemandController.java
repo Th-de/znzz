@@ -5,7 +5,6 @@ import com.dsh.platform.domain.coverage.CoverageView;
 import com.dsh.platform.dto.DemandDtos.*;
 import com.dsh.platform.entity.Demand;
 import com.dsh.platform.entity.Process;
-import com.dsh.platform.service.DemandPanoramaService;
 import com.dsh.platform.service.DemandService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -20,7 +19,6 @@ import java.util.Map;
 public class DemandController {
 
     private final DemandService demandService;
-    private final DemandPanoramaService demandPanoramaService;
 
     @PostMapping("/publish")
     @PreAuthorize("hasRole('BUYER')")
@@ -78,10 +76,10 @@ public class DemandController {
         return R.ok(demandService.processes(id));
     }
 
-    @GetMapping("/{id}/panorama")
-    @PreAuthorize("hasAnyRole('OPERATOR','SUPER_ADMIN','BUYER')")
-    public R<Map<String, Object>> panorama(@PathVariable Long id) {
-        return R.ok(demandPanoramaService.of(id));
+    @GetMapping("/{id}/factories")
+    @PreAuthorize("hasAnyRole('BUYER','OPERATOR','SUPER_ADMIN')")
+    public R<List<Map<String, Object>>> bidFactories(@PathVariable Long id) {
+        return R.ok(demandService.listBidFactories(id));
     }
 
     @PostMapping("/{id}/cancel")

@@ -100,6 +100,13 @@ public class TodoService {
             out.add(new TodoItem("THINKING_DECIDE", "有 " + thinking + " 条需求在思考期，请决定继续或取消",
                     "/buyer/demand/" + (d == null ? "" : d.getId()), (int) thinking));
         }
+        List<Demand> buyerThinking = demands.stream()
+                .filter(d -> "BUYER_THINKING".equals(d.getStatus())).toList();
+        for (Demand d : buyerThinking) {
+            out.add(new TodoItem("BUYER_THINKING_DECIDE",
+                    "需求「" + d.getTitle() + "」在买家思考期，请决定继续（交 5% 保证金）或取消",
+                    "/buyer/demand/" + d.getId(), 1));
+        }
         List<Demand> waiting = demands.stream().filter(d -> "SOLUTION_GENERATED".equals(d.getStatus())).toList();
         for (Demand d : waiting) {
             Long n = solutionMapper.selectCount(new LambdaQueryWrapper<Solution>()
@@ -124,7 +131,8 @@ public class TodoService {
                     "/factory/quotations", (int) pendingPay));
         }
         Set<Long> lockIds = qs.stream()
-                .filter(q -> "INTENTION".equals(q.getStatus()) && "FROZEN".equals(q.getIntentionStatus()))
+                .filter(q -> "INTENTION".equals(q.getStatus())
+                        && ("FROZEN".equals(q.getIntentionStatus()) || "COVERED".equals(q.getIntentionStatus())))
                 .map(Quotation::getDemandId).collect(Collectors.toSet());
         if (!lockIds.isEmpty()) {
             Long n = demandMapper.selectCount(new LambdaQueryWrapper<Demand>()
@@ -133,6 +141,14 @@ public class TodoService {
             if (n != null && n > 0) {
                 out.add(new TodoItem("LOCK_QUOTE", "有 " + n + " 条需求可锁定报价",
                         "/factory/demands", n.intValue()));
+            }
+            Long ft = demandMapper.selectCount(new LambdaQueryWrapper<Demand>()
+                    .in(Demand::getId, lockIds)
+                    .eq(Demand::getStatus, "FACTORY_THINKING"));
+            if (ft != null && ft > 0) {
+                out.add(new TodoItem("FACTORY_COMMIT",
+                        "有 " + ft + " 条需求在工厂思考期，请填报方案（交 5% 保证金）或退出",
+                        "/factory/quotations", ft.intValue()));
             }
         }
         List<Contract> contracts = contractMapper.selectList(new LambdaQueryWrapper<Contract>()

@@ -7,7 +7,10 @@ public class AuthDtos {
 
     public record LoginRequest(String phone, String password) {}
 
-    public record CreateUserRequest(String phone, String password, String realName, String role) {}
+    public record CreateUserRequest(String phone, String password, String realName, String role,
+                                    String orgName) {}
+
+    public record ChangePasswordRequest(String oldPassword, String newPassword) {}
 
     public record LoginResponse(String token, String role, Long tenantId, String name) {}
 

@@ -7,6 +7,11 @@ public enum DemandStatus {
     PENDING_AUDIT,
     PUBLISHED,
     RETURNED,
+    /** 工厂思考期：是否参加、填实施方案+单价+分期交付，交 5% 保证金 */
+    FACTORY_THINKING,
+    /** 买家思考期：决定是否继续并按预估总价交 5% 保证金 */
+    BUYER_THINKING,
+    /** 旧流程状态，保留以兼容历史数据 */
     THINKING,
     REVIEWING,
     LOCKING,

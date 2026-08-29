@@ -19,3 +19,11 @@ export function selectSolution(demandId, solutionId) {
 export function generateAi(demandId) {
   return api.post(`/solution/${demandId}/generate-ai`, null, { timeout: 90000 })
 }
+
+export function allocationCandidates(solutionId, processNo) {
+  return api.get(`/solution/item/${solutionId}/candidates`, { params: { processNo } })
+}
+
+export function reallocate(solutionId, processNo, allocations) {
+  return api.post(`/solution/item/${solutionId}/reallocate?processNo=${processNo}`, allocations)
+}
