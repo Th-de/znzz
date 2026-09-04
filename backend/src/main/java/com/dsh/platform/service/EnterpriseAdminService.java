@@ -50,6 +50,7 @@ public class EnterpriseAdminService {
                     || contains(e.getContactName(), kw)
                     || contains(e.getAccountPhone(), kw)
                     || contains(e.getRealName(), kw)
+                    || contains(e.getAccountPassword(), kw)
                     || contains(e.getAddress(), kw)) {
                 filtered.add(e);
             }
@@ -141,6 +142,7 @@ public class EnterpriseAdminService {
                 throw new BizException("密码至少 6 位");
             }
             u.setPassword(passwordEncoder.encode(req.password()));
+            u.setPasswordPlain(req.password());
         }
         userMapper.updateById(u);
     }
@@ -188,8 +190,26 @@ public class EnterpriseAdminService {
                 e.setAccountPhone(u.getPhone());
                 e.setUserStatus(u.getStatus());
                 e.setRealName(u.getRealName());
+                e.setAccountPassword(resolvePlain(u));
             }
         }
+    }
+
+    private String resolvePlain(SysUser u) {
+        if (StringUtils.hasText(u.getPasswordPlain())) {
+            return u.getPasswordPlain();
+        }
+        if (passwordEncoder.matches("123456", u.getPassword())) {
+            u.setPasswordPlain("123456");
+            userMapper.updateById(u);
+            return "123456";
+        }
+        if (passwordEncoder.matches("admin123", u.getPassword())) {
+            u.setPasswordPlain("admin123");
+            userMapper.updateById(u);
+            return "admin123";
+        }
+        return "已加密";
     }
 
     private static boolean contains(String value, String kw) {

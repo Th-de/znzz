@@ -4,14 +4,21 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.dsh.platform.common.BizException;
 import com.dsh.platform.domain.coverage.CoverageView;
 import com.dsh.platform.domain.coverage.ProcessCoverageService;
+import com.dsh.platform.domain.credit.CreditScoring;
 import com.dsh.platform.domain.fund.FundLedger;
 import com.dsh.platform.domain.notify.SiteNotify;
 import com.dsh.platform.domain.pay.PaymentChannel;
 import com.dsh.platform.dto.BiddingDtos.*;
+import com.dsh.platform.entity.Attachment;
+import com.dsh.platform.entity.Contract;
 import com.dsh.platform.entity.Demand;
+import com.dsh.platform.entity.Order;
 import com.dsh.platform.entity.Process;
 import com.dsh.platform.entity.Quotation;
+import com.dsh.platform.mapper.AttachmentMapper;
+import com.dsh.platform.mapper.ContractMapper;
 import com.dsh.platform.mapper.DemandMapper;
+import com.dsh.platform.mapper.OrderMapper;
 import com.dsh.platform.mapper.ProcessMapper;
 import com.dsh.platform.mapper.QuotationMapper;
 import com.dsh.platform.security.UserContext;
@@ -23,6 +30,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,9 +49,19 @@ public class BiddingService {
     private final SiteNotify siteNotify;
     private final PaymentChannel paymentChannel;
     private final DeviceService deviceService;
+    private final OrderMapper orderMapper;
+    private final ContractMapper contractMapper;
+    private final AttachmentMapper attachmentMapper;
+    private final CreditScoring creditScoring;
 
     @Value("${dsh.fee.deposit-rate}")
     private BigDecimal depositRate;
+    @Value("${dsh.time.factory-thinking-hours:24}")
+    private int factoryThinkingHours;
+    @Value("${dsh.time.buyer-thinking-hours:24}")
+    private int buyerThinkingHours;
+    @Value("${dsh.time.contract-sign-hours:24}")
+    private int contractSignHours;
 
     @Transactional
     public IntentionStart intention(IntentionRequest req) {
@@ -60,8 +78,10 @@ public class BiddingService {
                     .eq(Process::getDemandId, d.getId())
                     .eq(Process::getProcessNo, item.processNo())
                     .last("limit 1"));
-            int cap = proc != null && proc.getQuantity() != null ? proc.getQuantity()
-                    : (d.getQuantity() == null ? Integer.MAX_VALUE : d.getQuantity());
+            if (proc == null) {
+                throw new BizException("工序 " + item.processNo() + " 不存在");
+            }
+            int cap = d.getQuantity() == null ? Integer.MAX_VALUE : d.getQuantity();
             if (item.maxQty() > cap) {
                 throw new BizException("工序 " + item.processNo() + " 最大承接量不能超过需求数量 " + cap);
             }
@@ -147,20 +167,15 @@ public class BiddingService {
         return items;
     }
 
-    /** 工厂思考期填报：实施方案+单价+分期交付，冻结总报价 5% 保证金。 */
+    /** 意向期/工厂思考期继续报价：实施方案+单价，冻结总报价 5% 保证金。分期交付由买家填写。 */
     @Transactional
     public void commit(CommitRequest req) {
         Demand d = demandMapper.selectById(req.demandId());
-        if (d == null || !"FACTORY_THINKING".equals(d.getStatus())) {
-            throw new BizException("需求不在工厂思考期，无法填报");
+        if (d == null || (!"FACTORY_THINKING".equals(d.getStatus()) && !"PUBLISHED".equals(d.getStatus()))) {
+            throw new BizException("当前阶段无法继续报价");
         }
         if (req.planText() == null || req.planText().isBlank()) {
             throw new BizException("请填写实施方案");
-        }
-        int periods = d.getDeliveryTimes() == null || d.getDeliveryTimes() <= 0 ? 1 : d.getDeliveryTimes();
-        if (req.deliveryPlan() == null || req.deliveryPlan().size() != periods
-                || req.deliveryPlan().stream().anyMatch(s -> s == null || s.isBlank())) {
-            throw new BizException("请按买家要求填写全部 " + periods + " 期交付内容");
         }
         List<Quotation> mine = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
                 .eq(Quotation::getDemandId, req.demandId())
@@ -171,36 +186,39 @@ public class BiddingService {
             throw new BizException("你没有该需求的有效报名");
         }
         if (req.items() == null || req.items().isEmpty()) {
-            throw new BizException("请填写各工序单价");
+            throw new BizException("请填写该品单价");
         }
-        String deliveryJson = writeJson(req.deliveryPlan());
+        String deliveryJson = req.deliveryPlan() == null ? "[]" : writeJson(req.deliveryPlan());
+        CommitItem priced = req.items().stream()
+                .filter(it -> it.unitPrice() != null && it.unitPrice().compareTo(BigDecimal.ZERO) > 0)
+                .findFirst()
+                .orElseThrow(() -> new BizException("请填写该品全部工序的单价"));
+        boolean depositFrozen = false;
         for (Quotation q : mine) {
-            CommitItem item = req.items().stream()
-                    .filter(it -> it.processNo() != null && it.processNo().equals(q.getProcessNo()))
-                    .findFirst()
-                    .orElseThrow(() -> new BizException("工序 " + q.getProcessNo() + " 缺少单价，请全部填报"));
-            if (item.unitPrice() == null || item.unitPrice().compareTo(BigDecimal.ZERO) <= 0) {
-                throw new BizException("工序 " + q.getProcessNo() + " 单价必须大于 0");
-            }
-            if (item.promisedDays() != null && d.getDeadlineHard() != null) {
+            if (priced.promisedDays() != null && d.getDeadlineHard() != null) {
                 long maxDays = java.time.temporal.ChronoUnit.DAYS.between(
                         java.time.LocalDate.now(), d.getDeadlineHard());
-                if (item.promisedDays() > maxDays) {
-                    throw new BizException("工序 " + q.getProcessNo() + " 承诺工期不能超过硬交期");
+                if (priced.promisedDays() > maxDays) {
+                    throw new BizException("承诺工期不能超过硬交期");
                 }
             }
             int qty = q.getMaxQty() == null ? 0 : q.getMaxQty();
-            BigDecimal total = item.unitPrice().multiply(BigDecimal.valueOf(qty))
+            BigDecimal total = priced.unitPrice().multiply(BigDecimal.valueOf(qty))
                     .setScale(2, java.math.RoundingMode.HALF_UP);
-            q.setUnitPrice(item.unitPrice());
+            q.setUnitPrice(priced.unitPrice());
             q.setPrice(total);
-            q.setYieldRate(item.yieldRate());
-            q.setPromisedDays(item.promisedDays());
+            q.setYieldRate(priced.yieldRate());
+            q.setPromisedDays(priced.promisedDays());
             q.setPlanText(req.planText().trim());
             q.setDeliveryPlanJson(deliveryJson);
             q.setStatus("LOCKED");
-            quotationMapper.updateById(q);
-            fundLedger.freezeDeposit(q, total.multiply(depositRate).setScale(2, java.math.RoundingMode.HALF_UP));
+            if (!depositFrozen) {
+                fundLedger.freezeDeposit(q, total.multiply(depositRate).setScale(2, java.math.RoundingMode.HALF_UP));
+                depositFrozen = true;
+            } else {
+                q.setDepositStatus("COVERED");
+                quotationMapper.updateById(q);
+            }
         }
         siteNotify.send(d.getTenantId(), "工厂已填报#" + d.getId(),
                 "需求「" + d.getTitle() + "」有工厂完成思考期填报（详情在方案核定期可见）。");
@@ -224,6 +242,7 @@ public class BiddingService {
             fundLedger.unfreezeIntention(q);
         }
         deviceService.releaseByQuotations(mine);
+        creditScoring.onFactoryThinkingExit(UserContext.tenantId(), demandId);
         siteNotify.send(d.getTenantId(), "有工厂退出#" + demandId,
                 "需求「" + d.getTitle() + "」有报名工厂在思考期退出，意向金已退回该厂。");
     }
@@ -353,11 +372,150 @@ public class BiddingService {
         List<Quotation> list = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
                 .eq(Quotation::getTenantId, UserContext.tenantId())
                 .orderByDesc(Quotation::getId));
+        Map<Long, Demand> demands = new LinkedHashMap<>();
+        Map<Long, Order> orders = new LinkedHashMap<>();
+        Map<Long, Contract> contracts = new LinkedHashMap<>();
         for (Quotation q : list) {
-            Demand d = demandMapper.selectById(q.getDemandId());
+            Demand d = demands.computeIfAbsent(q.getDemandId(), demandMapper::selectById);
             q.setDemandTitle(d == null ? "" : d.getTitle());
+            if (d != null) {
+                q.setDemandStatus(d.getStatus());
+            }
+            Order o = orders.computeIfAbsent(q.getDemandId(), did -> orderMapper.selectOne(
+                    new LambdaQueryWrapper<Order>().eq(Order::getDemandId, did).orderByDesc(Order::getId).last("limit 1")));
+            Contract c = contracts.computeIfAbsent(q.getDemandId(), did -> {
+                Order ord = orders.get(did);
+                if (ord == null) {
+                    return null;
+                }
+                return contractMapper.selectOne(new LambdaQueryWrapper<Contract>()
+                        .eq(Contract::getOrderId, ord.getId())
+                        .eq(Contract::getTenantId, UserContext.tenantId())
+                        .last("limit 1"));
+            });
+            fillStage(q, d, o, c);
         }
         return list;
+    }
+
+    private void fillStage(Quotation q, Demand d, Order o, Contract c) {
+        if (d == null) {
+            q.setActionKey("NONE");
+            return;
+        }
+        String st = d.getStatus();
+        LocalDateTime start = stageStartedAt(d, o);
+        LocalDateTime end = stageEndedAt(d, start);
+        String action = actionOf(q, d, c);
+
+        if ("SOLUTION_SELECTED".equals(st) || "CONTRACTED".equals(st) || "IN_PRODUCTION".equals(st)) {
+            // 签约期：进入签约=订单创建；买家下发合同后=附件时间。截止=开始+24h，不因工厂签名后移。
+            if (c != null && c.getAttachmentId() != null) {
+                Attachment a = attachmentMapper.selectById(c.getAttachmentId());
+                if (a != null && a.getCreatedAt() != null) {
+                    start = a.getCreatedAt();
+                }
+                end = start == null ? null : start.plusHours(contractSignHours);
+            } else if (o != null && o.getCreatedAt() != null) {
+                start = o.getCreatedAt();
+                end = start.plusHours(contractSignHours);
+            }
+            q.setOrderId(o == null ? null : o.getId());
+        }
+        q.setDemandStageAt(start);
+        q.setDemandStageEndAt(end);
+        q.setActionKey(action);
+    }
+
+    private String actionOf(Quotation q, Demand d, Contract c) {
+        String st = d.getStatus();
+        if ("PUBLISHED".equals(st)) {
+            if ("PENDING_PAY".equals(q.getIntentionStatus())) {
+                return "PAY";
+            }
+            if ("INTENTION".equals(q.getStatus()) && ("FROZEN".equals(q.getIntentionStatus()) || "COVERED".equals(q.getIntentionStatus()))) {
+                return "COMMIT";
+            }
+            return "NONE";
+        }
+        if ("FACTORY_THINKING".equals(st)) {
+            if ("INTENTION".equals(q.getStatus())) {
+                return "COMMIT";
+            }
+            if ("LOCKED".equals(q.getStatus())) {
+                return "WAIT_BUYER";
+            }
+            return "NONE";
+        }
+        if ("BUYER_THINKING".equals(st)) {
+            return "WAIT_BUYER";
+        }
+        if ("SOLUTION_GENERATED".equals(st)) {
+            return "WAIT_SOLUTION";
+        }
+        if ("SOLUTION_CONFIRMED".equals(st)) {
+            return "WAIT_DISPATCH";
+        }
+        if ("FLOW_FAILED".equals(st) || "CANCELLED".equals(st)) {
+            return "NONE";
+        }
+        if ("SOLUTION_SELECTED".equals(st) || "CONTRACTED".equals(st) || "IN_PRODUCTION".equals(st)
+                || "COMPLETED".equals(st)) {
+            if ("LOSE".equals(q.getStatus()) || "INVALID".equals(q.getStatus())) {
+                return "LOSE";
+            }
+            if (c == null) {
+                return "WAIT_ISSUE";
+            }
+            if ("SIGNED".equals(c.getStatus())) {
+                return "SIGNED";
+            }
+            if (c.getAttachmentId() == null) {
+                return "WAIT_ISSUE";
+            }
+            boolean factorySigned = c.getFactorySign() != null && !c.getFactorySign().isBlank();
+            if (factorySigned) {
+                return "PENDING_REVIEW";
+            }
+            return "SIGN";
+        }
+        return "NONE";
+    }
+
+    private LocalDateTime stageStartedAt(Demand d, Order o) {
+        String st = d.getStatus();
+        if ("PUBLISHED".equals(st) && d.getPublishedAt() != null) {
+            return d.getPublishedAt();
+        }
+        if ("FACTORY_THINKING".equals(st) && d.getFactoryThinkingAt() != null) {
+            return d.getFactoryThinkingAt();
+        }
+        if ("BUYER_THINKING".equals(st) && d.getBuyerThinkingAt() != null) {
+            return d.getBuyerThinkingAt();
+        }
+        if (("SOLUTION_SELECTED".equals(st) || "CONTRACTED".equals(st)) && o != null && o.getCreatedAt() != null) {
+            return o.getCreatedAt();
+        }
+        return d.getUpdatedAt();
+    }
+
+    private LocalDateTime stageEndedAt(Demand d, LocalDateTime start) {
+        String st = d.getStatus();
+        if ("PUBLISHED".equals(st)) {
+            return d.getIntentionEndAt();
+        }
+        if ("FACTORY_THINKING".equals(st)) {
+            return d.getFactoryThinkingEndAt() != null ? d.getFactoryThinkingEndAt()
+                    : (start == null ? null : start.plusHours(factoryThinkingHours));
+        }
+        if ("BUYER_THINKING".equals(st)) {
+            return d.getBuyerThinkingEndAt() != null ? d.getBuyerThinkingEndAt()
+                    : (start == null ? null : start.plusHours(buyerThinkingHours));
+        }
+        if ("SOLUTION_SELECTED".equals(st) && start != null) {
+            return start.plusHours(contractSignHours);
+        }
+        return null;
     }
 
     public List<Quotation> listByDemand(Long demandId) {

@@ -35,6 +35,8 @@ public class Enterprise {
     private String userStatus;
     @TableField(exist = false)
     private String realName;
+    @TableField(exist = false)
+    private String accountPassword;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     @TableLogic

@@ -7,8 +7,8 @@
       <el-button v-if="demand.status === 'THINKING'" type="danger" @click="decide('CANCEL')">取消需求</el-button>
       <el-button v-if="demand.status === 'BUYER_THINKING'" type="success" @click="buyerContinue">继续并交保证金</el-button>
       <el-button v-if="demand.status === 'BUYER_THINKING'" type="danger" @click="buyerCancel">取消需求（全退）</el-button>
-      <el-button v-if="demand.status === 'SOLUTION_GENERATED' && hasActiveSolution" type="primary" @click="$router.push('/buyer/solutions/' + demand.id)">看方案</el-button>
-      <el-button v-else-if="demand.status === 'SOLUTION_GENERATED'" disabled>等待运营下发方案</el-button>
+      <el-button v-if="demand.status === 'SOLUTION_GENERATED' && hasActiveSolution" type="primary" @click="$router.push('/buyer/solutions/' + demand.id)">参考推荐并选定工厂</el-button>
+      <el-button v-else-if="demand.status === 'SOLUTION_GENERATED'" disabled>等待运营审核推荐方案</el-button>
       <el-button v-if="demand.status === 'SOLUTION_CONFIRMED'" disabled>等待运营派单</el-button>
       <el-button v-if="demand.status === 'SOLUTION_SELECTED' || demand.status === 'CONTRACTED' || demand.status === 'IN_PRODUCTION' || demand.status === 'COMPLETED'" @click="$router.push('/buyer/orders')">去订单</el-button>
     </div>
@@ -70,10 +70,10 @@
             <el-descriptions-item label="表面处理">{{ demand.surfaceTreatment || '-' }}</el-descriptions-item>
             <el-descriptions-item label="热处理">{{ extra.heatTreatment || '-' }}</el-descriptions-item>
             <el-descriptions-item label="年用量">{{ extra.annualQty ?? '-' }}</el-descriptions-item>
-            <el-descriptions-item label="AQL">{{ demand.aql }}</el-descriptions-item>
-            <el-descriptions-item label="检验方式">{{ demand.inspectMode || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="AQL">{{ demand.aql || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="检验方式">{{ formatInspectMode(demand.inspectMode) }}</el-descriptions-item>
             <el-descriptions-item label="认证">{{ demand.certification || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="最低良率">{{ demand.minYield }}</el-descriptions-item>
+            <el-descriptions-item v-if="demand.minYield != null" label="最低良率">{{ demand.minYield }}</el-descriptions-item>
             <el-descriptions-item label="最低信用分">{{ demand.minCreditScore }}</el-descriptions-item>
             <el-descriptions-item label="包装">{{ demand.packaging || '-' }}</el-descriptions-item>
             <el-descriptions-item label="意向天数">{{ demand.intentionDays }}</el-descriptions-item>
@@ -96,6 +96,9 @@
         <el-table :data="rows" border size="small">
           <el-table-column prop="processName" label="工序" />
           <el-table-column prop="factoryName" label="工厂" />
+          <el-table-column label="承接区间" width="140">
+            <template #default="{ row }">{{ (row.minQty ?? '-') }} ~ {{ (row.maxQty ?? '-') }} 件</template>
+          </el-table-column>
           <el-table-column label="进度" width="160">
             <template #default="{ row }">
               <el-progress :percentage="row.actualProgress || 0" :stroke-width="10" />
@@ -111,12 +114,14 @@
 
       <h4>报名工厂</h4>
       <el-empty v-if="!factories.length" description="暂无工厂报名" :image-size="60" />
-      <PagedBox v-else :data="factories" :page-size="8" v-slot="{ rows }">
-      <el-table :data="rows" border size="small">
+      <el-table v-else :data="factories" border size="small">
         <el-table-column label="工厂" min-width="160">
           <template #default="{ row }">
             <el-button link type="primary" @click="openFactory(row)">{{ row.name }}</el-button>
           </template>
+        </el-table-column>
+        <el-table-column label="承接区间" width="160">
+          <template #default="{ row }">{{ (row.minQty ?? '-') }} ~ {{ (row.maxQty ?? '-') }} 件</template>
         </el-table-column>
         <el-table-column prop="creditScore" label="信用分" width="80" />
         <el-table-column label="认证" width="80">
@@ -128,23 +133,23 @@
             <div class="hint">{{ (row.certs || []).join('、') || '未填体系认证' }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="设备状态" width="160">
-          <template #default="{ row }">
-            <el-tag type="success" size="small">良好 {{ row.goodDeviceCount ?? 0 }}</el-tag>
-            <el-tag type="danger" size="small" style="margin-left:4px">故障 {{ row.faultDeviceCount ?? 0 }}</el-tag>
-          </template>
-        </el-table-column>
         <el-table-column label="阶段" width="90">
           <template #default="{ row }">{{ row.bidStage === 'QUOTED' ? '已报价' : '已报名' }}</template>
         </el-table-column>
+        <el-table-column v-if="showFactoryQuotes" label="报价（单价 / 承接区间）" min-width="280">
+          <template #default="{ row }">
+            <div v-if="!(row.quotes || []).length">-</div>
+            <div v-for="q in (row.quotes || [])" :key="q.processNo" class="hint">
+              {{ q.processName }}：¥{{ q.unitPrice ?? '-' }}/件 · {{ q.minQty ?? 1 }}~{{ q.maxQty ?? '-' }} 件 · {{ q.promisedDays ?? '-' }} 天
+            </div>
+          </template>
+        </el-table-column>
       </el-table>
-      </PagedBox>
 
       <h4>工序</h4>
       <el-table :data="processes" border size="small">
         <el-table-column prop="processNo" label="序号" width="70" />
         <el-table-column prop="processName" label="工序" />
-        <el-table-column prop="quantity" label="数量" width="100" />
         <el-table-column prop="requirement" label="要求" />
       </el-table>
 
@@ -162,6 +167,41 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <el-card v-if="confirmedPlan.groups.length" shadow="never" class="confirmed-plan">
+        <template #header>
+          <span>已确认方案</span>
+          <el-tag type="info" size="small" style="margin-left:8px">不可修改</el-tag>
+        </template>
+        <p class="hint" style="margin-top:0">{{ confirmedPlan.hint }}</p>
+        <div v-for="g in confirmedPlan.groups" :key="g.processNo" class="proc-block">
+          <div class="proc-head">
+            <span class="proc-title">{{ g.processName }} / {{ g.need }}件</span>
+            <span class="alloc-ok">已分配 {{ g.allocated }} / {{ g.need }}</span>
+          </div>
+          <div class="line head">
+            <span class="col-fac">工厂</span>
+            <span class="col-range">承接区间</span>
+            <span class="col-qty">分量(件)</span>
+            <span class="col-amt">金额</span>
+          </div>
+          <div v-for="(line, i) in g.lines" :key="g.processNo + '-' + i" class="line">
+            <span class="col-fac">
+              <el-button v-if="line.factoryId" link type="primary" @click="openFactoryById(line.factoryId)">
+                {{ line.factoryName || ('工厂-' + line.factoryId) }}
+              </el-button>
+              <span v-else>{{ line.factoryName || '-' }}</span>
+            </span>
+            <span class="col-range">{{ (line.minQty ?? '-') + ' ~ ' + (line.maxQty ?? '-') }}</span>
+            <span class="col-qty">{{ line.quantity ?? '-' }}</span>
+            <span class="col-amt">{{ money(lineAmount(line)) }}</span>
+          </div>
+        </div>
+        <div class="total-bar">
+          <span>总计金额</span>
+          <strong>{{ money(confirmedPlan.total) }} 元</strong>
+        </div>
+      </el-card>
     <el-dialog v-model="fileOpen" :title="fileTitle" width="720px">
       <pre class="file-preview">{{ fileText }}</pre>
     </el-dialog>
@@ -199,11 +239,12 @@ import { getDetail, getCoverage, getCancelStats, cancelPublished, decide as deci
 import { listOrders, stages as listStages } from '../../api/order'
 import { listByDemand } from '../../api/solution'
 import { fetchAttachment, saveBlob } from '../../api/file'
+import api from '../../api'
 import CoverageBars from '../../components/CoverageBars.vue'
 import IntentionCountdown from '../../components/IntentionCountdown.vue'
 import PagedBox from '../../components/PagedBox.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { DEMAND_STATUS, DEVICE_STATUS, label, fmtTime, deviceStatusType } from '../../utils/labels'
+import { DEMAND_STATUS, DEVICE_STATUS, label, fmtTime, deviceStatusType, formatInspectMode } from '../../utils/labels'
 
 const route = useRoute()
 const router = useRouter()
@@ -217,9 +258,11 @@ const fileOpen = ref(false)
 const fileTitle = ref('')
 const fileText = ref('')
 const hasActiveSolution = ref(false)
+const solutions = ref([])
 const factories = ref([])
 const factoryOpen = ref(false)
 const factoryInfo = ref({})
+const showFactoryQuotes = computed(() => ['SOLUTION_GENERATED', 'SOLUTION_CONFIRMED', 'SOLUTION_SELECTED', 'CONTRACTED', 'IN_PRODUCTION', 'COMPLETED'].includes(demand.value.status))
 const nextHint = computed(() => {
   const s = demand.value.status
   return ({
@@ -231,7 +274,7 @@ const nextHint = computed(() => {
     THINKING: '请决定继续或取消',
     REVIEWING: '等待运营审核取消',
     LOCKING: '工厂正在锁定报价',
-    SOLUTION_GENERATED: hasActiveSolution.value ? '可以去选方案' : '等待运营下发方案',
+    SOLUTION_GENERATED: hasActiveSolution.value ? '可参考推荐方案，按各厂承接区间自行分配后确认' : '等待运营审核推荐方案',
     SOLUTION_CONFIRMED: '方案已确认，等待运营派单',
     SOLUTION_SELECTED: '请按厂上传并签署合同',
     CONTRACTED: '等待工厂开工',
@@ -256,9 +299,70 @@ const buyerDeposit = computed(() => {
 })
 
 function money(v) {
-  const n = Number(v || 0)
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '0.00'
   return n.toFixed(2)
 }
+
+function lineAmount(line) {
+  const p = Number(line?.price)
+  if (Number.isFinite(p)) return p
+  const unit = Number(line?.unitPrice)
+  const qty = Number(line?.quantity)
+  if (Number.isFinite(unit) && Number.isFinite(qty)) return Math.round(unit * qty * 100) / 100
+  return 0
+}
+
+function parseCombo(json) {
+  try {
+    const v = typeof json === 'string' ? JSON.parse(json) : json
+    return Array.isArray(v) ? v : []
+  } catch { return [] }
+}
+
+const confirmedPlan = computed(() => {
+  const st = demand.value.status
+  if (!['SOLUTION_CONFIRMED', 'SOLUTION_SELECTED', 'CONTRACTED', 'IN_PRODUCTION', 'COMPLETED'].includes(st)) {
+    return { groups: [], total: 0, hint: '' }
+  }
+  const sols = solutions.value || []
+  const picked = sols.find(s => Number(s.isFinal) === 1)
+    || sols.find(s => Number(s.final) === 1)
+    || sols.find(s => s.source === 'FINAL')
+    || sols.find(s => (s.type || '') === 'CUSTOM')
+  if (!picked) return { groups: [], total: 0, hint: '' }
+  const items = parseCombo(picked.finalComboJson)
+  const map = new Map()
+  for (const p of processes.value || []) {
+    map.set(p.processNo, {
+      processNo: p.processNo,
+      processName: p.processName || ('工序' + p.processNo),
+      need: Number(p.quantity) || 0,
+      allocated: 0,
+      lines: [],
+    })
+  }
+  for (const it of items) {
+    const no = it.processNo
+    if (!map.has(no)) {
+      map.set(no, {
+        processNo: no,
+        processName: it.processName || ('工序' + no),
+        need: 0,
+        allocated: 0,
+        lines: [],
+      })
+    }
+    const g = map.get(no)
+    g.lines.push(it)
+    g.allocated += Number(it.quantity) || 0
+    if (!g.need) g.need = g.allocated
+  }
+  const groups = [...map.values()].filter(g => g.lines.length)
+  const total = items.reduce((s, it) => s + lineAmount(it), 0)
+  const kind = (picked.type || '').startsWith('AI') ? '已按推荐方案确认' : '已按自选分配确认'
+  return { groups, total, hint: kind + '，等待运营派单后进入履约。确认后不可再改。' }
+})
 
 function parseJson(raw) {
   try { return raw ? JSON.parse(raw) : {} } catch { return {} }
@@ -351,8 +455,12 @@ async function load() {
     cancelStats.value = await getCancelStats()
     try {
       const sols = await listByDemand(route.params.id)
+      solutions.value = sols || []
       hasActiveSolution.value = (sols || []).length > 0
-    } catch { hasActiveSolution.value = false }
+    } catch {
+      solutions.value = []
+      hasActiveSolution.value = false
+    }
     try {
       if (['CONTRACTED', 'IN_PRODUCTION', 'COMPLETED'].includes(demand.value.status)) {
         const orders = await listOrders()
@@ -373,6 +481,17 @@ function openFactory(row) {
   factoryOpen.value = true
 }
 
+async function openFactoryById(id) {
+  const hit = (factories.value || []).find(f => f.id === id)
+  if (hit) {
+    factoryInfo.value = hit
+    factoryOpen.value = true
+    return
+  }
+  factoryInfo.value = await api.get(`/enterprise/${id}/public-profile`)
+  factoryOpen.value = true
+}
+
 onMounted(load)
 </script>
 
@@ -384,4 +503,29 @@ onMounted(load)
 h4 { margin: 16px 0 8px; }
 .file-preview { white-space: pre-wrap; word-break: break-word; margin: 0; font-size: 13px; line-height: 1.6; }
 .hint { color: #909399; font-size: 12px; }
+.confirmed-plan { margin-top: 16px; }
+.proc-block { margin-bottom: 16px; padding-bottom: 4px; border-bottom: 1px solid #ebeef5; }
+.proc-block:last-of-type { border-bottom: none; }
+.proc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.proc-title { font-weight: 600; font-size: 13px; color: #303133; }
+.alloc-ok { font-size: 12px; color: #67c23a; }
+.line { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; margin-bottom: 8px; }
+.line.head { color: #909399; font-size: 12px; margin-bottom: 4px; }
+.col-fac { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.col-range { flex: 0 0 100px; width: 100px; color: #909399; font-size: 12px; white-space: nowrap; }
+.col-qty { flex: 0 0 80px; width: 80px; text-align: right; }
+.col-amt { flex: 0 0 100px; width: 100px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.total-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  background: #f5f7fa;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #606266;
+}
+.total-bar strong { font-size: 16px; color: #303133; font-variant-numeric: tabular-nums; }
 </style>

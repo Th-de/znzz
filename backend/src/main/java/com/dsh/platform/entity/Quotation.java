@@ -40,6 +40,19 @@ public class Quotation {
     private Integer version;
     @TableField(exist = false)
     private String demandTitle;
+    @TableField(exist = false)
+    private String demandStatus;
+    /** 当前需求阶段开始时间 */
+    @TableField(exist = false)
+    private LocalDateTime demandStageAt;
+    /** 当前阶段截止时间 */
+    @TableField(exist = false)
+    private LocalDateTime demandStageEndAt;
+    /** 报名行操作：PAY/COMMIT/WAIT_BUYER/WAIT_SOLUTION/WAIT_DISPATCH/WAIT_ISSUE/SIGN/PENDING_REVIEW/SIGNED/LOSE/NONE */
+    @TableField(exist = false)
+    private String actionKey;
+    @TableField(exist = false)
+    private Long orderId;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     @TableLogic

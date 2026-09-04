@@ -49,7 +49,7 @@ public class OpsOverviewService {
         m.put("contractsPending", contractMapper.selectCount(new LambdaQueryWrapper<Contract>()
                 .eq(Contract::getStatus, "PENDING_REVIEW")));
         m.put("stagesPendingInspection", workStageMapper.selectCount(new LambdaQueryWrapper<WorkStage>()
-                .eq(WorkStage::getStatus, "PENDING_INSPECTION")));
+                .in(WorkStage::getStatus, "PENDING_INSPECTION", "PENDING_REVIEW")));
         m.put("stagesOverdue", workStageMapper.selectCount(new LambdaQueryWrapper<WorkStage>()
                 .in(WorkStage::getStatus, "PENDING", "IN_PRODUCTION")
                 .isNotNull(WorkStage::getPromisedDate)

@@ -1,6 +1,8 @@
 package com.dsh.platform.controller;
 
 import com.dsh.platform.common.R;
+import com.dsh.platform.dto.OrderDtos.DecisionRequest;
+import com.dsh.platform.dto.OrderDtos.DeliverRequest;
 import com.dsh.platform.dto.OrderDtos.InspectRequest;
 import com.dsh.platform.dto.OrderDtos.ProgressRequest;
 import com.dsh.platform.dto.OrderDtos.SignRequest;
@@ -9,6 +11,7 @@ import com.dsh.platform.dto.OrderDtos.UploadContractRequest;
 import com.dsh.platform.entity.Inspection;
 import com.dsh.platform.entity.StageProgressLog;
 import com.dsh.platform.domain.pay.EscrowStart;
+import com.dsh.platform.dto.OrderDtos.FactoryDemandJob;
 import com.dsh.platform.dto.OrderDtos.OrderDetailView;
 import com.dsh.platform.dto.OrderDtos.OrderListView;
 import com.dsh.platform.entity.Contract;
@@ -130,16 +133,41 @@ public class OrderController {
 
     @PostMapping("/stage/{stageId}/deliver")
     @PreAuthorize("hasRole('FACTORY')")
-    public R<Void> deliver(@PathVariable Long stageId) {
-        orderService.deliver(stageId);
+    public R<Void> deliver(@PathVariable Long stageId, @RequestBody(required = false) DeliverRequest req) {
+        orderService.deliver(stageId, req == null ? null : req.deliveredQty());
         return R.ok();
     }
 
     @PostMapping("/stage/{stageId}/inspect")
-    @PreAuthorize("hasAnyRole('OPERATOR','SUPER_ADMIN','INSPECTION')")
+    @PreAuthorize("hasAnyRole('INSPECTION','OPERATOR','SUPER_ADMIN')")
     public R<Void> inspect(@PathVariable Long stageId, @RequestBody InspectRequest req) {
-        orderService.inspect(stageId, req);
+        String role = com.dsh.platform.security.UserContext.role();
+        if ("OPERATOR".equals(role) || "SUPER_ADMIN".equals(role)) {
+            orderService.approveInspect(stageId, req);
+        } else {
+            orderService.inspect(stageId, req);
+        }
         return R.ok();
+    }
+
+    @PostMapping({"/stage/{stageId}/inspect-approve", "/stage/{stageId}/inspect/approve"})
+    @PreAuthorize("hasAnyRole('OPERATOR','SUPER_ADMIN')")
+    public R<Void> approveInspect(@PathVariable Long stageId, @RequestBody InspectRequest req) {
+        orderService.approveInspect(stageId, req);
+        return R.ok();
+    }
+
+    @PostMapping("/stage/{stageId}/decision")
+    @PreAuthorize("hasRole('BUYER')")
+    public R<Void> decideInspect(@PathVariable Long stageId, @RequestBody DecisionRequest req) {
+        orderService.decideInspect(stageId, req);
+        return R.ok();
+    }
+
+    @PostMapping("/stage/{stageId}/inspect-fee")
+    @PreAuthorize("hasAnyRole('BUYER','FACTORY')")
+    public R<EscrowStart> payInspectFee(@PathVariable Long stageId) {
+        return R.ok(orderService.payInspectFee(stageId));
     }
 
     @PostMapping("/stage/{stageId}/pay")
@@ -167,9 +195,21 @@ public class OrderController {
         return R.ok();
     }
 
+    @GetMapping("/inspect/queue")
+    @PreAuthorize("hasAnyRole('OPERATOR','SUPER_ADMIN','INSPECTION')")
+    public R<List<WorkStage>> inspectQueue() {
+        return R.ok(orderQueryService.inspectQueue());
+    }
+
     @GetMapping("/{orderId}/stages")
     public R<List<WorkStage>> stages(@PathVariable Long orderId) {
         return R.ok(orderQueryService.stages(orderId));
+    }
+
+    @GetMapping("/my-jobs")
+    @PreAuthorize("hasRole('FACTORY')")
+    public R<List<FactoryDemandJob>> myJobs() {
+        return R.ok(orderQueryService.myDemandJobs());
     }
 
     @GetMapping("/my-stages")

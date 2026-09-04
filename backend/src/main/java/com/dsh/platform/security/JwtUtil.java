@@ -40,8 +40,9 @@ public class JwtUtil {
         Claims claims = Jwts.parser().verifyWith(key()).build()
                 .parseSignedClaims(token).getPayload();
         Long userId = Long.valueOf(claims.getSubject());
-        Long tenantId = ((Number) claims.get("tenantId")).longValue();
-        String role = (String) claims.get("role");
+        Object tenantRaw = claims.get("tenantId");
+        Long tenantId = tenantRaw instanceof Number n ? n.longValue() : null;
+        String role = claims.get("role") == null ? null : String.valueOf(claims.get("role")).trim();
         return new LoginUser(userId, tenantId, role);
     }
 }

@@ -21,8 +21,8 @@ export function uploadContract(orderId, attachmentId, factoryTenantId) {
   return api.post(`/order/${orderId}/contract/upload`, { attachmentId, factoryTenantId })
 }
 
-export function buyerSign(orderId, read, sign, factoryTenantId) {
-  return api.post(`/order/${orderId}/contract/buyer-sign`, { read, sign, factoryTenantId })
+export function buyerSign(orderId, read, sign) {
+  return api.post(`/order/${orderId}/contract/buyer-sign`, { read, sign })
 }
 
 export function factorySign(orderId, read, sign) {
@@ -31,6 +31,10 @@ export function factorySign(orderId, read, sign) {
 
 export function stages(orderId) {
   return api.get(`/order/${orderId}/stages`)
+}
+
+export function myDemandJobs() {
+  return api.get('/order/my-jobs')
 }
 
 export function myStages() {
@@ -53,12 +57,20 @@ export function inspectionOf(stageId) {
   return api.get(`/order/stage/${stageId}/inspection`)
 }
 
-export function deliver(stageId) {
-  return api.post(`/order/stage/${stageId}/deliver`)
+export function deliver(stageId, body) {
+  return api.post(`/order/stage/${stageId}/deliver`, body || {})
+}
+
+export function payInspectFee(stageId) {
+  return api.post(`/order/stage/${stageId}/inspect-fee`)
 }
 
 export function payStage(stageId) {
   return api.post(`/order/stage/${stageId}/pay`)
+}
+
+export function decideInspect(stageId, body) {
+  return api.post(`/order/stage/${stageId}/decision`, body)
 }
 
 export function accept(orderId) {

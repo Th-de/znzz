@@ -16,6 +16,8 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
 import java.util.List;
 
 @Configuration
@@ -40,6 +42,10 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/**", "/api/pay/alipay/**").permitAll()
                         .anyRequest().authenticated()
                 )
+                .exceptionHandling(e -> e
+                        .authenticationEntryPoint((req, res, ex) -> writeJson(res, 401, "请重新登录"))
+                        .accessDeniedHandler((req, res, ex) -> writeJson(res, 403, "无权限访问"))
+                )
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
@@ -50,8 +56,16 @@ public class SecurityConfig {
         cfg.setAllowedOriginPatterns(List.of("*"));
         cfg.setAllowedMethods(List.of("*"));
         cfg.setAllowedHeaders(List.of("*"));
+        cfg.setAllowCredentials(true);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", cfg);
         return source;
+    }
+
+    private static void writeJson(HttpServletResponse res, int status, String message) throws IOException {
+        res.setStatus(status);
+        res.setCharacterEncoding("UTF-8");
+        res.setContentType("application/json;charset=UTF-8");
+        res.getWriter().write("{\"code\":" + status + ",\"message\":\"" + message + "\",\"data\":null}");
     }
 }

@@ -12,6 +12,10 @@ export function getCoverage(id) {
   return api.get(`/demand/${id}/coverage`)
 }
 
+export function listBidFactories(id) {
+  return api.get(`/demand/${id}/factories`)
+}
+
 export function returnToBuyer(id, reason) {
   return api.post(`/demand/${id}/return`, { reason })
 }

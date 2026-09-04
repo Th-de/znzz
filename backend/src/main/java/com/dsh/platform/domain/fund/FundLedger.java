@@ -1,6 +1,7 @@
 package com.dsh.platform.domain.fund;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.dsh.platform.common.BizException;
 import com.dsh.platform.entity.Enterprise;
 import com.dsh.platform.entity.FundFlow;
 import com.dsh.platform.entity.Quotation;
@@ -277,33 +278,68 @@ public class FundLedger {
                 "SETTLE-IN-" + orderId + "-" + factoryTenantId);
     }
 
-    public void takeCommission(Long orderId, Long demandId, Long factoryTenantId, BigDecimal amount) {
+    /**
+     * 质检费入运营账户。
+     */
+    public void collectInspectFee(Long orderId, Long demandId, Long payerTenantId, Long stageId, BigDecimal amount) {
         if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
             return;
         }
         Long platformId = platformTenantId();
+        accountService.debit(payerTenantId, amount);
+        accountService.credit(platformId, amount);
+        write("INSPECT_FEE", "OUT", amount, demandId, payerTenantId, orderId, "INSPECT-FEE-OUT-" + stageId);
+        write("INSPECT_FEE", "IN", amount, demandId, platformId, orderId, "INSPECT-FEE-IN-" + stageId);
+    }
+
+    /**
+     * 让步赔付：从工厂剩余冻结保证金全额划给买家。不足则失败，不部分划转。
+     */
+    public BigDecimal payConcessionToBuyer(Long orderId, Long demandId, Long factoryTenantId,
+                                           Long buyerTenantId, Long stageId, BigDecimal amount) {
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+            return BigDecimal.ZERO;
+        }
         BigDecimal available = frozenDepositOf(demandId, factoryTenantId);
-        BigDecimal take = amount.min(available);
+        if (available.compareTo(amount) < 0) {
+            throw new BizException("该厂剩余保证金不足以按规则赔付，不能让步，请返工或关闭本段");
+        }
+        accountService.deductFrozen(factoryTenantId, amount);
+        accountService.credit(buyerTenantId, amount);
+        write("DEPOSIT", "OUT", amount, demandId, factoryTenantId, orderId,
+                "CONCESSION-DEPOSIT-" + stageId);
+        write("PENALTY", "IN", amount, demandId, buyerTenantId, orderId,
+                "CONCESSION-BUYER-" + stageId);
+        return amount;
+    }
+
+    /**
+     * 佣金从已托管工钱划转（钱已在平台），不占用工厂履约保证金。剩余保证金退回工厂。
+     */
+    public void takeCommission(Long orderId, Long demandId, Long factoryTenantId, BigDecimal amount) {
+        Long platformId = platformTenantId();
+        BigDecimal take = amount == null ? BigDecimal.ZERO : amount.max(BigDecimal.ZERO);
         if (take.compareTo(BigDecimal.ZERO) > 0) {
-            accountService.deductFrozen(factoryTenantId, take);
+            accountService.debit(platformId, take);
             accountService.credit(platformId, take);
-            write("DEPOSIT", "OUT", take, demandId, factoryTenantId, orderId,
-                    "COMMISSION-DEPOSIT-" + orderId + "-" + factoryTenantId);
+            write("ESCROW", "OUT", take, demandId, platformId, orderId,
+                    "COMMISSION-ESCROW-OUT-" + orderId + "-" + factoryTenantId);
             write("COMMISSION", "IN", take, demandId, platformId, orderId,
                     "COMMISSION-IN-" + orderId + "-" + factoryTenantId);
         }
-        BigDecimal leftover = available.subtract(take);
+        BigDecimal leftover = frozenDepositOf(demandId, factoryTenantId);
         if (leftover.compareTo(BigDecimal.ZERO) > 0) {
             accountService.unfreeze(factoryTenantId, leftover);
             write("DEPOSIT", "UNFREEZE", leftover, demandId, factoryTenantId, orderId,
                     "DEPOSIT-RELEASE-" + orderId + "-" + factoryTenantId);
         }
+        boolean penalized = hasDepositOut(demandId, factoryTenantId);
         List<Quotation> qs = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
                 .eq(Quotation::getDemandId, demandId)
                 .eq(Quotation::getTenantId, factoryTenantId)
                 .eq(Quotation::getDepositStatus, "FROZEN"));
         for (Quotation q : qs) {
-            q.setDepositStatus(take.compareTo(BigDecimal.ZERO) > 0 ? "DEDUCTED" : "RELEASED");
+            q.setDepositStatus(penalized ? "DEDUCTED" : "RELEASED");
             quotationMapper.updateById(q);
         }
     }
@@ -328,6 +364,15 @@ public class FundLedger {
             out = out.add(nvl(f.getAmount()));
         }
         return in.subtract(out).max(BigDecimal.ZERO).setScale(2, RoundingMode.DOWN);
+    }
+
+    private boolean hasDepositOut(Long demandId, Long factoryTenantId) {
+        Long n = fundFlowMapper.selectCount(new LambdaQueryWrapper<FundFlow>()
+                .eq(FundFlow::getDemandId, demandId)
+                .eq(FundFlow::getTenantId, factoryTenantId)
+                .eq(FundFlow::getType, "DEPOSIT")
+                .eq(FundFlow::getDirection, "OUT"));
+        return n != null && n > 0;
     }
 
     public Long platformTenantId() {

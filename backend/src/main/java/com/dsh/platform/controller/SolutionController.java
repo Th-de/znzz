@@ -29,10 +29,23 @@ public class SolutionController {
         return R.ok(solutionService.listByDemand(demandId));
     }
 
+    @PostMapping("/{demandId}/custom")
+    @PreAuthorize("hasRole('BUYER')")
+    public R<Solution> saveCustom(@PathVariable Long demandId, @RequestBody List<Map<String, Object>> items) {
+        return R.ok(solutionService.saveBuyerCustom(demandId, items));
+    }
+
     @PostMapping("/{demandId}/generate-ai")
     @PreAuthorize("hasAnyRole('OPERATOR','SUPER_ADMIN')")
-    public R<List<Solution>> generateAi(@PathVariable Long demandId) {
-        return R.ok(solutionService.generateAi(demandId));
+    public R<List<Solution>> generateAi(@PathVariable Long demandId,
+                                       @RequestParam(defaultValue = "false") boolean force) {
+        return R.ok(solutionService.generateAi(demandId, force));
+    }
+
+    @PostMapping("/item/{solutionId}/save-review")
+    @PreAuthorize("hasAnyRole('OPERATOR','SUPER_ADMIN')")
+    public R<List<Solution>> saveReview(@PathVariable Long solutionId, @RequestBody Map<String, Object> body) {
+        return R.ok(solutionService.saveReview(solutionId, body));
     }
 
     @GetMapping("/item/{solutionId}/alternatives")

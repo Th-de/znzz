@@ -2,6 +2,7 @@ package com.dsh.platform.domain.solution;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.dsh.platform.common.BizException;
+import com.dsh.platform.domain.credit.SurveyScores;
 import com.dsh.platform.entity.CreditEvent;
 import com.dsh.platform.entity.Demand;
 import com.dsh.platform.entity.Device;
@@ -56,15 +57,23 @@ public class AiSolutionGenerator {
     private final DeviceService deviceService;
     private final ObjectMapper objectMapper;
 
-    @Value("${dsh.ai.api-key:}")
+    @Value("${dsh.ai.api-key:${DSH_AI_API_KEY:}}")
     private String apiKey;
-    @Value("${dsh.ai.model:deepseek-v4-pro}")
+    @Value("${dsh.ai.model:deepseek-chat}")
     private String model;
     @Value("${dsh.ai.base-url:https://api.deepseek.com}")
     private String baseUrl;
 
     public boolean configured() {
-        return apiKey != null && !apiKey.isBlank();
+        return resolveKey() != null && !resolveKey().isBlank();
+    }
+
+    private String resolveKey() {
+        if (apiKey != null && !apiKey.isBlank()) {
+            return apiKey.trim();
+        }
+        String env = System.getenv("DSH_AI_API_KEY");
+        return env == null ? "" : env.trim();
     }
 
     public List<SolutionCombo> generate(Demand demand) {
@@ -102,9 +111,10 @@ public class AiSolutionGenerator {
         sb.append("各工序是并行分包批次，不是同一批零件的流水线前后序；工厂各自独立制造并交货，互不等待。\n");
         sb.append("只能从候选工厂里选，不能发明工厂、价格或承接量。只返回 JSON。\n");
         sb.append("同一分包可以拆给多家工厂按量分摊：该工序所有分配量之和必须等于该工序数量，");
-        sb.append("且每家分配量不得超过该厂承接量 maxQty。全部工序数量之和等于需求总数量。\n");
+        sb.append("每家分配量不得低于该厂约定的最小承接量 minQty，也不得超过该厂最大承接量 maxQty。");
+        sb.append("若某厂 minQty 大于本工序剩余可分配量，则不要选该厂。全部工序数量之和等于需求总数量。\n");
         sb.append("产能核算：需要的日产出 ≈ 分配数量 ÷ 承诺工期（天）。对比该厂勾选设备的日产能合计，判断是否可行、余量多少。\n");
-        sb.append("生成 3~5 套推荐方案（至少 3 套，视候选丰富程度而定），每套给出总费用与分阶段交付节点。\n\n");
+        sb.append("生成 1~3 套最优推荐方案（至少 1 套，视候选丰富程度而定），每套给出总费用与分阶段交付节点, 如果只有一个阶段，则不要分阶段写明。\n\n");
         if (demand.getDeliveryTimes() != null && demand.getDeliveryTimes() > 0) {
             sb.append("买家要求分 ").append(demand.getDeliveryTimes()).append(" 期交付");
             if (demand.getDeliveryPlanJson() != null && !demand.getDeliveryPlanJson().isBlank()) {
@@ -146,6 +156,7 @@ public class AiSolutionGenerator {
                     .append(" totalPrice=").append(q.getPrice())
                     .append(" days=").append(q.getPromisedDays())
                     .append(" yield=").append(q.getYieldRate())
+                    .append(" minQty=").append(q.getMinQty())
                     .append(" maxQty=").append(q.getMaxQty())
                     .append(" dailyCapacitySum=").append(cap)
                     .append(" ").append(factoryProfile(q.getTenantId()))
@@ -170,7 +181,7 @@ public class AiSolutionGenerator {
         sb.append("\"items\":[{\"processNo\":1,\"factoryId\":15,\"quantity\":600,\"reason\":\"选这家承接600件的具体理由\",");
         sb.append("\"capacityCheck\":\"该厂勾选设备日产能合计300件/天，分配600件需2天+，工期10天余量充足\"}]}]}\n");
         sb.append("type 依次为 AI1/AI2/AI3/AI4/AI5。每套必须覆盖全部工序且各工序 quantity 合计=工序数量；");
-        sb.append("factoryId 必须来自候选且 quantity<=该厂 maxQty。每个 item 必须写 quantity、reason 和 capacityCheck。");
+        sb.append("factoryId 必须来自候选，且 minQty<=quantity<=maxQty（minQty 为空时按 1）。每个 item 必须写 quantity、reason 和 capacityCheck。");
         sb.append("单价用候选 unitPrice，不要自编。milestones 按买家分期要求给出每阶段任务与交付节点。");
         return sb.toString();
     }
@@ -191,13 +202,13 @@ public class AiSolutionGenerator {
                 .reduce((a, b) -> a + "；" + b).orElse(""));
         List<CreditEvent> allEvents = creditEventMapper.selectList(new LambdaQueryWrapper<CreditEvent>()
                 .eq(CreditEvent::getTenantId, tenantId));
-        long noLock = allEvents.stream().filter(ev -> "INTENTION_NO_LOCK".equals(ev.getType())).count();
         long cancel = allEvents.stream().filter(ev -> ev.getType() != null
                 && (ev.getType().contains("CANCEL") || ev.getType().contains("取消"))).count();
         long violate = allEvents.stream().filter(ev -> ev.getType() != null
                 && (ev.getType().contains("VIOLAT") || ev.getType().contains("PENALTY")
-                || ev.getType().contains("FORFEIT") || ev.getType().contains("违规"))).count();
-        String lifetime = "累计未锁价" + noLock + "次 取消/违约" + cancel + "次 违规/罚没" + violate + "次";
+                || ev.getType().contains("FORFEIT") || ev.getType().contains("违规")
+                || ev.getType().startsWith("HONESTY_"))).count();
+        String lifetime = "累计取消/违约" + cancel + "次 失信事件" + violate + "次";
         Long settled = workStageMapper.selectCount(new LambdaQueryWrapper<WorkStage>()
                 .eq(WorkStage::getTenantId, tenantId)
                 .eq(WorkStage::getEscrowStatus, "SETTLED"));
@@ -235,23 +246,7 @@ public class AiSolutionGenerator {
     }
 
     private Double avgSurvey(String scoresJson) {
-        if (scoresJson == null || scoresJson.isBlank()) {
-            return null;
-        }
-        try {
-            JsonNode n = objectMapper.readTree(scoresJson);
-            double sum = 0;
-            int c = 0;
-            for (String k : List.of("q1", "q2", "q3", "q4")) {
-                if (n.has(k)) {
-                    sum += n.path(k).asDouble();
-                    c++;
-                }
-            }
-            return c == 0 ? null : sum / c;
-        } catch (Exception e) {
-            return null;
-        }
+        return SurveyScores.overallStars(scoresJson, objectMapper);
     }
 
     private String callModel(String prompt) {
@@ -267,7 +262,7 @@ public class AiSolutionGenerator {
             String url = baseUrl.endsWith("/") ? baseUrl + "v1/chat/completions" : baseUrl + "/v1/chat/completions";
             HttpRequest req = HttpRequest.newBuilder(URI.create(url))
                     .timeout(Duration.ofSeconds(75))
-                    .header("Authorization", "Bearer " + apiKey)
+                    .header("Authorization", "Bearer " + resolveKey())
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(json))
                     .build();
@@ -374,6 +369,7 @@ public class AiSolutionGenerator {
         item.put("yieldRate", q.getYieldRate() == null ? BigDecimal.ZERO : q.getYieldRate());
         item.put("days", q.getPromisedDays() == null ? 0 : q.getPromisedDays());
         item.put("quantity", quantity);
+        item.put("minQty", q.getMinQty());
         item.put("maxQty", q.getMaxQty());
         if (reason != null && !reason.isBlank()) {
             item.put("reason", reason);
@@ -436,6 +432,7 @@ public class AiSolutionGenerator {
                 .filter(q -> factoryId != null && factoryId.equals(q.getTenantId()))
                 .filter(q -> processNo != null && processNo.equals(q.getProcessNo() == null ? 1 : q.getProcessNo()))
                 .filter(q -> q.getMaxQty() == null || q.getMaxQty() >= need)
+                .filter(q -> q.getMinQty() == null || need >= q.getMinQty())
                 .findFirst()
                 .orElse(null);
     }

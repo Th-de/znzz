@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.dsh.platform.common.BizException;
 import com.dsh.platform.domain.coverage.CoverageView;
 import com.dsh.platform.domain.coverage.ProcessCoverageService;
+import com.dsh.platform.domain.inspect.InspectPrices;
 import com.dsh.platform.domain.fund.FundLedger;
 import com.dsh.platform.domain.status.DemandStateMachine;
 import com.dsh.platform.domain.status.DemandStatus;
@@ -23,6 +24,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -154,16 +156,27 @@ public class DemandService {
     public DemandDetailView detail(Long id) {
         Demand d = get(id);
         String role = UserContext.role();
-        boolean owner = UserContext.tenantId().equals(d.getTenantId());
+        boolean owner = UserContext.tenantId() != null && UserContext.tenantId().equals(d.getTenantId());
         boolean staff = "OPERATOR".equals(role) || "SUPER_ADMIN".equals(role);
-        boolean factoryOk = "FACTORY".equals(role)
+        boolean factoryBid = factoryBidOn(id);
+        boolean factoryBrowse = "FACTORY".equals(role)
                 && (DemandStatus.PUBLISHED.name().equals(d.getStatus())
                 || DemandStatus.FACTORY_THINKING.name().equals(d.getStatus())
                 || DemandStatus.LOCKING.name().equals(d.getStatus()));
-        if (!owner && !staff && !factoryOk) {
+        if (!owner && !staff && !factoryBid && !factoryBrowse) {
             throw new BizException(403, "无权查看该需求");
         }
         return new DemandDetailView(d, processes(id), fileService.listByBiz("DEMAND", id));
+    }
+
+    private boolean factoryBidOn(Long demandId) {
+        if (!"FACTORY".equals(UserContext.role()) || UserContext.tenantId() == null || demandId == null) {
+            return false;
+        }
+        Long n = quotationMapper.selectCount(new LambdaQueryWrapper<Quotation>()
+                .eq(Quotation::getDemandId, demandId)
+                .eq(Quotation::getTenantId, UserContext.tenantId()));
+        return n != null && n > 0;
     }
 
     /** 买家/运营查看已报名工厂：名称、信誉、能力档案、设备状态。 */
@@ -192,6 +205,38 @@ public class DemandService {
             row.put("processNos", processNos);
             boolean committed = e.getValue().stream().anyMatch(q -> "LOCKED".equals(q.getStatus()) || "WIN".equals(q.getStatus()));
             row.put("bidStage", committed ? "QUOTED" : "INTENTION");
+            Integer minQty = e.getValue().stream().map(Quotation::getMinQty).filter(n -> n != null)
+                    .min(Integer::compareTo).orElse(null);
+            Integer maxQty = e.getValue().stream().map(Quotation::getMaxQty).filter(n -> n != null)
+                    .max(Integer::compareTo).orElse(null);
+            row.put("minQty", minQty);
+            row.put("maxQty", maxQty);
+            boolean showQuote = List.of("SOLUTION_GENERATED", "SOLUTION_CONFIRMED", "SOLUTION_SELECTED",
+                    "CONTRACTED", "IN_PRODUCTION", "COMPLETED").contains(d.getStatus());
+            if (showQuote) {
+                Map<Integer, String> processNames = processMapper.selectList(new LambdaQueryWrapper<Process>()
+                                .eq(Process::getDemandId, demandId))
+                        .stream()
+                        .collect(Collectors.toMap(p -> p.getProcessNo() == null ? 1 : p.getProcessNo(),
+                                p -> p.getProcessName() == null ? "" : p.getProcessName(), (a, b) -> a));
+                List<Map<String, Object>> quotes = new java.util.ArrayList<>();
+                for (Quotation q : e.getValue()) {
+                    if (!"LOCKED".equals(q.getStatus()) && !"WIN".equals(q.getStatus())) {
+                        continue;
+                    }
+                    Integer pno = q.getProcessNo() == null ? 1 : q.getProcessNo();
+                    Map<String, Object> quote = new java.util.LinkedHashMap<>();
+                    quote.put("processNo", pno);
+                    quote.put("processName", processNames.getOrDefault(pno, "工序" + pno));
+                    quote.put("unitPrice", q.getUnitPrice());
+                    quote.put("price", q.getPrice());
+                    quote.put("minQty", q.getMinQty());
+                    quote.put("maxQty", q.getMaxQty());
+                    quote.put("promisedDays", q.getPromisedDays());
+                    quotes.add(quote);
+                }
+                row.put("quotes", quotes);
+            }
             out.add(row);
         }
         return out;
@@ -299,9 +344,9 @@ public class DemandService {
         d.setMaterial(req.material().trim());
         d.setTolerance(req.tolerance());
         d.setSurfaceTreatment(req.surfaceTreatment());
-        d.setAql(req.aql());
+        d.setAql(InspectPrices.includesAql(InspectPrices.normalize(req.inspectMode())) ? req.aql() : null);
         d.setCertification(req.certification());
-        d.setMinYield(req.minYield());
+        d.setMinYield(InspectPrices.includesAql(InspectPrices.normalize(req.inspectMode())) ? null : req.minYield());
         d.setMinCreditScore(req.minCreditScore());
         d.setDeadlineHard(req.deadlineHard());
         d.setDeadlineFlexible(req.deadlineFlexible());
@@ -310,7 +355,8 @@ public class DemandService {
         d.setMultiProcess(1);
         d.setIntentionDays(req.intentionDays() == null ? 5 : req.intentionDays());
         d.setRemark(req.remark());
-        d.setInspectMode(req.inspectMode());
+        d.setInspectMode(InspectPrices.normalize(req.inspectMode()));
+        d.setInspectPrice(null);
         d.setGeneralTolerance(req.generalTolerance());
         d.setPartRevision(req.partRevision());
         d.setExtraJson(req.extraJson());
@@ -337,10 +383,7 @@ public class DemandService {
                 p.setDemandId(d.getId());
                 p.setProcessNo(item.processNo() == null ? i : item.processNo());
                 p.setProcessName(item.processName().trim());
-                if (item.quantity() == null || item.quantity() <= 0) {
-                    throw new BizException("工序「" + item.processName().trim() + "」必须填写本工序数量，不会默认成总需求量");
-                }
-                p.setQuantity(item.quantity());
+                p.setQuantity(d.getQuantity());
                 p.setRequirement(item.requirement());
                 processMapper.insert(p);
                 i++;
@@ -371,11 +414,15 @@ public class DemandService {
         if (!StringUtils.hasText(req.material())) {
             throw new BizException("请填写材料牌号");
         }
-        if (!StringUtils.hasText(req.aql())) {
-            throw new BizException("请选择 AQL");
+        if (InspectPrices.includesAql(InspectPrices.normalize(req.inspectMode()))) {
+            if (!StringUtils.hasText(req.aql())) {
+                throw new BizException("选择 AQL 抽样时请填写 AQL");
+            }
         }
-        if (req.minYield() == null) {
-            throw new BizException("请填写最低良率");
+        if (!InspectPrices.includesAql(InspectPrices.normalize(req.inspectMode()))) {
+            if (req.minYield() == null) {
+                throw new BizException("全检请填写最低良率");
+            }
         }
         if (req.deadlineHard() == null || !req.deadlineHard().isAfter(LocalDate.now())) {
             throw new BizException("硬交期必须晚于今天");
@@ -401,8 +448,9 @@ public class DemandService {
         if (!StringUtils.hasText(req.surfaceTreatment())) {
             throw new BizException("请填写表面处理");
         }
-        if (!StringUtils.hasText(req.inspectMode())) {
-            throw new BizException("请选择检验方式");
+        if (!StringUtils.hasText(req.inspectMode())
+                || InspectPrices.modes(req.inspectMode()).isEmpty()) {
+            throw new BizException("请选择 AQL 抽样或全检");
         }
         if (!StringUtils.hasText(req.certification())) {
             throw new BizException("请选择认证要求");
@@ -423,21 +471,30 @@ public class DemandService {
         if (namedItems.isEmpty()) {
             throw new BizException("请至少填写 1 道工序");
         }
-        int processSum = namedItems.stream()
-                .mapToInt(p -> p.quantity() == null ? 0 : p.quantity())
-                .sum();
-        if (req.quantity() == null || processSum != req.quantity()) {
-            throw new BizException("各工序零件数量之和必须等于总需求量（" + req.quantity() + " 件）");
-        }
         int times = req.deliveryTimes() == null ? 1 : req.deliveryTimes();
         if (times < 1 || times > 10) {
             throw new BizException("分期交付次数须在 1~10 之间");
         }
-        if (times > 1) {
-            if (req.deliveryPlan() == null || req.deliveryPlan().size() != times
-                    || req.deliveryPlan().stream().anyMatch(s -> !StringUtils.hasText(s))) {
-                throw new BizException("请填写每一期的交付要求（共 " + times + " 期）");
+        if (req.deliveryPlan() == null || req.deliveryPlan().size() != times) {
+            throw new BizException("请为每一期填写交付时间（共 " + times + " 期）");
+        }
+        int percentSum = 0;
+        for (int i = 0; i < times; i++) {
+            var p = req.deliveryPlan().get(i);
+            if (p == null || !StringUtils.hasText(p.startAt()) || !StringUtils.hasText(p.endAt())) {
+                throw new BizException("第 " + (i + 1) + " 期请填写开始时间和截止时间");
             }
+            Integer percent = p.percent();
+            if (percent == null && p.qty() != null && p.qty() >= 1 && p.qty() <= 100) {
+                percent = p.qty();
+            }
+            if (percent == null || percent < 1 || percent > 100) {
+                throw new BizException("第 " + (i + 1) + " 期请填写交付比例（1%～100%）");
+            }
+            percentSum += percent;
+        }
+        if (percentSum != 100) {
+            throw new BizException("各期交付比例之和必须为 100%");
         }
     }
 

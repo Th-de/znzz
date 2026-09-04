@@ -12,6 +12,8 @@ public class DemandDtos {
 
     public record ProcessItem(Integer processNo, String processName, Integer quantity, String requirement) {}
 
+    public record DeliveryPeriod(Integer percent, Integer qty, String text, String startAt, String endAt) {}
+
     public record PublishRequest(
             String title, String productName, String category, Integer quantity,
             String material, String tolerance, String surfaceTreatment,
@@ -20,10 +22,10 @@ public class DemandDtos {
             String deliveryAddress, String packaging, Integer multiProcess,
             String weightJson, Integer intentionDays, String remark,
             List<ProcessItem> processes,
-            String inspectMode, String generalTolerance, String partRevision,
+            String inspectMode, BigDecimal inspectPrice, String generalTolerance, String partRevision,
             String extraJson, Long attachmentId,
             Long sourceDemandId,
-            Integer deliveryTimes, List<String> deliveryPlan) {}
+            Integer deliveryTimes, List<DeliveryPeriod> deliveryPlan) {}
 
     public record ReturnRequest(String reason) {}
 

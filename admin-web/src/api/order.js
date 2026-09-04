@@ -12,8 +12,16 @@ export function getContract(orderId) {
   return api.get(`/order/${orderId}/contract`)
 }
 
+export function inspectQueue() {
+  return api.get('/order/inspect/queue')
+}
+
 export function inspect(stageId, body) {
   return api.post(`/order/stage/${stageId}/inspect`, body)
+}
+
+export function approveInspect(stageId, body) {
+  return api.post(`/order/stage/${stageId}/inspect-approve`, body)
 }
 
 export function listOrders() {

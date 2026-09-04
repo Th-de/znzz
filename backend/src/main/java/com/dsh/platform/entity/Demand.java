@@ -37,6 +37,8 @@ public class Demand {
     private Integer intentionDays;
     private String remark;
     private String inspectMode;
+    /** 质检单价（元/件） */
+    private BigDecimal inspectPrice;
     private String generalTolerance;
     private String partRevision;
     private String extraJson;

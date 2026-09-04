@@ -2,7 +2,6 @@ package com.dsh.platform.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.dsh.platform.common.BizException;
-import com.dsh.platform.domain.credit.CreditScoring;
 import com.dsh.platform.domain.fund.FundLedger;
 import com.dsh.platform.domain.notify.SiteNotify;
 import com.dsh.platform.domain.solution.SolutionCombo;
@@ -52,7 +51,6 @@ public class SolutionService {
     private final ProcessMapper processMapper;
     private final DemandStateMachine stateMachine;
     private final FundLedger fundLedger;
-    private final CreditScoring creditScoring;
     private final SiteNotify siteNotify;
     private final RuleSolutionGenerator ruleSolutionGenerator;
     private final AiSolutionGenerator aiSolutionGenerator;
@@ -85,9 +83,8 @@ public class SolutionService {
             return List.of();
         }
         for (Quotation q : fundLedger.forfeitUnlockedIntentions(demandId)) {
-            creditScoring.applyNoLock(q.getTenantId(), demandId);
             siteNotify.send(q.getTenantId(), "未锁价扣除意向金#" + demandId,
-                    "需求「" + d.getTitle() + "」保证金期已结束，你未锁定报价，意向金已扣除并记失信。");
+                    "需求「" + d.getTitle() + "」保证金期已结束，你未锁定报价，意向金已扣除。");
         }
         stateMachine.transit(d, DemandStatus.SOLUTION_GENERATED);
         demandMapper.updateById(d);
@@ -121,8 +118,21 @@ public class SolutionService {
         return true;
     }
 
-    /** 新流程入口：买家交保证金后触发 AI 方案生成（失败通知运营重试）。 */
-    public void aiGenerateFor(Demand d) {
+    /** 新流程入口：买家交保证金后异步生成 AI 方案（失败通知运营重试）。 */
+    @org.springframework.scheduling.annotation.Async
+    @org.springframework.transaction.annotation.Transactional(
+            propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public void aiGenerateFor(Long demandId) {
+        Demand d = demandMapper.selectById(demandId);
+        if (d == null) {
+            return;
+        }
+        List<Solution> existing = solutionMapper.selectList(new LambdaQueryWrapper<Solution>()
+                .eq(Solution::getDemandId, demandId)
+                .likeRight(Solution::getType, "AI"));
+        if (!existing.isEmpty()) {
+            return;
+        }
         tryInsertAi(d);
     }
 
@@ -169,19 +179,140 @@ public class SolutionService {
         List<Solution> list = solutionMapper.selectList(q);
         list.sort((a, b) -> Integer.compare(typeOrder(a.getType()), typeOrder(b.getType())));
         for (Solution s : list) {
-            s.setFinalComboJson(writeJson(enrichCombo(s.getFinalComboJson())));
-            s.setSuggestedComboJson(writeJson(enrichCombo(s.getSuggestedComboJson())));
+            s.setFinalComboJson(writeJson(enrichCombo(demandId, s.getFinalComboJson())));
+            s.setSuggestedComboJson(writeJson(enrichCombo(demandId, s.getSuggestedComboJson())));
         }
         return list;
     }
 
-    public List<Solution> generateAi(Long demandId) {
+    /** 买家自选工厂并分配件数，生成可确认的自编方案。 */
+    @Transactional
+    public Solution saveBuyerCustom(Long demandId, List<Map<String, Object>> items) {
         Demand d = demandMapper.selectById(demandId);
         if (d == null) {
             throw new BizException("需求不存在");
         }
         if (!"SOLUTION_GENERATED".equals(d.getStatus())) {
-            throw new BizException("仅方案已生成后可以重试 AI 方案");
+            throw new BizException("仅方案核定期可以自选工厂");
+        }
+        if (!UserContext.tenantId().equals(d.getTenantId())) {
+            throw new BizException(403, "只能操作自己的需求");
+        }
+        if (items == null || items.isEmpty()) {
+            throw new BizException("请至少选择一家工厂并填写分量");
+        }
+        List<Process> processes = processMapper.selectList(new LambdaQueryWrapper<Process>()
+                .eq(Process::getDemandId, demandId)
+                .orderByAsc(Process::getProcessNo));
+        if (processes.isEmpty()) {
+            Process one = new Process();
+            one.setProcessNo(1);
+            one.setProcessName("整单");
+            one.setQuantity(d.getQuantity());
+            processes = List.of(one);
+        }
+        Map<Integer, List<Map<String, Object>>> byProcess = new LinkedHashMap<>();
+        for (Map<String, Object> it : items) {
+            Integer pno = asInt(it.get("processNo"));
+            Integer qty = asInt(it.get("quantity"));
+            Long fid = asLong(it.get("factoryId"));
+            if (pno == null || fid == null || qty == null || qty <= 0) {
+                throw new BizException("每行须选择工厂并填写大于 0 的分量");
+            }
+            byProcess.computeIfAbsent(pno, k -> new ArrayList<>()).add(it);
+        }
+        List<Map<String, Object>> combo = new ArrayList<>();
+        for (Process p : processes) {
+            Integer pno = p.getProcessNo() == null ? 1 : p.getProcessNo();
+            int need = p.getQuantity() == null ? 0 : p.getQuantity();
+            List<Map<String, Object>> lines = byProcess.getOrDefault(pno, List.of());
+            if (lines.isEmpty()) {
+                throw new BizException("工序「" + (p.getProcessName() == null ? pno : p.getProcessName()) + "」尚未分配工厂");
+            }
+            int sum = 0;
+            java.util.Set<Long> seen = new java.util.HashSet<>();
+            for (Map<String, Object> line : lines) {
+                Long fid = asLong(line.get("factoryId"));
+                Integer qty = asInt(line.get("quantity"));
+                if (!seen.add(fid)) {
+                    throw new BizException("同一工序不能重复选择同一家工厂");
+                }
+                Quotation q = quotationMapper.selectOne(new LambdaQueryWrapper<Quotation>()
+                        .eq(Quotation::getDemandId, demandId)
+                        .eq(Quotation::getTenantId, fid)
+                        .eq(Quotation::getProcessNo, pno)
+                        .in(Quotation::getStatus, "LOCKED", "WIN")
+                        .last("limit 1"));
+                Enterprise e = enterpriseMapper.selectById(fid);
+                String factoryName = e == null || e.getName() == null || e.getName().isBlank()
+                        ? ("工厂" + fid) : e.getName();
+                if (q == null) {
+                    throw new BizException("「" + factoryName + "」没有该工序的有效报价");
+                }
+                if (q.getMinQty() != null && qty < q.getMinQty()) {
+                    throw new BizException("「" + factoryName + "」分配量低于其最小承接量 " + q.getMinQty());
+                }
+                if (q.getMaxQty() != null && qty > q.getMaxQty()) {
+                    throw new BizException("「" + factoryName + "」分配量超过其最大承接量 " + q.getMaxQty());
+                }
+                sum += qty;
+                BigDecimal unit = q.getUnitPrice() != null ? q.getUnitPrice()
+                        : (q.getPrice() != null && q.getMaxQty() != null && q.getMaxQty() > 0
+                        ? q.getPrice().divide(BigDecimal.valueOf(q.getMaxQty()), 2, java.math.RoundingMode.HALF_UP)
+                        : BigDecimal.ZERO);
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("processNo", pno);
+                item.put("processName", p.getProcessName() == null ? "" : p.getProcessName());
+                item.put("factoryId", fid);
+                item.put("factoryName", factoryName);
+                item.put("creditScore", e == null || e.getCreditScore() == null ? 60 : e.getCreditScore());
+                item.put("unitPrice", unit);
+                item.put("price", unit.multiply(BigDecimal.valueOf(qty)).setScale(2, java.math.RoundingMode.HALF_UP));
+                item.put("yieldRate", q.getYieldRate() == null ? BigDecimal.ZERO : q.getYieldRate());
+                item.put("days", q.getPromisedDays() == null ? 0 : q.getPromisedDays());
+                item.put("quantity", qty);
+                item.put("minQty", q.getMinQty());
+                item.put("maxQty", q.getMaxQty());
+                combo.add(item);
+            }
+            if (sum != need) {
+                throw new BizException("工序「" + (p.getProcessName() == null ? pno : p.getProcessName())
+                        + "」分配量合计 " + sum + "，必须等于需求量 " + need);
+            }
+        }
+        Solution s = solutionMapper.selectOne(new LambdaQueryWrapper<Solution>()
+                .eq(Solution::getDemandId, demandId)
+                .eq(Solution::getType, "CUSTOM")
+                .last("limit 1"));
+        if (s == null) {
+            s = new Solution();
+            s.setDemandId(demandId);
+            s.setType("CUSTOM");
+            solutionMapper.insert(s);
+        }
+        s.setSuggestedComboJson(writeJson(combo));
+        s.setFinalComboJson(writeJson(combo));
+        s.setSource("BUYER");
+        s.setIsFinal(0);
+        s.setStatus("ACTIVE");
+        s.setEditedBy(UserContext.userId());
+        s.setEditedAt(LocalDateTime.now());
+        s.setRationaleJson(writeJson(Map.of("rationale", "买家自选工厂与分量", "risks", List.of(), "milestones", List.of())));
+        solutionMapper.updateById(s);
+        return s;
+    }
+
+    public List<Solution> generateAi(Long demandId) {
+        return generateAi(demandId, false);
+    }
+
+    public List<Solution> generateAi(Long demandId, boolean force) {
+        Demand d = demandMapper.selectById(demandId);
+        if (d == null) {
+            throw new BizException("需求不存在");
+        }
+        if (!"SOLUTION_GENERATED".equals(d.getStatus())) {
+            throw new BizException("仅方案核定期可以生成 AI 方案");
         }
         if (!"OPERATOR".equals(UserContext.role()) && !"SUPER_ADMIN".equals(UserContext.role())) {
             throw new BizException(403, "仅运营可以生成并审核 AI 方案");
@@ -189,12 +320,80 @@ public class SolutionService {
         List<Solution> existing = solutionMapper.selectList(new LambdaQueryWrapper<Solution>()
                 .eq(Solution::getDemandId, demandId)
                 .likeRight(Solution::getType, "AI"));
-        if (!existing.isEmpty()) {
+        if (!existing.isEmpty() && !force) {
             return listByDemand(demandId);
+        }
+        if (force) {
+            for (Solution s : existing) {
+                if (!"ACTIVE".equals(s.getStatus())) {
+                    solutionMapper.deleteById(s.getId());
+                }
+            }
+            existing = solutionMapper.selectList(new LambdaQueryWrapper<Solution>()
+                    .eq(Solution::getDemandId, demandId)
+                    .likeRight(Solution::getType, "AI"));
+            if (!existing.isEmpty()) {
+                return listByDemand(demandId);
+            }
         }
         List<SolutionCombo> combos = aiSolutionGenerator.generate(d);
         insertAiCombos(d.getId(), combos);
         return listByDemand(demandId);
+    }
+
+    /** 运营审阅时保存修改（推荐理由 + 各厂分配量）。 */
+    @Transactional
+    public List<Solution> saveReview(Long solutionId, Map<String, Object> body) {
+        if (!"OPERATOR".equals(UserContext.role()) && !"SUPER_ADMIN".equals(UserContext.role())) {
+            throw new BizException(403, "仅运营可以修改待审方案");
+        }
+        Solution s = solutionMapper.selectById(solutionId);
+        if (s == null) {
+            throw new BizException("方案不存在");
+        }
+        Demand d = demandMapper.selectById(s.getDemandId());
+        if (d == null || !"SOLUTION_GENERATED".equals(d.getStatus())) {
+            throw new BizException("仅方案核定期可以修改");
+        }
+        if ("ACTIVE".equals(s.getStatus())) {
+            throw new BizException("已下发的方案请让买家在自选页调整");
+        }
+        Object itemsObj = body == null ? null : body.get("items");
+        if (itemsObj instanceof List<?> rawItems && !rawItems.isEmpty()) {
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> items = (List<Map<String, Object>>) (List<?>) rawItems;
+            Map<Integer, List<Map<String, Object>>> byProcess = new LinkedHashMap<>();
+            for (Map<String, Object> it : items) {
+                Integer pno = asInt(it.get("processNo"));
+                Integer qty = asInt(it.get("quantity"));
+                if (pno == null || qty == null || qty <= 0) {
+                    continue;
+                }
+                byProcess.computeIfAbsent(pno, k -> new ArrayList<>()).add(it);
+            }
+            for (Map.Entry<Integer, List<Map<String, Object>>> e : byProcess.entrySet()) {
+                reallocate(solutionId, e.getKey(), e.getValue());
+            }
+            s = solutionMapper.selectById(solutionId);
+        }
+        if (body != null && body.get("rationale") != null) {
+            Map<String, Object> pack = new LinkedHashMap<>();
+            try {
+                if (s.getRationaleJson() != null && s.getRationaleJson().startsWith("{")) {
+                    pack.putAll(objectMapper.readValue(s.getRationaleJson(), new TypeReference<Map<String, Object>>() {}));
+                }
+            } catch (Exception ignored) {
+                pack.put("rationale", s.getRationaleJson());
+            }
+            pack.put("rationale", String.valueOf(body.get("rationale")));
+            s.setRationaleJson(writeJson(pack));
+        }
+        s.setEditedBy(UserContext.userId());
+        s.setEditedAt(LocalDateTime.now());
+        s.setSource("EDITED");
+        solutionMapper.updateById(s);
+        auditService.record("修改AI方案", "SOLUTION", solutionId, "需求#" + d.getId());
+        return listByDemand(d.getId());
     }
 
     @Transactional
@@ -218,10 +417,10 @@ public class SolutionService {
         s.setEditedAt(LocalDateTime.now());
         solutionMapper.updateById(s);
         String title = (s.getType() != null && s.getType().startsWith("AI"))
-                ? "运营下发了AI方案#" + d.getId()
+                ? "推荐方案已审核#" + d.getId()
                 : "方案已生成#" + d.getId();
         siteNotify.send(d.getTenantId(), title,
-                "需求「" + d.getTitle() + "」的方案 " + s.getType() + " 已下发，可在方案页查看和选用。");
+                "需求「" + d.getTitle() + "」的推荐方案 " + s.getType() + " 已审核通过。请参考推荐，按各厂承接件数区间自行分配后确认。");
         auditService.record("下发方案", "SOLUTION", solutionId,
                 "需求#" + d.getId() + " 方案 " + s.getType());
     }
@@ -258,7 +457,7 @@ public class SolutionService {
         if (processNo == null || factoryId == null) {
             throw new BizException("请选择工序和工厂");
         }
-        List<Map<String, Object>> combo = enrichCombo(s.getFinalComboJson());
+        List<Map<String, Object>> combo = enrichCombo(d.getId(), s.getFinalComboJson());
         Map<String, Object> item = combo.stream()
                 .filter(m -> processNo.equals(asInt(m.get("processNo"))))
                 .findFirst()
@@ -286,6 +485,7 @@ public class SolutionService {
         if (q != null) {
             item.put("yieldRate", q.getYieldRate() == null ? BigDecimal.ZERO : q.getYieldRate());
             item.put("days", q.getPromisedDays() == null ? 0 : q.getPromisedDays());
+            item.put("minQty", q.getMinQty());
             item.put("maxQty", q.getMaxQty());
         }
         List<Map<String, Object>> edits = readEdits(s.getEditedFieldsJson());
@@ -350,14 +550,19 @@ public class SolutionService {
                     .eq(Quotation::getProcessNo, processNo)
                     .in(Quotation::getStatus, "LOCKED", "WIN")
                     .last("limit 1"));
+            Enterprise e = enterpriseMapper.selectById(fid);
+            String factoryName = e == null || e.getName() == null || e.getName().isBlank()
+                    ? ("工厂" + fid) : e.getName();
             if (q == null) {
-                throw new BizException("工厂 " + fid + " 没有该工序的有效填报，不能分配");
+                throw new BizException("「" + factoryName + "」没有该工序的有效填报，不能分配");
+            }
+            if (q.getMinQty() != null && qty < q.getMinQty()) {
+                throw new BizException("「" + factoryName + "」分配量低于其最小承接量 " + q.getMinQty());
             }
             if (q.getMaxQty() != null && qty > q.getMaxQty()) {
-                throw new BizException("工厂 " + fid + " 分配量超过其承接量 " + q.getMaxQty());
+                throw new BizException("「" + factoryName + "」分配量超过其最大承接量 " + q.getMaxQty());
             }
             sum += qty;
-            Enterprise e = enterpriseMapper.selectById(fid);
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("processNo", processNo);
             item.put("processName", processName);
@@ -373,13 +578,14 @@ public class SolutionService {
             item.put("yieldRate", q.getYieldRate() == null ? BigDecimal.ZERO : q.getYieldRate());
             item.put("days", q.getPromisedDays() == null ? 0 : q.getPromisedDays());
             item.put("quantity", qty);
+            item.put("minQty", q.getMinQty());
             item.put("maxQty", q.getMaxQty());
             newItems.add(item);
         }
         if (sum != need) {
             throw new BizException("该工序分配量合计 " + sum + "，必须等于需求量 " + need);
         }
-        List<Map<String, Object>> combo = enrichCombo(s.getFinalComboJson());
+        List<Map<String, Object>> combo = enrichCombo(d.getId(), s.getFinalComboJson());
         combo.removeIf(m -> processNo.equals(asInt(m.get("processNo"))));
         combo.addAll(newItems);
         combo.sort((a, b) -> {
@@ -430,14 +636,21 @@ public class SolutionService {
     }
 
     private Map<String, Object> currentItem(Solution s, Integer processNo) {
-        return enrichCombo(s.getFinalComboJson()).stream()
+        return enrichCombo(s.getDemandId(), s.getFinalComboJson()).stream()
                 .filter(m -> processNo != null && processNo.equals(asInt(m.get("processNo"))))
                 .findFirst()
                 .orElseThrow(() -> new BizException("方案中没有该工序"));
     }
 
-    private List<Map<String, Object>> enrichCombo(String json) {
+    private List<Map<String, Object>> enrichCombo(Long demandId, String json) {
         List<Map<String, Object>> combo = readCombo(json);
+        if (combo.isEmpty()) {
+            return combo;
+        }
+        List<Quotation> quotes = demandId == null ? List.of()
+                : quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
+                .eq(Quotation::getDemandId, demandId)
+                .in(Quotation::getStatus, "LOCKED", "WIN", "INTENTION"));
         for (Map<String, Object> item : combo) {
             Long fid = asLong(item.get("factoryId"));
             if (fid == null) {
@@ -450,8 +663,28 @@ public class SolutionService {
                 item.put("authStatus", e.getAuthStatus());
                 item.put("certs", certsOf(e));
             }
+            Integer pno = asInt(item.get("processNo"));
+            Quotation q = quotes.stream()
+                    .filter(x -> fid.equals(x.getTenantId()))
+                    .filter(x -> pno == null || pno.equals(x.getProcessNo() == null ? 1 : x.getProcessNo()))
+                    .min((a, b) -> Integer.compare(quoteRank(a.getStatus()), quoteRank(b.getStatus())))
+                    .orElse(null);
+            if (q != null) {
+                item.put("minQty", q.getMinQty());
+                item.put("maxQty", q.getMaxQty());
+            }
         }
         return combo;
+    }
+
+    private static int quoteRank(String status) {
+        if ("LOCKED".equals(status) || "WIN".equals(status)) {
+            return 0;
+        }
+        if ("INTENTION".equals(status)) {
+            return 1;
+        }
+        return 2;
     }
 
     private String certsOf(Enterprise e) {
@@ -513,7 +746,8 @@ public class SolutionService {
             case "AI3" -> 6;
             case "AI4" -> 7;
             case "AI5" -> 8;
-            default -> 9;
+            case "CUSTOM" -> 9;
+            default -> 10;
         };
     }
 

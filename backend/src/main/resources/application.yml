@@ -5,7 +5,10 @@ spring:
   application:
     name: dsh-platform
   config:
-    import: optional:file:./application-local.yml
+    import:
+      - optional:classpath:application-local.yml
+      - optional:file:./application-local.yml
+      - optional:file:./backend/application-local.yml
   datasource:
     url: jdbc:mysql://localhost:3306/dsh_platform?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: root
@@ -51,17 +54,17 @@ dsh:
     complete-weight: 0.3
     pass-weight: 0.3
   time:
-    factory-thinking-hours: 12 # 工厂思考期：决定是否参加并填报方案
+    factory-thinking-hours: 24 # 工厂思考期：决定是否参加并填报方案
     buyer-thinking-hours: 24   # 买家思考期：决定是否继续并交保证金
-    thinking-hours: 12         # 旧流程思考期（兼容历史数据）
+    thinking-hours: 24         # 旧流程思考期（兼容历史数据）
     review-hours: 6            # 旧流程审核期
     locking-hours: 48          # 旧流程保证金期
+    contract-sign-hours: 24    # 签约期：下发/签署合同时限
   upload:
     dir: uploads
   ai:
     provider: deepseek
-    api-key: ${DSH_AI_API_KEY:}
-    model: deepseek-v4-pro
+    model: ${DSH_AI_MODEL:deepseek-chat}
     base-url: https://api.deepseek.com
   pay:
     alipay:
@@ -75,3 +78,5 @@ dsh:
 logging:
   level:
     com.dsh: info
+debug:
+  true

@@ -26,6 +26,7 @@ export const FUND_TYPE = {
   REFUND: '退款',
   PENALTY: '罚没',
   COMMISSION: '佣金',
+  INSPECT_FEE: '质检费',
   ESCROW: '托管',
   IMPOUND: '平台暂存',
 }
@@ -45,17 +46,29 @@ export const ESCROW_STATUS = {
 }
 
 export const STAGE_STATUS = {
+  WAITING_OPEN: '待开启',
+  PENDING_SIGN: '待签约',
   PENDING: '待启动',
-  IN_PRODUCTION: '生产中',
+  IN_PRODUCTION: '进行中',
+  PENDING_INSPECT_PAY: '待付质检费',
   PENDING_INSPECTION: '待质检',
+  PENDING_REVIEW: '待审核',
   INSPECTING: '质检中',
-  PASS: '合格',
-  FAIL: '不合格',
+  PASS: '可收款',
+  FAIL: '待买家处理',
+  CLOSED: '已关闭',
   COMPLETED: '已完成',
 }
 
 export function label(map, key) {
   return map[key] || key || '-'
+}
+
+export function formatInspectMode(raw) {
+  const s = String(raw || '').toUpperCase()
+  if (s.includes('FULL')) return '全检'
+  if (s.includes('AQL')) return 'AQL 抽样'
+  return raw ? String(raw) : '-'
 }
 
 export const DEVICE_STATUS = {

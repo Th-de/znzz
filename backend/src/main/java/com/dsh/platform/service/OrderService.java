@@ -8,6 +8,10 @@ import com.dsh.platform.domain.notify.SiteNotify;
 import com.dsh.platform.domain.pay.PaymentChannel;
 import com.dsh.platform.domain.status.DemandStateMachine;
 import com.dsh.platform.domain.status.DemandStatus;
+import com.dsh.platform.domain.inspect.AqlPlans;
+import com.dsh.platform.domain.inspect.InspectPrices;
+import com.dsh.platform.domain.inspect.InspectRules;
+import com.dsh.platform.dto.OrderDtos.DecisionRequest;
 import com.dsh.platform.dto.OrderDtos.InspectRequest;
 import com.dsh.platform.dto.OrderDtos.ProgressRequest;
 import com.dsh.platform.dto.OrderDtos.SurveyRequest;
@@ -39,8 +43,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDateTime;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -173,11 +179,23 @@ public class OrderService {
     @Transactional
     public void startStage(Long stageId) {
         WorkStage ws = requireFactoryStage(stageId);
+        if ("WAITING_OPEN".equals(ws.getStatus())) {
+            activateIfWindowOpen(ws);
+            if ("IN_PRODUCTION".equals(ws.getStatus())) {
+                return;
+            }
+            throw new BizException("尚未到本期开始时间，不能开工");
+        }
         if (!"PENDING".equals(ws.getStatus())) {
             throw new BizException("只有待启动的工单可以开工");
         }
         if (!contractService.isSigned(ws.getOrderId(), ws.getTenantId())) {
             throw new BizException("与你的合同未双签或平台未审过，不能开工");
+        }
+        if (ws.getPeriodStart() != null && LocalDateTime.now().isBefore(ws.getPeriodStart())) {
+            ws.setStatus("WAITING_OPEN");
+            workStageMapper.updateById(ws);
+            throw new BizException("尚未到本期开始时间");
         }
         ws.setStatus("IN_PRODUCTION");
         workStageMapper.updateById(ws);
@@ -204,7 +222,13 @@ public class OrderService {
     public void reportProgress(Long stageId, ProgressRequest req) {
         WorkStage ws = requireFactoryStage(stageId);
         if (!"IN_PRODUCTION".equals(ws.getStatus())) {
-            throw new BizException("请先点开工再上报进度");
+            activateIfWindowOpen(ws);
+        }
+        if ("WAITING_OPEN".equals(ws.getStatus())) {
+            throw new BizException("尚未到本期开始时间，不能上报进度");
+        }
+        if (!"IN_PRODUCTION".equals(ws.getStatus())) {
+            throw new BizException("本期未开启，不能上报进度");
         }
         if (req == null || req.doneQty() == null || req.doneQty() <= 0) {
             throw new BizException("请填写完成件数");
@@ -226,6 +250,8 @@ public class OrderService {
         }
         int progress = qty <= 0 ? 100 : Math.min(100, req.doneQty() * 100 / qty);
         ws.setActualProgress(progress);
+        ws.setDeliveredQty(req.doneQty());
+        ws.setUpdatedAt(java.time.LocalDateTime.now());
         workStageMapper.updateById(ws);
         StageProgressLog log = new StageProgressLog();
         log.setStageId(stageId);
@@ -269,16 +295,57 @@ public class OrderService {
                 .last("limit 1"));
     }
 
-    public void deliver(Long stageId) {
+    @Transactional
+    public void deliver(Long stageId, Integer deliveredQty) {
         WorkStage ws = requireFactoryStage(stageId);
         if (!"IN_PRODUCTION".equals(ws.getStatus())) {
-            throw new BizException("请先点开工并上报进度");
+            activateIfWindowOpen(ws);
+        }
+        if ("WAITING_OPEN".equals(ws.getStatus())) {
+            throw new BizException("尚未到本期开始时间，不能交付");
+        }
+        if (!"IN_PRODUCTION".equals(ws.getStatus())) {
+            throw new BizException("本期未开启，不能交付");
         }
         if (!contractService.isSigned(ws.getOrderId(), ws.getTenantId())) {
             throw new BizException("与你的合同未双签或平台未审过，不能交付");
         }
-        ws.setStatus("PENDING_INSPECTION");
-        ws.setActualProgress(100);
+        int agreed = ws.getQuantity() == null ? 0 : ws.getQuantity();
+        int delivered = deliveredQty != null ? deliveredQty : nvlInt(ws.getDeliveredQty());
+        if (delivered <= 0) {
+            StageProgressLog last = stageProgressLogMapper.selectOne(new LambdaQueryWrapper<StageProgressLog>()
+                    .eq(StageProgressLog::getStageId, stageId)
+                    .orderByDesc(StageProgressLog::getId)
+                    .last("limit 1"));
+            delivered = last == null || last.getDoneQty() == null ? 0 : last.getDoneQty();
+        }
+        if (delivered <= 0) {
+            throw new BizException("请填写实交件数");
+        }
+        if (delivered > agreed && agreed > 0) {
+            throw new BizException("实交件数不能超过约定数量 " + agreed);
+        }
+        Order o = orderMapper.selectById(ws.getOrderId());
+        Demand d = o == null ? null : demandMapper.selectById(o.getDemandId());
+        ws.setDeliveredQty(delivered);
+        ws.setActualProgress(agreed <= 0 ? 100 : Math.min(100, delivered * 100 / agreed));
+        ws.setUpdatedAt(java.time.LocalDateTime.now());
+        enterInspectPay(ws, o, d);
+        creditScoring.onDeliver(ws);
+    }
+
+    private void activateIfWindowOpen(WorkStage ws) {
+        if (ws.getPeriodStart() != null && LocalDateTime.now().isBefore(ws.getPeriodStart())) {
+            return;
+        }
+        if (!contractService.isSigned(ws.getOrderId(), ws.getTenantId())) {
+            return;
+        }
+        if (!"WAITING_OPEN".equals(ws.getStatus()) && !"PENDING".equals(ws.getStatus())) {
+            return;
+        }
+        ws.setStatus("IN_PRODUCTION");
+        ws.setUpdatedAt(LocalDateTime.now());
         workStageMapper.updateById(ws);
     }
 
@@ -310,23 +377,65 @@ public class OrderService {
 
     @Transactional
     public void inspect(Long stageId, InspectRequest req) {
-        if (req == null || req.result() == null) {
-            throw new BizException("请选择合格或不合格");
-        }
-        String result = req.result();
-        if (!"PASS".equals(result) && !"FAIL".equals(result)) {
-            throw new BizException("质检结果只能是 PASS 或 FAIL");
+        if (req == null) {
+            throw new BizException("请填写质检单");
         }
         WorkStage ws = workStageMapper.selectById(stageId);
         if (ws == null || !"PENDING_INSPECTION".equals(ws.getStatus())) {
             throw new BizException("工单状态不可质检");
         }
+        if (!"INSPECTION".equals(UserContext.role())) {
+            throw new BizException(403, "请由质检方填写质检单");
+        }
+        int agreed = ws.getQuantity() == null ? 0 : ws.getQuantity();
+        int delivered = nvlInt(ws.getDeliveredQty());
+        if (delivered <= 0) {
+            throw new BizException("工厂尚未登记实交件数，不能质检");
+        }
+        boolean qtyOk = delivered >= agreed;
+        int dc = nvlInt(req.criticalFailCount());
+        int dg = nvlInt(req.generalFailCount());
+        int n = nvlInt(req.sampleCount());
+        Order o = orderMapper.selectById(ws.getOrderId());
+        Demand d = o == null ? null : demandMapper.selectById(o.getDemandId());
+        String mode = d == null ? null : d.getInspectMode();
+        AqlPlans.Plan aqlPlan = InspectPrices.includesAql(mode) ? AqlPlans.plan(delivered, d.getAql()) : null;
+        int need = InspectRules.requiredSample(mode, d == null ? null : d.getAql(), agreed, delivered);
+        if (n < need) {
+            throw new BizException("抽检数不能少于规定的 " + need + " 件");
+        }
+        if (dc + dg > n) {
+            throw new BizException("不合格件数不能超过抽检数");
+        }
+        BigDecimal minY = aqlPlan != null ? null : (d == null || d.getMinYield() == null ? BigDecimal.ZERO : d.getMinYield());
+        BigDecimal y = InspectRules.yield(n, dc, dg);
+        boolean toleranceOk = InspectRules.tolerancePass(mode, dc, dg, y, minY, aqlPlan);
+        boolean pass = InspectRules.isPass(qtyOk, toleranceOk);
+        String result = pass ? "PASS" : "FAIL";
+        if (req.result() != null && !result.equals(req.result())) {
+            throw new BizException("是否合格须与检验数据一致：数量达标且公差合格才为合格");
+        }
         Map<String, Object> report = new LinkedHashMap<>();
-        report.put("sampleCount", req.sampleCount() == null ? 0 : req.sampleCount());
-        report.put("failCount", req.failCount() == null ? 0 : req.failCount());
+        report.put("sampleCount", n);
+        report.put("failCount", dc + dg);
+        report.put("criticalFailCount", dc);
+        report.put("generalFailCount", dg);
+        report.put("deliveredQty", delivered);
         report.put("keyDimensions", req.keyDimensions() == null ? "" : req.keyDimensions());
-        report.put("meetsRequirement", Boolean.TRUE.equals(req.meetsRequirement()));
+        report.put("meetsRequirement", pass);
         report.put("remark", req.remark() == null ? "" : req.remark());
+        report.put("actualYield", y);
+        report.put("quantityOk", qtyOk);
+        report.put("toleranceOk", toleranceOk);
+        if (minY != null) {
+            report.put("minYield", minY);
+        }
+        if (aqlPlan != null) {
+            report.put("aql", d.getAql());
+            report.put("aqlAc", aqlPlan.ac());
+            report.put("aqlRe", aqlPlan.re());
+        }
+        report.put("inspectMode", mode);
         String reportJson = writeJson(report);
 
         Inspection ins = new Inspection();
@@ -338,28 +447,344 @@ public class OrderService {
         ins.setStatus("VALID");
         inspectionMapper.insert(ins);
 
-        ws.setStatus("PASS".equals(result) ? "PASS" : "FAIL");
+        ws.setStatus("PENDING_REVIEW");
+        ws.setUpdatedAt(LocalDateTime.now());
         workStageMapper.updateById(ws);
+        siteNotify.notifyOperators("待审核质检单#" + stageId,
+                "工单「" + ws.getProcessName() + "」质检方已提交，请审核。");
+        siteNotify.send(ws.getTenantId(), "质检已提交#" + stageId, "质检单已提交，等待平台审核。");
+        auditService.record("提交质检单", "STAGE", stageId, "工序「" + ws.getProcessName() + "」待运营审核");
+    }
 
+    @Transactional
+    public void approveInspect(Long stageId, InspectRequest req) {
+        String role = UserContext.role();
+        if (!"OPERATOR".equals(role) && !"SUPER_ADMIN".equals(role)) {
+            throw new BizException(403, "仅运营可审核质检单");
+        }
+        if (req == null || req.result() == null) {
+            throw new BizException("请选择是否合格");
+        }
+        String result = req.result();
+        if (!"PASS".equals(result) && !"FAIL".equals(result)) {
+            throw new BizException("质检结果只能是合格或不合格");
+        }
+        WorkStage ws = workStageMapper.selectById(stageId);
+        if (ws == null || !"PENDING_REVIEW".equals(ws.getStatus())) {
+            throw new BizException("请等待质检方提交后再审核");
+        }
+        Inspection ins = inspectionMapper.selectOne(new LambdaQueryWrapper<Inspection>()
+                .eq(Inspection::getStageId, stageId)
+                .orderByDesc(Inspection::getId)
+                .last("limit 1"));
+        if (ins == null) {
+            throw new BizException("质检方尚未提交质检单");
+        }
+        Map<String, Object> report = readReport(ins.getReportJson());
+        int dc = mapInt(report, "criticalFailCount");
+        int dg = mapInt(report, "generalFailCount");
+        int n = mapInt(report, "sampleCount");
+        boolean qtyOk = Boolean.TRUE.equals(report.get("quantityOk"));
         Order o = orderMapper.selectById(ws.getOrderId());
         Demand d = o == null ? null : demandMapper.selectById(o.getDemandId());
+        int delivered = nvlInt(ws.getDeliveredQty());
+        String mode = d == null ? null : d.getInspectMode();
+        AqlPlans.Plan aqlPlan = InspectPrices.includesAql(mode) ? AqlPlans.plan(delivered, d.getAql()) : null;
+        BigDecimal minY = aqlPlan != null ? null : (d == null || d.getMinYield() == null ? BigDecimal.ZERO : d.getMinYield());
+        BigDecimal y = InspectRules.yield(n, dc, dg);
+        boolean toleranceOk = InspectRules.tolerancePass(mode, dc, dg, y, minY, aqlPlan);
+        boolean pass = InspectRules.isPass(qtyOk, toleranceOk);
+        result = pass ? "PASS" : "FAIL";
+        if (req.result() != null && !result.equals(req.result())) {
+            throw new BizException("是否合格须与检验数据一致：数量达标且公差合格才为合格");
+        }
+        ins.setResult(result);
+        report.put("meetsRequirement", pass);
+        report.put("toleranceOk", toleranceOk);
+        if (minY != null) {
+            report.put("minYield", minY);
+        }
+        String reportJson = writeJson(report);
+        ins.setReportJson(reportJson);
+        ins.setHash(sha256(result + reportJson));
+        inspectionMapper.updateById(ins);
+
+        rememberFirstInspect(ws, report);
+        int round = nvlInt(ws.getInspectRound()) + 1;
+        ws.setInspectRound(round);
+        ws.setUpdatedAt(LocalDateTime.now());
         if ("PASS".equals(result)) {
+            ws.setPayAmount(payableOnPass(ws, report));
+            ws.setStatus("PASS");
+            workStageMapper.updateById(ws);
             if (d != null) {
                 siteNotify.send(d.getTenantId(), "请付阶段款#" + stageId,
-                        "工单「" + ws.getProcessName() + "」质检合格，请支付本阶段工钱（托管平台，不直接给工厂）。");
+                        "工单「" + ws.getProcessName() + "」已审核可收款，请支付本阶段托管 ¥" + ws.getPayAmount() + "。");
             }
-        } else {
             if (d != null) {
-                siteNotify.send(d.getTenantId(), "阶段不合格#" + stageId,
-                        "工单「" + ws.getProcessName() + "」质检不合格，本阶段不收款。请填写阶段问卷。");
+                siteNotify.send(d.getTenantId(), "阶段问卷#" + stageId, "请对本阶段做总体星级评价。");
             }
+            siteNotify.send(ws.getTenantId(), "阶段问卷#" + stageId, "请对本阶段做总体星级评价。");
+            creditScoring.onInspectResult(ws, true, ins.getId());
+        } else {
+            ws.setStatus("FAIL");
+            workStageMapper.updateById(ws);
+            if (d != null) {
+                siteNotify.send(d.getTenantId(), "请处理质检结果#" + stageId,
+                        "工单「" + ws.getProcessName() + "」审核为不合格。请按规则选择让步、返工或关闭本段。");
+            }
+            siteNotify.send(ws.getTenantId(), "质检不合格#" + stageId, "本段审核不合格，等待买家选择让步、返工或关闭。");
+            creditScoring.onInspectResult(ws, false, ins.getId());
         }
-        if (d != null) {
-            siteNotify.send(d.getTenantId(), "阶段问卷#" + stageId, "请对本阶段填写 4 题问卷。");
-        }
-        siteNotify.send(ws.getTenantId(), "阶段问卷#" + stageId, "请对本阶段填写 4 题问卷。");
-        auditService.record("工单质检", "STAGE", stageId,
+        auditService.record("审核质检单", "STAGE", stageId,
                 "结果" + result + " 工序「" + ws.getProcessName() + "」");
+    }
+
+    @Transactional
+    public void decideInspect(Long stageId, DecisionRequest req) {
+        if (req == null || req.action() == null) {
+            throw new BizException("请选择让步、返工或关闭");
+        }
+        String action = req.action().trim().toUpperCase();
+        WorkStage ws = workStageMapper.selectById(stageId);
+        if (ws == null || !"FAIL".equals(ws.getStatus())) {
+            throw new BizException("仅不合格待处理的工单可由买家决策");
+        }
+        Order o = orderMapper.selectById(ws.getOrderId());
+        Demand d = o == null ? null : demandMapper.selectById(o.getDemandId());
+        if (d == null || !UserContext.tenantId().equals(d.getTenantId())) {
+            throw new BizException(403, "只能处理自己订单的工单");
+        }
+        Inspection ins = latestInspection(stageId);
+        Map<String, Object> report = ins == null ? Map.of() : readReport(ins.getReportJson());
+        int dc = mapInt(report, "criticalFailCount");
+        int dg = mapInt(report, "generalFailCount");
+        boolean qtyOk = Boolean.TRUE.equals(report.get("quantityOk"));
+        int rework = nvlInt(ws.getReworkCount());
+        BigDecimal A = stageAmount(ws);
+        BigDecimal y = InspectRules.yield(
+                mapInt(report, "sampleCount"), dc, dg);
+        int delivered = nvlInt(ws.getDeliveredQty());
+        int agreed = ws.getQuantity() == null ? 0 : ws.getQuantity();
+        AqlPlans.Plan aqlPlan = InspectPrices.includesAql(d.getInspectMode())
+                ? AqlPlans.plan(delivered, d.getAql()) : null;
+        InspectRules.Branch branch = InspectRules.classify(qtyOk, dc, dg, y, d.getMinYield(), aqlPlan);
+
+        if ("CONCESSION".equals(action)) {
+            if (!InspectRules.canConcede(branch, rework)) {
+                throw new BizException("当前质检结论不能让步");
+            }
+            BigDecimal pay = InspectRules.concessionPay(branch, A, agreed, delivered, y);
+            BigDecimal penalty = InspectRules.concessionPenalty(branch, A, d.getMinYield(), y, dg, aqlPlan);
+            BigDecimal paid = fundLedger.payConcessionToBuyer(
+                    o.getId(), d.getId(), ws.getTenantId(), d.getTenantId(), stageId, penalty);
+            ws.setPayAmount(pay);
+            ws.setStatus("PASS");
+            ws.setUpdatedAt(LocalDateTime.now());
+            workStageMapper.updateById(ws);
+            String msg;
+            if (branch == InspectRules.Branch.B) {
+                msg = "已交部分工费已托管，并按本阶段约定工费 5% 从工厂保证金赔付买家。";
+            } else if (aqlPlan != null) {
+                msg = "本段工费全额托管，并按本阶段约定工费 5% 从工厂保证金赔付买家。";
+            } else {
+                msg = "本段工费全额托管，保证金已按（最低良率−实际良率）赔付买家。";
+            }
+            siteNotify.send(d.getTenantId(), "让步已确认#" + stageId,
+                    msg + " 托管 ¥" + pay + "，赔付 ¥" + paid + "。请支付托管款。");
+            siteNotify.send(ws.getTenantId(), "买家已让步#" + stageId,
+                    "买家让步接收。本段托管 ¥" + pay + "，保证金已赔付 ¥" + paid + "。");
+            siteNotify.send(d.getTenantId(), "阶段问卷#" + stageId, "请对本阶段做总体星级评价。");
+            siteNotify.send(ws.getTenantId(), "阶段问卷#" + stageId, "请对本阶段做总体星级评价。");
+            creditScoring.onConcessionPass(ws);
+            auditService.record("让步接收", "STAGE", stageId, branch + " 托管" + pay + " 赔付" + paid);
+            return;
+        }
+        if ("REWORK".equals(action)) {
+            if (!InspectRules.canRework(branch, rework)) {
+                throw new BizException("不能再返工，请让步或关闭");
+            }
+            int hours = req.reworkHours() == null ? 24 : req.reworkHours();
+            if (hours < 12 || hours > 72) {
+                throw new BizException("返工期限须为 12～72 小时");
+            }
+            if (branch == InspectRules.Branch.B) {
+                splitQtyRework(ws, o, d, report, hours, A, agreed, delivered);
+                return;
+            }
+            ws.setReworkCount(1);
+            ws.setReworkKind("QUALITY");
+            ws.setReworkDeadlineAt(LocalDateTime.now().plusHours(hours));
+            ws.setReworkReason(buildReworkReason(report));
+            ws.setStatus("IN_PRODUCTION");
+            ws.setActualProgress(0);
+            ws.setInspectFeeStatus("NONE");
+            ws.setUpdatedAt(LocalDateTime.now());
+            workStageMapper.updateById(ws);
+            siteNotify.send(ws.getTenantId(), "请返工#" + stageId,
+                    "买家要求质量返工，期限 " + hours + " 小时。再次交付后由工厂支付质检费。");
+            siteNotify.send(d.getTenantId(), "已要求返工#" + stageId,
+                    "已通知工厂质量返工，期限 " + hours + " 小时。");
+            auditService.record("要求返工", "STAGE", stageId, "QUALITY " + hours + "小时");
+            return;
+        }
+        if ("CLOSE".equals(action)) {
+            closeChain(ws, o, d);
+            return;
+        }
+        throw new BizException("请选择让步、返工或关闭");
+    }
+
+    private void enterInspectPay(WorkStage ws, Order o, Demand d) {
+        boolean qualityRework = nvlInt(ws.getReworkCount()) > 0 && "QUALITY".equals(ws.getReworkKind());
+        String payer = qualityRework ? "FACTORY" : "BUYER";
+        int feeQty = qualityRework
+                ? (ws.getQuantity() == null ? 0 : ws.getQuantity())
+                : nvlInt(ws.getDeliveredQty());
+        BigDecimal fee = InspectPrices.fee(d == null ? null : d.getInspectMode(), feeQty);
+        ws.setInspectFeePayer(payer);
+        ws.setInspectFeeAmount(fee);
+        if (fee.compareTo(BigDecimal.ZERO) <= 0) {
+            ws.setInspectFeeStatus("PAID");
+            ws.setStatus("PENDING_INSPECTION");
+            workStageMapper.updateById(ws);
+            return;
+        }
+        ws.setInspectFeeStatus("PENDING_PAY");
+        ws.setStatus("PENDING_INSPECT_PAY");
+        workStageMapper.updateById(ws);
+        Long demandId = d == null ? null : d.getId();
+        if ("FACTORY".equals(payer)) {
+            siteNotify.send(ws.getTenantId(), "请付质检费#" + ws.getId(),
+                    "质量返工须先缴质检费 ¥" + fee + "，付完后质检员才能检验。");
+        } else if (demandId != null) {
+            siteNotify.send(d.getTenantId(), "请付质检费#" + ws.getId(),
+                    "工厂已交付，请先支付质检费 ¥" + fee + "，付完后进入质检。");
+        }
+    }
+
+    @Transactional
+    public com.dsh.platform.domain.pay.EscrowStart payInspectFee(Long stageId) {
+        WorkStage ws = workStageMapper.selectById(stageId);
+        if (ws == null) {
+            throw new BizException("工单不存在");
+        }
+        if (!"PENDING_INSPECT_PAY".equals(ws.getStatus()) && !"PENDING_PAY".equals(ws.getInspectFeeStatus())) {
+            throw new BizException("当前无需支付质检费");
+        }
+        if ("PAID".equals(ws.getInspectFeeStatus())) {
+            return new com.dsh.platform.domain.pay.EscrowStart(true, null);
+        }
+        Order o = orderMapper.selectById(ws.getOrderId());
+        Demand d = o == null ? null : demandMapper.selectById(o.getDemandId());
+        String payer = ws.getInspectFeePayer() == null ? "BUYER" : ws.getInspectFeePayer();
+        Long payerId = "FACTORY".equals(payer) ? ws.getTenantId() : (d == null ? null : d.getTenantId());
+        if (payerId == null || !payerId.equals(UserContext.tenantId())) {
+            throw new BizException(403, "请由应付质检费的一方支付");
+        }
+        BigDecimal fee = ws.getInspectFeeAmount() == null ? BigDecimal.ZERO : ws.getInspectFeeAmount();
+        if (o == null || d == null) {
+            throw new BizException("订单不存在");
+        }
+        fundLedger.collectInspectFee(o.getId(), d.getId(), payerId, ws.getId(), fee);
+        ws.setInspectFeeStatus("PAID");
+        ws.setStatus("PENDING_INSPECTION");
+        ws.setUpdatedAt(LocalDateTime.now());
+        workStageMapper.updateById(ws);
+        auditService.record("支付质检费", "STAGE", ws.getId(), payer + " " + fee);
+        return new com.dsh.platform.domain.pay.EscrowStart(true, null);
+    }
+
+    private void splitQtyRework(WorkStage ws, Order o, Demand d, Map<String, Object> report,
+                                int hours, BigDecimal A, int agreed, int delivered) {
+        int remain = Math.max(0, agreed - delivered);
+        BigDecimal deliveredPay = InspectRules.concessionPay(InspectRules.Branch.B, A, agreed, delivered, BigDecimal.ONE);
+        ws.setPayAmount(deliveredPay);
+        ws.setStatus("PASS");
+        ws.setReworkCount(1);
+        ws.setReworkKind("QTY");
+        ws.setReworkReason(buildReworkReason(report));
+        ws.setUpdatedAt(LocalDateTime.now());
+        workStageMapper.updateById(ws);
+        if (remain > 0) {
+            WorkStage child = new WorkStage();
+            child.setOrderId(ws.getOrderId());
+            child.setTenantId(ws.getTenantId());
+            child.setProcessNo(ws.getProcessNo());
+            child.setProcessName((ws.getPeriodLabel() == null ? ws.getProcessName() : ws.getPeriodLabel()) + " 补件");
+            child.setQuantity(remain);
+            child.setPromisedDays(ws.getPromisedDays());
+            child.setPromisedDate(ws.getPromisedDate());
+            child.setAmount(A.subtract(deliveredPay).max(BigDecimal.ZERO));
+            child.setEscrowStatus("NONE");
+            child.setActualProgress(0);
+            child.setPeriodNo(ws.getPeriodNo());
+            child.setPeriodStart(LocalDateTime.now());
+            child.setPeriodEnd(ws.getPeriodEnd());
+            child.setStatus("IN_PRODUCTION");
+            child.setReworkCount(1);
+            child.setReworkKind("QTY");
+            child.setReworkDeadlineAt(LocalDateTime.now().plusHours(hours));
+            child.setReworkReason(buildReworkReason(report));
+            child.setParentStageId(ws.getId());
+            child.setInspectFeeStatus("NONE");
+            workStageMapper.insert(child);
+            siteNotify.send(ws.getTenantId(), "请补件#" + child.getId(),
+                    "买家要求数量返工。已交 " + delivered + " 件将托管工费；剩余 " + remain + " 件请在 "
+                            + hours + " 小时内交付。剩余件由买家付质检费。");
+        }
+        siteNotify.send(d.getTenantId(), "数量返工#" + ws.getId(),
+                "已交部分请支付托管 ¥" + deliveredPay + "；剩余 " + remain + " 件已生成补件工单。");
+        auditService.record("数量返工", "STAGE", ws.getId(), "已交" + delivered + " 剩余" + remain);
+    }
+
+    private void closeChain(WorkStage ws, Order o, Demand d) {
+        List<WorkStage> mine = workStageMapper.selectList(new LambdaQueryWrapper<WorkStage>()
+                .eq(WorkStage::getOrderId, ws.getOrderId())
+                .eq(WorkStage::getTenantId, ws.getTenantId()));
+        BigDecimal left = BigDecimal.ZERO;
+        int curNo = ws.getPeriodNo() == null ? 0 : ws.getPeriodNo();
+        for (WorkStage s : mine) {
+            if ("CANCELLED".equals(s.getStatus()) || "CLOSED".equals(s.getStatus())
+                    || "PASS".equals(s.getStatus()) || "COMPLETED".equals(s.getStatus())) {
+                continue;
+            }
+            int no = s.getPeriodNo() == null ? 0 : s.getPeriodNo();
+            boolean later = s.getId().equals(ws.getId())
+                    || (curNo > 0 && no > curNo)
+                    || (curNo <= 0 && s.getId() > ws.getId());
+            if (!later) {
+                continue;
+            }
+            left = left.add(s.getAmount() == null ? BigDecimal.ZERO : s.getAmount());
+        }
+        BigDecimal penalty = InspectRules.closePenalty(left);
+        BigDecimal paid = fundLedger.payConcessionToBuyer(
+                o.getId(), d.getId(), ws.getTenantId(), d.getTenantId(), ws.getId(), penalty);
+        for (WorkStage s : mine) {
+            int no = s.getPeriodNo() == null ? 0 : s.getPeriodNo();
+            boolean later = !s.getId().equals(ws.getId())
+                    && ((curNo > 0 && no > curNo) || (curNo <= 0 && s.getId() > ws.getId()));
+            if (!later) {
+                continue;
+            }
+            if ("PASS".equals(s.getStatus()) || "CLOSED".equals(s.getStatus()) || "CANCELLED".equals(s.getStatus())) {
+                continue;
+            }
+            s.setStatus("CANCELLED");
+            s.setPayAmount(BigDecimal.ZERO);
+            s.setUpdatedAt(LocalDateTime.now());
+            workStageMapper.updateById(s);
+        }
+        ws.setStatus("CLOSED");
+        ws.setPayAmount(BigDecimal.ZERO);
+        ws.setUpdatedAt(LocalDateTime.now());
+        workStageMapper.updateById(ws);
+        siteNotify.send(ws.getTenantId(), "本段已关闭#" + ws.getId(),
+                "买家关闭本阶段，后续期已取消。已按当前+后续工费 5% 赔付买家 ¥" + paid + "。本期不交托管。");
+        siteNotify.send(d.getTenantId(), "已关闭工单#" + ws.getId(),
+                "本段已关闭并取消该厂后续期，赔付 ¥" + paid + "。本期不交托管款。");
+        auditService.record("关闭连锁", "STAGE", ws.getId(), "赔付" + paid + " 基数" + left);
     }
 
     @Transactional
@@ -374,12 +799,12 @@ public class OrderService {
             throw new BizException(403, "只能支付自己的订单阶段款");
         }
         if (!"PASS".equals(ws.getStatus())) {
-            throw new BizException("仅质检合格的阶段可以支付");
+            throw new BizException("仅可收款的阶段可以支付");
         }
         if (!"NONE".equals(ws.getEscrowStatus()) && !"PENDING_PAY".equals(ws.getEscrowStatus())) {
             throw new BizException("该阶段已托管或已结算");
         }
-        BigDecimal amount = ws.getAmount() == null ? BigDecimal.ZERO : ws.getAmount();
+        BigDecimal amount = payableNow(ws);
         if (amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new BizException("阶段金额无效");
         }
@@ -400,12 +825,16 @@ public class OrderService {
             if (amount.compareTo(BigDecimal.ZERO) <= 0) {
                 ws.setEscrowStatus("HELD");
                 workStageMapper.updateById(ws);
+                creditScoring.onPaid(ws, d.getTenantId());
                 return new com.dsh.platform.domain.pay.EscrowStart(true, null);
             }
         }
         var started = paymentChannel.startEscrow(o.getId(), ws.getId(), d.getTenantId(), amount);
         ws.setEscrowStatus(started.held() ? "HELD" : "PENDING_PAY");
         workStageMapper.updateById(ws);
+        if (started.held()) {
+            creditScoring.onPaid(ws, d.getTenantId());
+        }
         return started;
     }
 
@@ -419,7 +848,7 @@ public class OrderService {
         if ("HELD".equals(ws.getEscrowStatus()) || "SETTLED".equals(ws.getEscrowStatus())) {
             return;
         }
-        BigDecimal expect = ws.getAmount() == null ? BigDecimal.ZERO : ws.getAmount();
+        BigDecimal expect = payableNow(ws);
         if (paidAmount != null && paidAmount.subtract(expect).abs().compareTo(new BigDecimal("0.01")) > 0) {
             throw new BizException("回调金额与阶段款不一致");
         }
@@ -428,6 +857,7 @@ public class OrderService {
         paymentChannel.escrowStage(o.getId(), ws.getId(), d.getTenantId(), expect);
         ws.setEscrowStatus("HELD");
         workStageMapper.updateById(ws);
+        creditScoring.onPaid(ws, d.getTenantId());
     }
 
     @Transactional
@@ -449,23 +879,33 @@ public class OrderService {
             throw new BizException("还没有工单");
         }
         for (WorkStage ws : stages) {
+            if ("CLOSED".equals(ws.getStatus()) || "CANCELLED".equals(ws.getStatus())) {
+                continue;
+            }
             if (!"PASS".equals(ws.getStatus())) {
-                throw new BizException("仍有工单未质检合格，不能验收");
+                throw new BizException("仍有工单未完成质检或买家未处理不合格结果，不能验收");
             }
             if (!"HELD".equals(ws.getEscrowStatus())) {
-                throw new BizException("仍有合格阶段未支付托管，不能验收");
+                throw new BizException("仍有可收款阶段未支付托管，不能验收");
             }
         }
         Map<Long, BigDecimal> byFactory = new HashMap<>();
         for (WorkStage ws : stages) {
-            byFactory.merge(ws.getTenantId(), ws.getAmount() == null ? BigDecimal.ZERO : ws.getAmount(), BigDecimal::add);
+            if ("CLOSED".equals(ws.getStatus()) || "CANCELLED".equals(ws.getStatus())) {
+                continue;
+            }
+            byFactory.merge(ws.getTenantId(), payableNow(ws), BigDecimal::add);
         }
         BigDecimal total = byFactory.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add);
         for (Map.Entry<Long, BigDecimal> e : byFactory.entrySet()) {
-            paymentChannel.settleToFactory(orderId, e.getKey(), e.getValue());
+            BigDecimal wages = e.getValue();
             BigDecimal commission = total.compareTo(BigDecimal.ZERO) <= 0
                     ? BigDecimal.ZERO
-                    : o.getCommissionAmount().multiply(e.getValue()).divide(total, 2, RoundingMode.HALF_UP);
+                    : o.getCommissionAmount().multiply(wages).divide(total, 2, RoundingMode.HALF_UP);
+            if (commission.compareTo(wages) > 0) {
+                commission = wages;
+            }
+            paymentChannel.settleToFactory(orderId, e.getKey(), wages.subtract(commission));
             paymentChannel.takeCommission(orderId, o.getDemandId(), e.getKey(), commission);
         }
         for (WorkStage ws : stages) {
@@ -493,8 +933,8 @@ public class OrderService {
         demandMapper.updateById(d);
         creditScoring.applyOnComplete(o);
         deviceService.releaseByDemand(o.getDemandId());
-        siteNotify.send(d.getTenantId(), "订单已完成#" + orderId, "完工确认完成，工厂工钱已结算，佣金已从保证金扣除。");
-        byFactory.keySet().forEach(fid -> siteNotify.send(fid, "订单已结算#" + orderId, "工钱已到账，佣金已从保证金扣除。"));
+        siteNotify.send(d.getTenantId(), "订单已完成#" + orderId, "完工确认完成，工厂工钱已结算，平台佣金已从托管工钱扣除。");
+        byFactory.keySet().forEach(fid -> siteNotify.send(fid, "订单已结算#" + orderId, "工钱已到账，佣金已从托管工钱扣除，剩余保证金已退回。"));
     }
 
     @Transactional
@@ -503,8 +943,8 @@ public class OrderService {
         if (ws == null) {
             throw new BizException("工单不存在");
         }
-        if (!"PASS".equals(ws.getStatus()) && !"FAIL".equals(ws.getStatus())) {
-            throw new BizException("阶段尚未结束，不能填问卷");
+        if (!"PASS".equals(ws.getStatus())) {
+            throw new BizException("仅质检通过的工单可以评价，关闭订单不用评分");
         }
         Order o = orderMapper.selectById(ws.getOrderId());
         Demand d = demandMapper.selectById(o.getDemandId());
@@ -521,16 +961,17 @@ public class OrderService {
             throw new BizException(403, "仅买家和工厂可填问卷");
         }
         if (req == null || req.scores() == null) {
-            throw new BizException("请给 4 题打分");
+            throw new BizException("请给出总体评价星级");
+        }
+        Integer star = req.scores().get("overall");
+        if (star == null) {
+            star = req.scores().get("q4");
+        }
+        if (star == null || star < 1 || star > 5) {
+            throw new BizException("总体评价须为 1～5 星");
         }
         Map<String, Integer> scores = new LinkedHashMap<>();
-        for (String k : List.of("q1", "q2", "q3", "q4")) {
-            Integer v = req.scores().get(k);
-            if (v == null || v < 1 || v > 5) {
-                throw new BizException("每题须为 1～5 分");
-            }
-            scores.put(k, v);
-        }
+        scores.put("overall", star);
         Long exists = surveyMapper.selectCount(new LambdaQueryWrapper<Survey>()
                 .eq(Survey::getStageId, stageId)
                 .eq(Survey::getRole, role)
@@ -545,6 +986,7 @@ public class OrderService {
         s.setRole(role);
         s.setScoresJson(writeJson(scores));
         surveyMapper.insert(s);
+        creditScoring.onSurveySubmitted(ws, d.getTenantId());
     }
 
     public List<Survey> surveysOfStage(Long stageId) {
@@ -561,11 +1003,122 @@ public class OrderService {
         return o;
     }
 
+    private Inspection latestInspection(Long stageId) {
+        return inspectionMapper.selectOne(new LambdaQueryWrapper<Inspection>()
+                .eq(Inspection::getStageId, stageId)
+                .orderByDesc(Inspection::getId)
+                .last("limit 1"));
+    }
+
+    private static String buildReworkReason(Map<String, Object> report) {
+        List<String> parts = new ArrayList<>();
+        if (!Boolean.TRUE.equals(report.get("quantityOk"))) {
+            parts.add("数量不达标");
+        }
+        int dc = mapInt(report, "criticalFailCount");
+        int dg = mapInt(report, "generalFailCount");
+        if (dc > 0) {
+            parts.add("关键公差不合格 " + dc + " 件");
+        }
+        if (Boolean.FALSE.equals(report.get("toleranceOk")) && dc <= 0) {
+            Object ac = report.get("aqlAc");
+            if (ac != null) {
+                parts.add("一般缺陷 " + dg + " 件，超过 Ac=" + ac);
+            } else {
+                parts.add("抽检良率低于最低良率");
+            }
+        } else if (dg > 0) {
+            parts.add("一般公差不合格 " + dg + " 件");
+        }
+        Object y = report.get("actualYield");
+        if (y != null) {
+            parts.add("抽检良率 " + y);
+        }
+        Object remark = report.get("remark");
+        if (remark != null && !remark.toString().isBlank()) {
+            parts.add("质检备注：" + remark);
+        }
+        Object kd = report.get("keyDimensions");
+        if (kd != null && !kd.toString().isBlank()) {
+            parts.add("关键尺寸：" + kd);
+        }
+        return parts.isEmpty() ? "买家要求返工" : String.join("；", parts);
+    }
+
+    private void rememberFirstInspect(WorkStage ws, Map<String, Object> report) {
+        if (nvlInt(ws.getInspectRound()) > 0) {
+            return;
+        }
+        int n = mapInt(report, "sampleCount");
+        int dc = mapInt(report, "criticalFailCount");
+        int dg = mapInt(report, "generalFailCount");
+        ws.setFirstYield(InspectRules.yield(n, dc, dg));
+        ws.setFirstQuantityOk(Boolean.TRUE.equals(report.get("quantityOk")) ? 1 : 0);
+    }
+
+    private BigDecimal payableOnPass(WorkStage ws, Map<String, Object> report) {
+        BigDecimal A = stageAmount(ws);
+        if (nvlInt(ws.getReworkCount()) <= 0) {
+            return A;
+        }
+        if (Integer.valueOf(0).equals(ws.getFirstQuantityOk())) {
+            return A;
+        }
+        BigDecimal y1 = ws.getFirstYield();
+        if (y1 == null) {
+            int n = mapInt(report, "sampleCount");
+            y1 = InspectRules.yield(n, mapInt(report, "criticalFailCount"), mapInt(report, "generalFailCount"));
+        }
+        return InspectRules.scale(A, y1);
+    }
+
+    private BigDecimal payableNow(WorkStage ws) {
+        if (ws.getPayAmount() != null) {
+            return ws.getPayAmount();
+        }
+        return stageAmount(ws);
+    }
+
+    private BigDecimal stageAmount(WorkStage ws) {
+        return ws.getAmount() == null ? BigDecimal.ZERO : ws.getAmount();
+    }
+
+    private static int nvlInt(Integer v) {
+        return v == null ? 0 : v;
+    }
+
+    private static int mapInt(Map<String, Object> m, String key) {
+        if (m == null || m.get(key) == null) {
+            return 0;
+        }
+        Object v = m.get(key);
+        if (v instanceof Number n) {
+            return n.intValue();
+        }
+        try {
+            return Integer.parseInt(v.toString());
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
     private List<Map<String, Object>> readCombo(String json) {
         try {
             return objectMapper.readValue(json, new TypeReference<>() {});
         } catch (Exception e) {
             throw new BizException("方案数据解析失败");
+        }
+    }
+
+    private Map<String, Object> readReport(String json) {
+        if (json == null || json.isBlank()) {
+            return new LinkedHashMap<>();
+        }
+        try {
+            Map<String, Object> m = objectMapper.readValue(json, new TypeReference<>() {});
+            return m == null ? new LinkedHashMap<>() : new LinkedHashMap<>(m);
+        } catch (Exception e) {
+            return new LinkedHashMap<>();
         }
     }
 

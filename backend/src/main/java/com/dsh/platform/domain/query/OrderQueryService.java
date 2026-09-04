@@ -2,6 +2,7 @@ package com.dsh.platform.domain.query;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.dsh.platform.common.BizException;
+import com.dsh.platform.dto.OrderDtos.FactoryDemandJob;
 import com.dsh.platform.dto.OrderDtos.ComboItem;
 import com.dsh.platform.dto.OrderDtos.OrderDetailView;
 import com.dsh.platform.dto.OrderDtos.OrderListView;
@@ -16,6 +17,11 @@ import com.dsh.platform.entity.WorkStage;
 import com.dsh.platform.mapper.ContractMapper;
 import com.dsh.platform.mapper.DemandMapper;
 import com.dsh.platform.mapper.EnterpriseMapper;
+import com.dsh.platform.domain.inspect.AqlPlans;
+import com.dsh.platform.domain.inspect.InspectPrices;
+import com.dsh.platform.domain.inspect.InspectRules;
+import com.dsh.platform.entity.Inspection;
+import com.dsh.platform.mapper.InspectionMapper;
 import com.dsh.platform.mapper.OrderMapper;
 import com.dsh.platform.mapper.QuotationMapper;
 import com.dsh.platform.mapper.SolutionMapper;
@@ -27,6 +33,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -38,6 +46,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class OrderQueryService {
 
+    private final InspectionMapper inspectionMapper;
     private final OrderMapper orderMapper;
     private final DemandMapper demandMapper;
     private final WorkStageMapper workStageMapper;
@@ -75,7 +84,7 @@ public class OrderQueryService {
                 o.getTotalAmount(),
                 o.getCommissionAmount(),
                 o.getCreatedAt(),
-                comboOf(s),
+                comboOf(s, o.getDemandId()),
                 flowSteps(contracts),
                 flowActive(o.getStatus(), contracts, stages)
         );
@@ -113,6 +122,106 @@ public class OrderQueryService {
                 .eq(WorkStage::getTenantId, UserContext.tenantId())
                 .orderByDesc(WorkStage::getId));
         enrich(stages);
+        return stages;
+    }
+
+    public List<FactoryDemandJob> myDemandJobs() {
+        List<WorkStage> stages = myStages();
+        Map<Long, List<WorkStage>> byOrder = stages.stream()
+                .collect(Collectors.groupingBy(WorkStage::getOrderId, java.util.LinkedHashMap::new, Collectors.toList()));
+        List<FactoryDemandJob> jobs = new ArrayList<>();
+        for (Map.Entry<Long, List<WorkStage>> e : byOrder.entrySet()) {
+            Order o = orderMapper.selectById(e.getKey());
+            Demand d = o == null ? null : demandMapper.selectById(o.getDemandId());
+            List<WorkStage> periods = new ArrayList<>(e.getValue());
+            periods.sort((a, b) -> {
+                int pa = a.getPeriodNo() == null ? 0 : a.getPeriodNo();
+                int pb = b.getPeriodNo() == null ? 0 : b.getPeriodNo();
+                if (pa != pb) {
+                    return Integer.compare(pa, pb);
+                }
+                int na = a.getProcessNo() == null ? 0 : a.getProcessNo();
+                int nb = b.getProcessNo() == null ? 0 : b.getProcessNo();
+                return Integer.compare(na, nb);
+            });
+            BigDecimal total = periods.stream()
+                    .map(ws -> ws.getAmount() == null ? BigDecimal.ZERO : ws.getAmount())
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            int progress = 0;
+            if (!periods.isEmpty()) {
+                progress = (int) Math.round(periods.stream()
+                        .mapToInt(ws -> ws.getActualProgress() == null ? 0 : ws.getActualProgress())
+                        .average().orElse(0));
+            }
+            boolean signed = periods.stream().anyMatch(ws -> Boolean.TRUE.equals(ws.getContractSigned()));
+            String status = rollupStatus(periods, signed);
+            String detail = d == null ? "" : ((d.getProductName() == null ? "" : d.getProductName())
+                    + (d.getCategory() == null || d.getCategory().isBlank() ? "" : " / " + d.getCategory())
+                    + (d.getQuantity() == null ? "" : " / " + d.getQuantity() + "件"));
+            Long demandId = d == null ? null : d.getId();
+            for (WorkStage ws : periods) {
+                ws.setDemandId(demandId);
+                ws.setDemandTitle(d == null ? "" : d.getTitle());
+            }
+            jobs.add(new FactoryDemandJob(
+                    demandId,
+                    e.getKey(),
+                    d == null ? "" : d.getTitle(),
+                    d == null ? "" : d.getProductName(),
+                    detail,
+                    progress,
+                    total,
+                    status,
+                    signed,
+                    periods));
+        }
+        return jobs;
+    }
+
+    private String rollupStatus(List<WorkStage> periods, boolean signed) {
+        if (!signed) {
+            return "PENDING_SIGN";
+        }
+        if (periods.stream().anyMatch(ws -> "FAIL".equals(ws.getStatus()))) {
+            return "FAIL";
+        }
+        if (periods.stream().anyMatch(ws -> "IN_PRODUCTION".equals(ws.getStatus())
+                || (ws.getReworkCount() != null && ws.getReworkCount() > 0 && "IN_PRODUCTION".equals(ws.getStatus())))) {
+            return "IN_PRODUCTION";
+        }
+        if (periods.stream().anyMatch(ws -> "WAITING_OPEN".equals(ws.getStatus()))) {
+            return "WAITING_OPEN";
+        }
+        if (periods.stream().allMatch(ws -> "CLOSED".equals(ws.getStatus()) || "CANCELLED".equals(ws.getStatus()))) {
+            return "CLOSED";
+        }
+        if (periods.stream().allMatch(ws -> List.of("PASS", "COMPLETED", "CLOSED").contains(ws.getStatus()))) {
+            return "COMPLETED";
+        }
+        if (periods.stream().anyMatch(ws -> "PENDING_INSPECT_PAY".equals(ws.getStatus()))) {
+            return "PENDING_INSPECT_PAY";
+        }
+        if (periods.stream().anyMatch(ws -> List.of("PENDING_INSPECTION", "PENDING_REVIEW").contains(ws.getStatus()))) {
+            return "PENDING_INSPECTION";
+        }
+        return periods.get(0).getStatus();
+    }
+
+    /** 质检台：仅工厂进度完成并提交质检后的工单，生产中的工单质检方不可见。 */
+    public List<WorkStage> inspectQueue() {
+        String role = UserContext.role();
+        if (!"OPERATOR".equals(role) && !"SUPER_ADMIN".equals(role) && !"INSPECTION".equals(role)) {
+            throw new BizException(403, "无权查看质检台");
+        }
+        List<WorkStage> stages = workStageMapper.selectList(new LambdaQueryWrapper<WorkStage>()
+                .in(WorkStage::getStatus, "PENDING_INSPECT_PAY", "PENDING_INSPECTION", "PENDING_REVIEW", "INSPECTING", "PASS", "FAIL", "CLOSED", "COMPLETED")
+                .orderByDesc(WorkStage::getUpdatedAt)
+                .orderByDesc(WorkStage::getId));
+        if ("INSPECTION".equals(role)) {
+            stages = stages.stream().filter(ws -> !"PENDING_INSPECT_PAY".equals(ws.getStatus())).toList();
+        }
+        enrich(stages);
+        fillInspectSheet(stages);
         return stages;
     }
 
@@ -177,7 +286,7 @@ public class OrderQueryService {
             return "";
         }
         Set<String> names = new LinkedHashSet<>();
-        for (ComboItem item : comboOf(s)) {
+        for (ComboItem item : comboOf(s, null)) {
             if (item.factoryName() != null && !item.factoryName().isBlank()) {
                 names.add(item.factoryName());
             }
@@ -196,7 +305,7 @@ public class OrderQueryService {
         return String.join("、", names);
     }
 
-    private List<ComboItem> comboOf(Solution s) {
+    private List<ComboItem> comboOf(Solution s, Long demandId) {
         if (s == null) {
             return List.of();
         }
@@ -209,6 +318,15 @@ public class OrderQueryService {
                 factoryName = e == null ? ("厂" + factoryId) : e.getName();
             }
             Object qty = item.get("quantity");
+            Integer minQty = asInt(item.get("minQty"));
+            Integer maxQty = asInt(item.get("maxQty"));
+            Integer[] range = bidRange(demandId, factoryId);
+            if (minQty == null) {
+                minQty = range[0];
+            }
+            if (maxQty == null) {
+                maxQty = range[1];
+            }
             out.add(new ComboItem(
                     factoryId,
                     factoryName,
@@ -216,10 +334,32 @@ public class OrderQueryService {
                     item.get("processName") == null ? "工序" : item.get("processName").toString(),
                     qty == null ? null : asInt(qty),
                     item.get("price"),
-                    item.get("days")
+                    item.get("days"),
+                    minQty,
+                    maxQty
             ));
         }
         return out;
+    }
+
+    private Integer[] bidRange(Long demandId, Long factoryId) {
+        Integer min = null;
+        Integer max = null;
+        if (demandId == null || factoryId == null) {
+            return new Integer[] {null, null};
+        }
+        List<Quotation> qs = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
+                .eq(Quotation::getDemandId, demandId)
+                .eq(Quotation::getTenantId, factoryId));
+        for (Quotation q : qs) {
+            if (q.getMinQty() != null) {
+                min = min == null ? q.getMinQty() : Math.min(min, q.getMinQty());
+            }
+            if (q.getMaxQty() != null) {
+                max = max == null ? q.getMaxQty() : Math.max(max, q.getMaxQty());
+            }
+        }
+        return new Integer[] {min, max};
     }
 
     private List<String> flowSteps(List<Contract> contracts) {
@@ -249,7 +389,7 @@ public class OrderQueryService {
             return 2;
         }
         boolean inspecting = stages.stream().anyMatch(ws ->
-                List.of("PENDING_INSPECTION", "INSPECTING", "PASS", "FAIL", "COMPLETED").contains(ws.getStatus())
+                List.of("PENDING_INSPECTION", "PENDING_REVIEW", "INSPECTING", "PASS", "FAIL", "CLOSED", "COMPLETED").contains(ws.getStatus())
                         || List.of("HELD", "SETTLED", "PENDING_PAY").contains(ws.getEscrowStatus()));
         if (inspecting) {
             return 3;
@@ -295,6 +435,178 @@ public class OrderQueryService {
             ws.setSurveyed(n != null && n > 0);
             Enterprise e = ws.getTenantId() == null ? null : enterpriseMapper.selectById(ws.getTenantId());
             ws.setFactoryName(e == null ? ("厂" + ws.getTenantId()) : e.getName());
+            Order o = orderMapper.selectById(ws.getOrderId());
+            Integer[] range = bidRange(o == null ? null : o.getDemandId(), ws.getTenantId());
+            ws.setMinQty(range[0]);
+            ws.setMaxQty(range[1]);
+            fillDecisionFlags(ws);
+            fillPeriodWindow(ws);
+        }
+    }
+
+    private void fillPeriodWindow(WorkStage ws) {
+        LocalDateTime now = LocalDateTime.now();
+        boolean signed = Boolean.TRUE.equals(ws.getContractSigned());
+        boolean started = ws.getPeriodStart() == null || !now.isBefore(ws.getPeriodStart());
+        ws.setWindowOpen(signed && started && isOpenable(ws.getStatus()));
+        int no = ws.getPeriodNo() == null ? 0 : ws.getPeriodNo();
+        ws.setPeriodLabel(no > 0 ? ("第" + no + "期") : (ws.getProcessName() == null ? "本期" : ws.getProcessName()));
+        if (("WAITING_OPEN".equals(ws.getStatus()) || "PENDING".equals(ws.getStatus())) && signed && started) {
+            ws.setStatus("IN_PRODUCTION");
+            ws.setUpdatedAt(now);
+            workStageMapper.updateById(ws);
+        } else if (("PENDING".equals(ws.getStatus()) || "WAITING_OPEN".equals(ws.getStatus())) && signed && !started) {
+            if (!"WAITING_OPEN".equals(ws.getStatus())) {
+                ws.setStatus("WAITING_OPEN");
+                workStageMapper.updateById(ws);
+            }
+        }
+    }
+
+    private static boolean isOpenable(String status) {
+        return status == null
+                || "PENDING".equals(status)
+                || "WAITING_OPEN".equals(status)
+                || "IN_PRODUCTION".equals(status);
+    }
+
+    private void fillDecisionFlags(WorkStage ws) {
+        applyInspectPlan(ws, null);
+        ws.setCanConcede(false);
+        ws.setCanRework(false);
+        ws.setCanClose(false);
+        ws.setBranchCode(null);
+        if (!"FAIL".equals(ws.getStatus())) {
+            return;
+        }
+        Inspection ins = inspectionMapper.selectOne(new LambdaQueryWrapper<Inspection>()
+                .eq(Inspection::getStageId, ws.getId())
+                .orderByDesc(Inspection::getId)
+                .last("limit 1"));
+        Map<String, Object> report = readExtra(ins == null ? null : ins.getReportJson());
+        int dc = asInt(report.get("criticalFailCount")) == null ? 0 : asInt(report.get("criticalFailCount"));
+        int dg = asInt(report.get("generalFailCount")) == null ? 0 : asInt(report.get("generalFailCount"));
+        boolean qtyOk = Boolean.TRUE.equals(report.get("quantityOk"));
+        int n = asInt(report.get("sampleCount")) == null ? 0 : asInt(report.get("sampleCount"));
+        BigDecimal y = InspectRules.yield(n, dc, dg);
+        Order o = orderMapper.selectById(ws.getOrderId());
+        Demand d = o == null ? null : demandMapper.selectById(o.getDemandId());
+        applyInspectPlan(ws, d);
+        AqlPlans.Plan plan = InspectPrices.includesAql(d == null ? null : d.getInspectMode())
+                ? AqlPlans.plan(nvlDelivered(ws), d == null ? null : d.getAql()) : null;
+        BigDecimal minY = asDecimal(report.get("minYield"));
+        if (minY == null && d != null) {
+            minY = d.getMinYield();
+        }
+        InspectRules.Branch branch = InspectRules.classify(qtyOk, dc, dg, y, minY, plan);
+        int rework = ws.getReworkCount() == null ? 0 : ws.getReworkCount();
+        ws.setBranchCode(branch.name());
+        ws.setCanConcede(InspectRules.canConcede(branch, rework));
+        ws.setCanRework(InspectRules.canRework(branch, rework));
+        ws.setCanClose(true);
+        ws.setMinYield(minY);
+    }
+
+    private static int nvlDelivered(WorkStage ws) {
+        if (ws.getDeliveredQty() != null && ws.getDeliveredQty() > 0) {
+            return ws.getDeliveredQty();
+        }
+        return ws.getQuantity() == null ? 0 : ws.getQuantity();
+    }
+
+    private void applyInspectPlan(WorkStage ws, Demand d) {
+        if (d == null) {
+            Order o = orderMapper.selectById(ws.getOrderId());
+            d = o == null ? null : demandMapper.selectById(o.getDemandId());
+        }
+        if (d == null) {
+            return;
+        }
+        ws.setInspectMode(d.getInspectMode());
+        ws.setAql(d.getAql());
+        ws.setMinYield(d.getMinYield());
+        int agreed = ws.getQuantity() == null ? 0 : ws.getQuantity();
+        int delivered = nvlDelivered(ws);
+        ws.setRequiredSampleCount(InspectRules.requiredSample(d.getInspectMode(), d.getAql(), agreed, delivered));
+        if (InspectPrices.includesAql(d.getInspectMode())) {
+            AqlPlans.Plan plan = AqlPlans.plan(delivered, d.getAql());
+            ws.setAqlAc(plan.ac());
+            ws.setAqlRe(plan.re());
+        }
+    }
+
+    private void fillInspectSheet(List<WorkStage> stages) {
+        for (WorkStage ws : stages) {
+            Order o = orderMapper.selectById(ws.getOrderId());
+            Demand d = o == null ? null : demandMapper.selectById(o.getDemandId());
+            if (d == null) {
+                continue;
+            }
+            ws.setProductName(d.getProductName());
+            ws.setCategory(d.getCategory());
+            ws.setBuyerRemark(d.getRemark());
+            ws.setTechSpecs(techSpecsOf(d));
+            ws.setQualityThreshold(qualityThresholdOf(d, ws));
+            applyInspectPlan(ws, d);
+        }
+    }
+
+    private String techSpecsOf(Demand d) {
+        List<String> parts = new ArrayList<>();
+        addPart(parts, "材料", d.getMaterial());
+        addPart(parts, "关键公差", d.getTolerance());
+        addPart(parts, "一般公差", d.getGeneralTolerance());
+        addPart(parts, "表面处理", d.getSurfaceTreatment());
+        addPart(parts, "图号/版本", d.getPartRevision());
+        addPart(parts, "包装", d.getPackaging());
+        Map<String, Object> extra = readExtra(d.getExtraJson());
+        addPart(parts, "粗糙度", extra.get("roughness"));
+        addPart(parts, "热处理", extra.get("heatTreatment"));
+        return parts.isEmpty() ? "-" : String.join("；", parts);
+    }
+
+    private String qualityThresholdOf(Demand d, WorkStage ws) {
+        List<String> parts = new ArrayList<>();
+        addPart(parts, "检验方式", InspectPrices.label(d.getInspectMode()));
+        if (InspectPrices.includesAql(d.getInspectMode())) {
+            int lot = nvlDelivered(ws);
+            AqlPlans.Plan plan = AqlPlans.plan(lot, d.getAql());
+            addPart(parts, "AQL", d.getAql());
+            addPart(parts, "抽样方案", "水平II一次正常，实交 " + lot + " 抽 " + plan.n()
+                    + "，一般缺陷 Ac=" + plan.ac() + " / Re=" + plan.re() + "；关键超差 0 件");
+        } else {
+            addPart(parts, "抽检规则", "全检实交件数");
+            if (d.getMinYield() != null) {
+                parts.add("最低良率 " + d.getMinYield());
+            }
+        }
+        addPart(parts, "质检费", InspectPrices.label(d.getInspectMode()) + " " + InspectPrices.of(d.getInspectMode()) + " 元/件 × 本批实交");
+        addPart(parts, "认证要求", d.getCertification());
+        if (d.getMinCreditScore() != null) {
+            parts.add("最低信用分 " + d.getMinCreditScore());
+        }
+        return parts.isEmpty() ? "-" : String.join("；", parts);
+    }
+
+    private static void addPart(List<String> parts, String label, Object value) {
+        if (value == null) {
+            return;
+        }
+        String s = value.toString().trim();
+        if (s.isEmpty()) {
+            return;
+        }
+        parts.add(label + "：" + s);
+    }
+
+    private Map<String, Object> readExtra(String json) {
+        if (json == null || json.isBlank()) {
+            return Map.of();
+        }
+        try {
+            return objectMapper.readValue(json, new TypeReference<>() {});
+        } catch (Exception e) {
+            return Map.of();
         }
     }
 
@@ -332,6 +644,23 @@ public class OrderQueryService {
         }
         try {
             return Integer.parseInt(v.toString());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static BigDecimal asDecimal(Object v) {
+        if (v == null) {
+            return null;
+        }
+        if (v instanceof BigDecimal b) {
+            return b;
+        }
+        if (v instanceof Number n) {
+            return BigDecimal.valueOf(n.doubleValue());
+        }
+        try {
+            return new BigDecimal(v.toString());
         } catch (Exception e) {
             return null;
         }

@@ -1,5 +1,7 @@
 package com.dsh.platform.dto;
 
+import com.dsh.platform.entity.WorkStage;
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -9,7 +11,11 @@ import java.util.Map;
 public class OrderDtos {
 
     public record InspectRequest(String result, Integer sampleCount, Integer failCount,
-                                 String keyDimensions, Boolean meetsRequirement, String remark) {}
+                                 Integer criticalFailCount, Integer generalFailCount,
+                                 Integer deliveredQty, String keyDimensions, Boolean meetsRequirement,
+                                 String remark, java.math.BigDecimal actualYield, Boolean quantityOk) {}
+
+    public record DecisionRequest(String action, Integer reworkHours) {}
 
     public record SignRequest(Boolean read, String sign, Long factoryTenantId) {}
 
@@ -19,7 +25,13 @@ public class OrderDtos {
 
     public record ProgressRequest(Integer doneQty, String remark, Long attachmentId) {}
 
+    public record DeliverRequest(Integer deliveredQty) {}
+
     public record TodoItem(String type, String title, String link, Integer count) {}
+
+    public record FactoryDemandJob(Long demandId, Long orderId, String demandTitle, String productName,
+                                   String detail, Integer progress, BigDecimal totalAmount, String status,
+                                   Boolean contractSigned, List<WorkStage> periods) {}
 
     public record ReplaceFactoryRequest(Integer processNo, Long factoryId) {}
 
@@ -29,7 +41,8 @@ public class OrderDtos {
                                 LocalDateTime createdAt) {}
 
     public record ComboItem(Long factoryId, String factoryName, Integer processNo,
-                            String processName, Integer quantity, Object price, Object days) {}
+                            String processName, Integer quantity, Object price, Object days,
+                            Integer minQty, Integer maxQty) {}
 
     public record OrderDetailView(Long id, Long demandId, String title, String productName,
                                   Integer quantity, LocalDate deadlineHard, String status,

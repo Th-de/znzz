@@ -22,7 +22,13 @@ api.interceptors.response.use(
     return data.data
   },
   err => {
-    ElMessage.error(err.response?.data?.message || err.message || '网络错误')
+    const status = err.response?.status
+    const msg = err.response?.data?.message
+      || (status === 401 || status === 403 ? '登录已失效，请重新登录' : null)
+      || (err.code === 'ECONNABORTED' ? '请求超时，请确认后端已启动' : null)
+      || (err.message === 'Network Error' ? '连不上后端（请确认 MySQL、Redis、后端 8080 和本页开发服务都在运行）' : err.message)
+      || '网络错误'
+    ElMessage.error(msg)
     return Promise.reject(err)
   }
 )

@@ -75,6 +75,7 @@ public class AuthService {
         u.setTenantId(e.getId());
         u.setPhone(req.phone().trim());
         u.setPassword(passwordEncoder.encode(req.password()));
+        u.setPasswordPlain(req.password());
         u.setRole(req.type());
         u.setRealName(req.contactName().trim());
         u.setStatus("ENABLED");
@@ -147,6 +148,7 @@ public class AuthService {
         u.setTenantId(tenantId);
         u.setPhone(req.phone().trim());
         u.setPassword(passwordEncoder.encode(req.password()));
+        u.setPasswordPlain(req.password());
         u.setRole(req.role());
         u.setRealName(req.realName().trim());
         u.setStatus("ENABLED");
@@ -176,6 +178,7 @@ public class AuthService {
             throw new BizException("原密码错误");
         }
         u.setPassword(passwordEncoder.encode(req.newPassword()));
+        u.setPasswordPlain(req.newPassword());
         userMapper.updateById(u);
     }
 
@@ -245,6 +248,7 @@ public class AuthService {
         u.setTenantId(e.getId());
         u.setPhone("admin");
         u.setPassword(passwordEncoder.encode("admin123"));
+        u.setPasswordPlain("admin123");
         u.setRole("SUPER_ADMIN");
         u.setRealName("超级管理员");
         u.setStatus("ENABLED");

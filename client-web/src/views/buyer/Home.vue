@@ -56,9 +56,9 @@
             <el-button v-if="row.status==='THINKING'" size="small" type="success" @click="decide(row, 'CONTINUE')">继续</el-button>
             <el-button v-if="row.status==='THINKING'" size="small" type="danger" @click="decide(row, 'CANCEL')">取消</el-button>
             <el-button v-if="row.status==='BUYER_THINKING'" size="small" type="success" @click="$router.push('/buyer/demand/' + row.id)">去决定(交保证金/取消)</el-button>
-            <el-button v-if="row.status==='SOLUTION_GENERATED' && canPick(row)" size="small" type="primary" @click="$router.push('/buyer/solutions/'+row.id)">看方案</el-button>
-            <el-tooltip v-else-if="row.status==='SOLUTION_GENERATED'" content="运营审阅并下发后才能选择方案" placement="top">
-              <el-button size="small" disabled>等待运营下发方案</el-button>
+            <el-button v-if="row.status==='SOLUTION_GENERATED' && canPick(row)" size="small" type="primary" @click="$router.push('/buyer/solutions/'+row.id)">参考推荐并选定工厂</el-button>
+            <el-tooltip v-else-if="row.status==='SOLUTION_GENERATED'" content="运营审核通过后即可参考推荐并自行分配工厂" placement="top">
+              <el-button size="small" disabled>等待运营审核推荐方案</el-button>
             </el-tooltip>
             <el-button v-if="row.status==='SOLUTION_CONFIRMED'" size="small" disabled>等待运营派单</el-button>
             <el-button v-if="row.status==='SOLUTION_SELECTED'" size="small" @click="$router.push('/buyer/orders')">看订单</el-button>
@@ -89,8 +89,13 @@ function canPick(row) {
 }
 
 async function load() {
-  demands.value = await listMine()
-  cancelStats.value = await getCancelStats()
+  try {
+    demands.value = await listMine() || []
+  } catch {
+    demands.value = []
+    return
+  }
+  try { cancelStats.value = await getCancelStats() } catch { /* keep default */ }
   try { todos.value = await api.get('/common/todos') } catch { todos.value = [] }
 }
 

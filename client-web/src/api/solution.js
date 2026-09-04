@@ -24,6 +24,6 @@ export function allocationCandidates(solutionId, processNo) {
   return api.get(`/solution/item/${solutionId}/candidates`, { params: { processNo } })
 }
 
-export function reallocate(solutionId, processNo, allocations) {
-  return api.post(`/solution/item/${solutionId}/reallocate?processNo=${processNo}`, allocations)
+export function saveCustom(demandId, items) {
+  return api.post(`/solution/${demandId}/custom`, items)
 }

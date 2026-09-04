@@ -7,10 +7,12 @@ import com.dsh.platform.entity.Contract;
 import com.dsh.platform.entity.Demand;
 import com.dsh.platform.entity.Order;
 import com.dsh.platform.entity.WorkStage;
+import com.dsh.platform.entity.Quotation;
 import com.dsh.platform.mapper.AttachmentMapper;
 import com.dsh.platform.mapper.ContractMapper;
 import com.dsh.platform.mapper.DemandMapper;
 import com.dsh.platform.mapper.OrderMapper;
+import com.dsh.platform.mapper.QuotationMapper;
 import com.dsh.platform.mapper.WorkStageMapper;
 import com.dsh.platform.security.UserContext;
 import lombok.RequiredArgsConstructor;
@@ -46,6 +48,7 @@ public class FileService {
     private final DemandMapper demandMapper;
     private final OrderMapper orderMapper;
     private final WorkStageMapper workStageMapper;
+    private final QuotationMapper quotationMapper;
 
     @Value("${dsh.upload.dir:uploads}")
     private String uploadDir;
@@ -92,8 +95,8 @@ public class FileService {
                 .orderByDesc(Attachment::getId));
     }
 
-    public void bind(Long attachmentId, String bizType, Long bizId) {
-        if (attachmentId == null) return;
+    public Long bind(Long attachmentId, String bizType, Long bizId) {
+        if (attachmentId == null) return null;
         Attachment a = attachmentMapper.selectById(attachmentId);
         if (a == null) throw new BizException("附件不存在");
         if (a.getBizId() != null && a.getBizId() > 0 && !a.getBizId().equals(bizId)) {
@@ -106,11 +109,12 @@ public class FileService {
             copy.setFileType(a.getFileType());
             copy.setUploaderId(UserContext.userId());
             attachmentMapper.insert(copy);
-            return;
+            return copy.getId();
         }
         a.setBizType(bizType);
         a.setBizId(bizId);
         attachmentMapper.updateById(a);
+        return a.getId();
     }
 
     public ResponseEntity<Resource> download(Long id) {
@@ -171,15 +175,28 @@ public class FileService {
             if (d != null && UserContext.tenantId().equals(d.getTenantId())) {
                 return a;
             }
-            if (d != null && "FACTORY".equals(role)
-                    && ("PUBLISHED".equals(d.getStatus()) || "LOCKING".equals(d.getStatus()))) {
-                return a;
+            if (d != null && "FACTORY".equals(role)) {
+                boolean bid = factoryBidOn(d.getId());
+                if (bid || "PUBLISHED".equals(d.getStatus()) || "FACTORY_THINKING".equals(d.getStatus())
+                        || "LOCKING".equals(d.getStatus())) {
+                    return a;
+                }
             }
         }
         if (UserContext.userId() != null && UserContext.userId().equals(a.getUploaderId())) {
             return a;
         }
         throw new BizException(403, "无权下载该文件");
+    }
+
+    private boolean factoryBidOn(Long demandId) {
+        if (UserContext.tenantId() == null || demandId == null) {
+            return false;
+        }
+        Long n = quotationMapper.selectCount(new LambdaQueryWrapper<Quotation>()
+                .eq(Quotation::getDemandId, demandId)
+                .eq(Quotation::getTenantId, UserContext.tenantId()));
+        return n != null && n > 0;
     }
 
     private void assertCanViewContract(Contract c) {

@@ -1,6 +1,7 @@
 package com.dsh.platform.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.dsh.platform.common.BizException;
 import com.dsh.platform.domain.notify.SiteNotify;
 import com.dsh.platform.domain.order.WorkStageSplitter;
@@ -12,11 +13,13 @@ import com.dsh.platform.entity.Demand;
 import com.dsh.platform.entity.Enterprise;
 import com.dsh.platform.entity.Order;
 import com.dsh.platform.entity.Solution;
+import com.dsh.platform.entity.Quotation;
 import com.dsh.platform.mapper.AttachmentMapper;
 import com.dsh.platform.mapper.ContractMapper;
 import com.dsh.platform.mapper.DemandMapper;
 import com.dsh.platform.mapper.EnterpriseMapper;
 import com.dsh.platform.mapper.OrderMapper;
+import com.dsh.platform.mapper.QuotationMapper;
 import com.dsh.platform.mapper.SolutionMapper;
 import com.dsh.platform.security.UserContext;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -48,6 +51,7 @@ public class ContractService {
     private final SiteNotify siteNotify;
     private final ObjectMapper objectMapper;
     private final AuditService auditService;
+    private final QuotationMapper quotationMapper;
 
     public void createDrafts(Long orderId, String comboJson) {
         for (Long factoryId : factoryIdsFromCombo(comboJson)) {
@@ -146,18 +150,32 @@ public class ContractService {
         if (attachmentId == null) {
             throw new BizException("请先上传你们拟定的合同文件");
         }
-        fileService.bind(attachmentId, "CONTRACT", c.getId());
-        c.setAttachmentId(attachmentId);
-        c.setBuyerRead(0);
-        c.setBuyerSign(null);
+        Long boundId = fileService.bind(attachmentId, "CONTRACT", c.getId());
+        c.setAttachmentId(boundId != null ? boundId : attachmentId);
         c.setFactoryRead(0);
         c.setFactorySign(null);
+        if (c.getBuyerSign() == null || c.getBuyerSign().isBlank()) {
+            c.setBuyerRead(0);
+        }
         c.setStatus("DRAFT");
+        markPendingIfReady(c);
         contractMapper.updateById(c);
+        touchFactoryQuotes(o.getDemandId(), factoryTenantId);
     }
 
     @Transactional
     public void buyerSign(Long orderId, Long factoryTenantId, boolean read, String sign) {
+        if (factoryTenantId == null) {
+            buyerSignAll(orderId, read, sign);
+            return;
+        }
+        Order o = requireOrder(orderId);
+        assertBuyer(o);
+        applyBuyerSign(requireContract(orderId, factoryTenantId), read, sign);
+    }
+
+    @Transactional
+    public void buyerSignAll(Long orderId, boolean read, String sign) {
         Order o = requireOrder(orderId);
         assertBuyer(o);
         if (!read) {
@@ -166,7 +184,37 @@ public class ContractService {
         if (sign == null || sign.isBlank()) {
             throw new BizException("请完成手写签名");
         }
-        Contract c = requireContract(orderId, factoryTenantId);
+        List<Contract> list = contractMapper.selectList(new LambdaQueryWrapper<Contract>()
+                .eq(Contract::getOrderId, orderId)
+                .orderByAsc(Contract::getTenantId));
+        if (list.isEmpty()) {
+            throw new BizException("没有待签合同");
+        }
+        for (Contract c : list) {
+            if ("SIGNED".equals(c.getStatus())) {
+                continue;
+            }
+            if (c.getAttachmentId() == null) {
+                Enterprise e = enterpriseMapper.selectById(c.getTenantId());
+                String name = e == null || e.getName() == null ? ("工厂" + c.getTenantId()) : e.getName();
+                throw new BizException("请先分别上传「" + name + "」的合同文件，再统一签名");
+            }
+        }
+        for (Contract c : list) {
+            if ("SIGNED".equals(c.getStatus())) {
+                continue;
+            }
+            applyBuyerSign(c, true, sign);
+        }
+    }
+
+    private void applyBuyerSign(Contract c, boolean read, String sign) {
+        if (!read) {
+            throw new BizException("请先勾选已阅读合同");
+        }
+        if (sign == null || sign.isBlank()) {
+            throw new BizException("请完成手写签名");
+        }
         if (c.getAttachmentId() == null) {
             throw new BizException("请先上传该厂的合同文件");
         }
@@ -177,6 +225,10 @@ public class ContractService {
         c.setBuyerSign(sign);
         markPendingIfReady(c);
         contractMapper.updateById(c);
+        Order o = orderMapper.selectById(c.getOrderId());
+        if (o != null) {
+            touchFactoryQuotes(o.getDemandId(), c.getTenantId());
+        }
     }
 
     @Transactional
@@ -202,6 +254,10 @@ public class ContractService {
         c.setFactorySign(sign);
         markPendingIfReady(c);
         contractMapper.updateById(c);
+        Order o = orderMapper.selectById(orderId);
+        if (o != null) {
+            touchFactoryQuotes(o.getDemandId(), UserContext.tenantId());
+        }
     }
 
     @Transactional
@@ -223,6 +279,7 @@ public class ContractService {
         c.setStatus("SIGNED");
         c.setSignedAt(LocalDateTime.now());
         contractMapper.updateById(c);
+        touchFactoryQuotes(o.getDemandId(), factoryTenantId);
         if ("CREATED".equals(o.getStatus())) {
             o.setStatus("IN_PRODUCTION");
             orderMapper.updateById(o);
@@ -262,6 +319,16 @@ public class ContractService {
         return list.stream().allMatch(c -> "SIGNED".equals(c.getStatus()));
     }
 
+    private void touchFactoryQuotes(Long demandId, Long factoryTenantId) {
+        if (demandId == null || factoryTenantId == null) {
+            return;
+        }
+        quotationMapper.update(null, new LambdaUpdateWrapper<Quotation>()
+                .eq(Quotation::getDemandId, demandId)
+                .eq(Quotation::getTenantId, factoryTenantId)
+                .set(Quotation::getUpdatedAt, LocalDateTime.now()));
+    }
+
     private void markPendingIfReady(Contract c) {
         if (c.getBuyerRead() != null && c.getBuyerRead() == 1
                 && c.getBuyerSign() != null && !c.getBuyerSign().isBlank()
@@ -274,6 +341,24 @@ public class ContractService {
     private void enrich(Contract c, Solution s) {
         Enterprise e = enterpriseMapper.selectById(c.getTenantId());
         c.setFactoryName(e == null ? ("厂" + c.getTenantId()) : e.getName());
+        Order o = c.getOrderId() == null ? null : orderMapper.selectById(c.getOrderId());
+        if (o != null && c.getTenantId() != null) {
+            Integer min = null;
+            Integer max = null;
+            List<Quotation> qs = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
+                    .eq(Quotation::getDemandId, o.getDemandId())
+                    .eq(Quotation::getTenantId, c.getTenantId()));
+            for (Quotation q : qs) {
+                if (q.getMinQty() != null) {
+                    min = min == null ? q.getMinQty() : Math.min(min, q.getMinQty());
+                }
+                if (q.getMaxQty() != null) {
+                    max = max == null ? q.getMaxQty() : Math.max(max, q.getMaxQty());
+                }
+            }
+            c.setMinQty(min);
+            c.setMaxQty(max);
+        }
         if (s == null || c.getTenantId() == null) {
             return;
         }

@@ -28,6 +28,10 @@ public class Contract {
     @com.baomidou.mybatisplus.annotation.TableField(exist = false)
     private String factoryName;
     @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private Integer minQty;
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private Integer maxQty;
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
     private String processNames;
     @com.baomidou.mybatisplus.annotation.TableField(exist = false)
     private String fileName;

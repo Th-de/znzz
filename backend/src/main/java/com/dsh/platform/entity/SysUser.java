@@ -15,6 +15,8 @@ public class SysUser {
     private Long tenantId;
     private String phone;
     private String password;
+    /** 运营端展示用明文；登录仍校验 password 哈希 */
+    private String passwordPlain;
     private String role;
     private String realName;
     private String status;

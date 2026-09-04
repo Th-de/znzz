@@ -23,11 +23,15 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -47,7 +51,7 @@ public class FlowService {
     private final ObjectMapper objectMapper;
     private final DeviceService deviceService;
 
-    @Value("${dsh.time.thinking-hours:12}")
+    @Value("${dsh.time.thinking-hours:24}")
     private int thinkingHours;
 
     @Value("${dsh.time.review-hours:6}")
@@ -56,7 +60,7 @@ public class FlowService {
     @Value("${dsh.time.locking-hours:48}")
     private int lockingHours;
 
-    @Value("${dsh.time.factory-thinking-hours:12}")
+    @Value("${dsh.time.factory-thinking-hours:24}")
     private int factoryThinkingHours;
 
     @Value("${dsh.time.buyer-thinking-hours:24}")
@@ -65,7 +69,7 @@ public class FlowService {
     @Value("${dsh.fee.buyer-deposit-rate:0.05}")
     private BigDecimal buyerDepositRate;
 
-    /** 意向期结束 → 工厂思考期（12h）：报名厂决定是否参加并填报方案。 */
+    /** 意向期结束 → 工厂思考期（24h）：报名厂决定是否参加并填报方案。 */
     @Transactional
     public void endIntention(Long demandId) {
         Demand d = get(demandId);
@@ -96,6 +100,7 @@ public class FlowService {
         if (DemandStatus.of(d.getStatus()) != DemandStatus.FACTORY_THINKING) {
             return;
         }
+        deductFactoryThinkingTimeout(d);
         if (!committedCovered(d)) {
             stateMachine.transit(d, DemandStatus.FLOW_FAILED);
             demandMapper.updateById(d);
@@ -141,11 +146,18 @@ public class FlowService {
             stateMachine.transit(d, DemandStatus.SOLUTION_GENERATED);
             demandMapper.updateById(d);
             siteNotify.send(d.getTenantId(), "保证金已冻结#" + demandId,
-                    "已冻结保证金 ¥" + deposit + "（履约后抵扣尾款）。AI 正在生成方案，经运营审核后下发。");
-            solutionService.aiGenerateFor(d);
+                    "已冻结保证金 ¥" + deposit + "（履约后抵扣尾款）。各厂报价已可见，AI 正在生成推荐方案，经运营审核后作为参考下发。");
+            Long id = d.getId();
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    solutionService.aiGenerateFor(id);
+                }
+            });
             return;
         }
         if ("CANCEL".equals(action)) {
+            creditScoring.onBuyerThinkingCancel(d.getTenantId(), d.getId());
             failBuyerThinking(d, DemandStatus.CANCELLED,
                     reason == null || reason.isBlank() ? "买家思考期取消" : reason.trim(),
                     "买家已取消，意向金/保证金已退回。");
@@ -161,7 +173,8 @@ public class FlowService {
         if (DemandStatus.of(d.getStatus()) != DemandStatus.BUYER_THINKING) {
             return;
         }
-        failBuyerThinking(d, DemandStatus.FLOW_FAILED, "买家思考期超时未交保证金，自动流单",
+        creditScoring.onBuyerThinkingCancel(d.getTenantId(), d.getId(), "买家思考期超时自动取消");
+        failBuyerThinking(d, DemandStatus.FLOW_FAILED, "买家思考期超时未交保证金，自动流单并扣守信分",
                 "买家超时未交保证金，订单已流单，意向金/保证金已退回。");
     }
 
@@ -205,46 +218,46 @@ public class FlowService {
         return true;
     }
 
-    /** 逾期既不填报也不退出的厂：扣意向金并记失信（按厂去重）。 */
+    /** 工厂思考期截止仍未填报：按退出同等扣守信分 5 分（按厂去重）。 */
+    private void deductFactoryThinkingTimeout(Demand d) {
+        List<Quotation> silent = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
+                .eq(Quotation::getDemandId, d.getId())
+                .eq(Quotation::getStatus, "INTENTION"));
+        Set<Long> done = new HashSet<>();
+        for (Quotation q : silent) {
+            if (!done.add(q.getTenantId())) {
+                continue;
+            }
+            creditScoring.onFactoryThinkingExit(q.getTenantId(), d.getId(), "工厂思考期超时未填报");
+            siteNotify.send(q.getTenantId(), "思考期超时扣分#" + d.getId(),
+                    "需求「" + d.getTitle() + "」工厂思考期已截止，你未填报也未退出，守信分 −5。");
+        }
+    }
+
+    /** 逾期既不填报也不退出的厂：扣意向金（守信分已在到期时记过）。 */
     private void forfeitSilentFactories(Demand d) {
-        java.util.Set<Long> done = new java.util.HashSet<>();
+        Set<Long> done = new HashSet<>();
         for (Quotation q : fundLedger.forfeitUnlockedIntentions(d.getId())) {
             if (!done.add(q.getTenantId())) {
                 continue;
             }
-            creditScoring.applyNoLock(q.getTenantId(), d.getId());
             siteNotify.send(q.getTenantId(), "未填报扣除意向金#" + d.getId(),
-                    "需求「" + d.getTitle() + "」工厂思考期已结束，你未填报方案也未退出，意向金已扣除并记失信。");
+                    "需求「" + d.getTitle() + "」工厂思考期已结束，你未填报方案也未退出，意向金已扣除并扣守信分。");
         }
     }
 
-    /** 预估总价：各工序取已填报的最低单价 × 工序数量后求和。 */
+    /** 预估总价：该品最低单价 × 需求件数（工序不再拆数量）。 */
     private BigDecimal estimateTotal(Demand d) {
         List<Quotation> committed = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
                 .eq(Quotation::getDemandId, d.getId())
                 .eq(Quotation::getStatus, "LOCKED"));
-        List<com.dsh.platform.entity.Process> processes = processMapper.selectList(
-                new LambdaQueryWrapper<com.dsh.platform.entity.Process>()
-                        .eq(com.dsh.platform.entity.Process::getDemandId, d.getId()));
-        BigDecimal total = BigDecimal.ZERO;
-        if (processes.isEmpty()) {
-            for (Quotation q : committed) {
-                total = total.add(q.getPrice() == null ? BigDecimal.ZERO : q.getPrice());
-            }
-            return total.setScale(2, java.math.RoundingMode.HALF_UP);
-        }
-        for (com.dsh.platform.entity.Process p : processes) {
-            Integer no = p.getProcessNo() == null ? 1 : p.getProcessNo();
-            int qty = p.getQuantity() == null ? 0 : p.getQuantity();
-            BigDecimal minUnit = committed.stream()
-                    .filter(q -> no.equals(q.getProcessNo() == null ? 1 : q.getProcessNo()))
-                    .map(q -> unitPriceOf(q))
-                    .filter(u -> u != null && u.compareTo(BigDecimal.ZERO) > 0)
-                    .min(BigDecimal::compareTo)
-                    .orElse(BigDecimal.ZERO);
-            total = total.add(minUnit.multiply(BigDecimal.valueOf(qty)));
-        }
-        return total.setScale(2, java.math.RoundingMode.HALF_UP);
+        BigDecimal minUnit = committed.stream()
+                .map(this::unitPriceOf)
+                .filter(u -> u != null && u.compareTo(BigDecimal.ZERO) > 0)
+                .min(BigDecimal::compareTo)
+                .orElse(BigDecimal.ZERO);
+        int qty = d.getQuantity() == null ? 0 : d.getQuantity();
+        return minUnit.multiply(BigDecimal.valueOf(qty)).setScale(2, java.math.RoundingMode.HALF_UP);
     }
 
     private BigDecimal unitPriceOf(Quotation q) {

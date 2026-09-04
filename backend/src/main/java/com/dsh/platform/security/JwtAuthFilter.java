@@ -27,10 +27,16 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         if (header != null && header.startsWith("Bearer ")) {
             try {
                 LoginUser user = jwtUtil.parse(header.substring(7));
-                UserContext.set(user);
-                UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
-                        user, null, List.of(new SimpleGrantedAuthority("ROLE_" + user.getRole())));
-                SecurityContextHolder.getContext().setAuthentication(auth);
+                if (user.getRole() != null && !user.getRole().isBlank()) {
+                    UserContext.set(user);
+                    String role = user.getRole().trim();
+                    UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
+                            user, null, List.of(
+                                    new SimpleGrantedAuthority("ROLE_" + role),
+                                    new SimpleGrantedAuthority(role)
+                            ));
+                    SecurityContextHolder.getContext().setAuthentication(auth);
+                }
             } catch (Exception ignored) {
                 // token 无效则当作未登录
             }

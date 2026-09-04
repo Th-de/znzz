@@ -84,6 +84,7 @@ public class DemoAccountSeeder implements CommandLineRunner {
             existing.setRole(type);
             existing.setStatus("ENABLED");
             existing.setPassword(passwordEncoder.encode("123456"));
+            existing.setPasswordPlain("123456");
             userMapper.updateById(existing);
             return;
         }
@@ -102,6 +103,7 @@ public class DemoAccountSeeder implements CommandLineRunner {
         u.setTenantId(e.getId());
         u.setPhone(phone);
         u.setPassword(passwordEncoder.encode("123456"));
+        u.setPasswordPlain("123456");
         u.setRole(type);
         u.setRealName(contact);
         u.setStatus("ENABLED");

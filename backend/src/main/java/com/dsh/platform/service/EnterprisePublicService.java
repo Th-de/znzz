@@ -2,6 +2,7 @@ package com.dsh.platform.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.dsh.platform.common.BizException;
+import com.dsh.platform.domain.credit.SurveyScores;
 import com.dsh.platform.entity.CreditEvent;
 import com.dsh.platform.entity.Device;
 import com.dsh.platform.entity.Enterprise;
@@ -110,7 +111,7 @@ public class EnterprisePublicService {
             double sum = 0;
             int c = 0;
             for (Survey s : surveys) {
-                Double avg = avgSurvey(s.getScoresJson());
+                Double avg = SurveyScores.overallStars(s.getScoresJson(), objectMapper);
                 if (avg != null) {
                     sum += avg;
                     c++;
@@ -153,25 +154,5 @@ public class EnterprisePublicService {
         } catch (Exception ignored) {
         }
         return names;
-    }
-
-    private Double avgSurvey(String scoresJson) {
-        if (scoresJson == null || scoresJson.isBlank()) {
-            return null;
-        }
-        try {
-            JsonNode n = objectMapper.readTree(scoresJson);
-            double sum = 0;
-            int c = 0;
-            for (String k : List.of("q1", "q2", "q3", "q4")) {
-                if (n.has(k)) {
-                    sum += n.path(k).asDouble();
-                    c++;
-                }
-            }
-            return c == 0 ? null : sum / c;
-        } catch (Exception e) {
-            return null;
-        }
     }
 }
