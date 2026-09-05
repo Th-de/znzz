@@ -43,7 +43,10 @@
           按各工序最低单价预估总价：<b>￥{{ money(demand.estimatedTotal) }}</b>，
           继续需冻结 5% 保证金 <b>￥{{ money(buyerDeposit) }}</b>（尾款抵扣，流单/验收剩余全退）。
         </div>
-        <div style="margin-top:12px"><CoverageBars :items="coverage" /></div>
+        <div style="margin-top:12px">
+          <div class="cov-label">零件覆盖</div>
+          <CoverageBars :items="coverage" />
+        </div>
       </el-card>
       <el-descriptions :column="2" border style="margin-top:12px">
         <el-descriptions-item label="标题" :span="2">{{ demand.title }}</el-descriptions-item>
@@ -52,12 +55,22 @@
         <el-descriptions-item label="提交时间">{{ fmtTime(demand.createdAt) }}</el-descriptions-item>
         <el-descriptions-item label="发布/意向开始">{{ fmtTime(demand.publishedAt) }}</el-descriptions-item>
         <el-descriptions-item label="硬交期">{{ demand.deadlineHard }}</el-descriptions-item>
-        <el-descriptions-item label="弹性交期">{{ demand.deadlineFlexible || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="分期交付">{{ demand.deliveryTimes || 1 }} 期</el-descriptions-item>
         <el-descriptions-item label="交付地址" :span="2">{{ demand.deliveryAddress }}</el-descriptions-item>
         <el-descriptions-item label="来源需求">{{ demand.sourceDemandId || '-' }}</el-descriptions-item>
         <el-descriptions-item label="取消原因">{{ demand.cancelReason || '-' }}</el-descriptions-item>
         <el-descriptions-item label="备注" :span="2">{{ demand.remark || '-' }}</el-descriptions-item>
       </el-descriptions>
+      <h4>分期交付计划</h4>
+      <el-table v-if="deliveryRows.length" :data="deliveryRows" border size="small">
+        <el-table-column label="期次" width="90">
+          <template #default="{ $index }">第{{ $index + 1 }}期</template>
+        </el-table-column>
+        <el-table-column prop="percent" label="交付比例" width="120" />
+        <el-table-column prop="startAt" label="开始日期" width="140" />
+        <el-table-column prop="endAt" label="截止日期" min-width="140" />
+      </el-table>
+      <p v-else class="hint">未填写分期计划</p>
       <el-collapse style="margin:12px 0">
         <el-collapse-item title="技术要求（材料/公差/热处理等）" name="tech">
           <el-descriptions :column="2" border>
@@ -140,7 +153,7 @@
           <template #default="{ row }">
             <div v-if="!(row.quotes || []).length">-</div>
             <div v-for="q in (row.quotes || [])" :key="q.processNo" class="hint">
-              {{ q.processName }}：¥{{ q.unitPrice ?? '-' }}/件 · {{ q.minQty ?? 1 }}~{{ q.maxQty ?? '-' }} 件 · {{ q.promisedDays ?? '-' }} 天
+              {{ q.processName }}：¥{{ q.unitPrice ?? '-' }}/件 · {{ q.minQty ?? 1 }}~{{ q.maxQty ?? '-' }} 件
             </div>
           </template>
         </el-table-column>
@@ -174,28 +187,22 @@
           <el-tag type="info" size="small" style="margin-left:8px">不可修改</el-tag>
         </template>
         <p class="hint" style="margin-top:0">{{ confirmedPlan.hint }}</p>
-        <div v-for="g in confirmedPlan.groups" :key="g.processNo" class="proc-block">
-          <div class="proc-head">
-            <span class="proc-title">{{ g.processName }} / {{ g.need }}件</span>
-            <span class="alloc-ok">已分配 {{ g.allocated }} / {{ g.need }}</span>
-          </div>
-          <div class="line head">
-            <span class="col-fac">工厂</span>
-            <span class="col-range">承接区间</span>
-            <span class="col-qty">分量(件)</span>
-            <span class="col-amt">金额</span>
-          </div>
-          <div v-for="(line, i) in g.lines" :key="g.processNo + '-' + i" class="line">
-            <span class="col-fac">
-              <el-button v-if="line.factoryId" link type="primary" @click="openFactoryById(line.factoryId)">
-                {{ line.factoryName || ('工厂-' + line.factoryId) }}
-              </el-button>
-              <span v-else>{{ line.factoryName || '-' }}</span>
-            </span>
-            <span class="col-range">{{ (line.minQty ?? '-') + ' ~ ' + (line.maxQty ?? '-') }}</span>
-            <span class="col-qty">{{ line.quantity ?? '-' }}</span>
-            <span class="col-amt">{{ money(lineAmount(line)) }}</span>
-          </div>
+        <div class="line head">
+          <span class="col-fac">工厂</span>
+          <span class="col-range">承接区间</span>
+          <span class="col-qty">分配(件)</span>
+          <span class="col-amt">小计</span>
+        </div>
+        <div v-for="line in confirmedPlan.groups" :key="line.factoryId" class="line">
+          <span class="col-fac">
+            <el-button v-if="line.factoryId" link type="primary" @click="openFactoryById(line.factoryId)">
+              {{ line.factoryName || ('工厂-' + line.factoryId) }}
+            </el-button>
+            <span v-else>{{ line.factoryName || '-' }}</span>
+          </span>
+          <span class="col-range">{{ (line.minQty ?? '-') + ' ~ ' + (line.maxQty ?? '-') }}</span>
+          <span class="col-qty">{{ line.quantity ?? '-' }}</span>
+          <span class="col-amt">{{ money(line.price) }}</span>
         </div>
         <div class="total-bar">
           <span>总计金额</span>
@@ -263,6 +270,30 @@ const factories = ref([])
 const factoryOpen = ref(false)
 const factoryInfo = ref({})
 const showFactoryQuotes = computed(() => ['SOLUTION_GENERATED', 'SOLUTION_CONFIRMED', 'SOLUTION_SELECTED', 'CONTRACTED', 'IN_PRODUCTION', 'COMPLETED'].includes(demand.value.status))
+const deliveryRows = computed(() => {
+  try {
+    const arr = JSON.parse(demand.value.deliveryPlanJson || '[]')
+    if (!Array.isArray(arr)) return []
+    return arr.map((x) => {
+      if (x == null) return { percent: '-', startAt: '-', endAt: '-' }
+      let percent = '-'
+      if (x.percent != null && Number(x.percent) > 0) {
+        percent = Number(x.percent) + '%'
+      } else if (String(x.text || '').includes('%')) {
+        percent = x.text
+      } else if (x.qty != null && Number(x.qty) > 0 && Number(x.qty) <= 100) {
+        percent = Number(x.qty) + '%'
+      }
+      return {
+        percent,
+        startAt: String(x.startAt || '').slice(0, 10) || '-',
+        endAt: String(x.endAt || '').slice(0, 10) || '-',
+      }
+    })
+  } catch {
+    return []
+  }
+})
 const nextHint = computed(() => {
   const s = demand.value.status
   return ({
@@ -333,33 +364,32 @@ const confirmedPlan = computed(() => {
   if (!picked) return { groups: [], total: 0, hint: '' }
   const items = parseCombo(picked.finalComboJson)
   const map = new Map()
-  for (const p of processes.value || []) {
-    map.set(p.processNo, {
-      processNo: p.processNo,
-      processName: p.processName || ('工序' + p.processNo),
-      need: Number(p.quantity) || 0,
-      allocated: 0,
-      lines: [],
-    })
-  }
   for (const it of items) {
-    const no = it.processNo
-    if (!map.has(no)) {
-      map.set(no, {
-        processNo: no,
-        processName: it.processName || ('工序' + no),
-        need: 0,
-        allocated: 0,
-        lines: [],
+    const fid = it.factoryId
+    if (fid == null) continue
+    const qty = Number(it.quantity) || 0
+    const unit = Number(it.unitPrice)
+    if (!map.has(fid)) {
+      map.set(fid, {
+        factoryId: fid,
+        factoryName: it.factoryName,
+        minQty: it.minQty,
+        maxQty: it.maxQty,
+        unitPrice: Number.isFinite(unit) ? unit : null,
+        quantity: qty,
       })
+    } else {
+      const g = map.get(fid)
+      if (qty > g.quantity) g.quantity = qty
     }
-    const g = map.get(no)
-    g.lines.push(it)
-    g.allocated += Number(it.quantity) || 0
-    if (!g.need) g.need = g.allocated
   }
-  const groups = [...map.values()].filter(g => g.lines.length)
-  const total = items.reduce((s, it) => s + lineAmount(it), 0)
+  const groups = [...map.values()].map(g => ({
+    ...g,
+    price: g.unitPrice != null && g.quantity
+      ? Math.round(g.unitPrice * g.quantity * 100) / 100
+      : 0,
+  }))
+  const total = groups.reduce((s, g) => s + (Number(g.price) || 0), 0)
   const kind = (picked.type || '').startsWith('AI') ? '已按推荐方案确认' : '已按自选分配确认'
   return { groups, total, hint: kind + '，等待运营派单后进入履约。确认后不可再改。' }
 })
@@ -499,6 +529,7 @@ onMounted(load)
 .now { margin-bottom: 8px; }
 .deposit-box { margin-top: 10px; padding: 10px 12px; background: #fdf6ec; border-radius: 6px; color: #b88230; font-size: 13px; }
 .now-title { font-weight: 600; margin-bottom: 8px; }
+.cov-label { font-size: 13px; color: #303133; margin-bottom: 6px; }
 .actions { margin-bottom: 12px; }
 h4 { margin: 16px 0 8px; }
 .file-preview { white-space: pre-wrap; word-break: break-word; margin: 0; font-size: 13px; line-height: 1.6; }

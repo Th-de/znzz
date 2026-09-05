@@ -3,6 +3,8 @@ package com.dsh.platform.controller;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.dsh.platform.common.R;
 import com.dsh.platform.domain.notify.NotifyActionResolver;
+import com.dsh.platform.domain.notify.NotifyDemandService;
+import com.dsh.platform.dto.NotifyDemandRow;
 import com.dsh.platform.dto.NotifyView;
 import com.dsh.platform.dto.OrderDtos.TodoItem;
 import com.dsh.platform.service.TodoService;
@@ -30,6 +32,7 @@ public class NotifyController {
     private final EnterpriseMapper enterpriseMapper;
     private final CreditEventMapper creditEventMapper;
     private final NotifyActionResolver notifyActionResolver;
+    private final NotifyDemandService notifyDemandService;
     private final TodoService todoService;
 
     @GetMapping("/todos")
@@ -44,6 +47,11 @@ public class NotifyController {
                 .orderByDesc(Notify::getId));
         String role = UserContext.role();
         return R.ok(list.stream().map(n -> notifyActionResolver.view(n, role)).toList());
+    }
+
+    @GetMapping("/notify-demands")
+    public R<List<NotifyDemandRow>> notifyDemands() {
+        return R.ok(notifyDemandService.mine());
     }
 
     @GetMapping("/funds")

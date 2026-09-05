@@ -18,6 +18,7 @@ public class SiteNotify {
 
     private final NotifyMapper notifyMapper;
     private final SysUserMapper sysUserMapper;
+    private final NotifyActionResolver notifyActionResolver;
 
     public void send(Long tenantId, String title, String content) {
         if (tenantId == null) {
@@ -25,6 +26,7 @@ public class SiteNotify {
         }
         Notify n = new Notify();
         n.setTenantId(tenantId);
+        n.setDemandId(notifyActionResolver.resolveDemandId(title));
         n.setTitle(title);
         n.setContent(content);
         n.setIsRead(0);

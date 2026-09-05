@@ -352,12 +352,14 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE TABLE IF NOT EXISTS notify (
   id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   tenant_id  BIGINT UNSIGNED NOT NULL,
+  demand_id  BIGINT UNSIGNED DEFAULT NULL COMMENT '关联需求，便于按需求聚合通知',
   title      VARCHAR(128) NOT NULL,
   content    VARCHAR(512) DEFAULT NULL,
   is_read    TINYINT NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  KEY idx_tenant (tenant_id)
+  KEY idx_tenant (tenant_id),
+  KEY idx_tenant_demand (tenant_id, demand_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='站内信表：系统通知推送';
 
 -- ===================== 初始化超级管理员 =====================

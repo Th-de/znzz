@@ -32,12 +32,10 @@
             <template v-if="row.status==='FACTORY_THINKING' && row.applied">
               <el-button v-if="row.myQuoteStatus==='LOCKED'" size="small" disabled>已报价</el-button>
               <template v-else>
-                <el-button size="small" type="warning" @click="openCommit(row)">继续报价</el-button>
+                <el-button size="small" type="warning" @click="openCommit(row)">填报报价</el-button>
                 <el-button size="small" type="danger" @click="exitThinking(row)">取消报名</el-button>
               </template>
             </template>
-            <el-button v-if="row.status==='LOCKING' && row.applied && row.myQuoteStatus!=='LOCKED'"
-                       size="small" type="warning" @click="openCommit(row)">继续报价</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -77,6 +75,8 @@
           <el-table-column prop="processName" label="工序" />
           <el-table-column prop="requirement" label="要求" />
         </el-table>
+        <h4 style="margin:14px 0 6px">零件覆盖</h4>
+        <CoverageBars :items="detailCoverage" />
         <h4 style="margin:14px 0 6px">图纸/附件</h4>
         <div v-if="(detail.attachments || []).length">
           <div v-for="a in detail.attachments" :key="a.id">
@@ -88,8 +88,15 @@
 
       <el-dialog v-model="dialog" :title="'意向报名 - ' + current.title" width="640px" :close-on-click-modal="false">
         <p class="tip">一单一品：报名即承接该需求全部工序，按需求件数报价。意向金按单只收 1000 元。</p>
-        <p class="tip">工艺路线：{{ processes.map(p => p.processName).join('、') || '整单' }}。质检与交付：<InspectDeliveryRules /></p>
+        <h4>工序</h4>
+        <el-table :data="processes" size="small" border style="margin-bottom:12px">
+          <el-table-column prop="processNo" label="#" width="50" />
+          <el-table-column prop="processName" label="工序" />
+          <el-table-column prop="requirement" label="要求" />
+        </el-table>
+        <h4>零件覆盖</h4>
         <CoverageBars :items="coverage" />
+        <p class="tip">质检与交付：<InspectDeliveryRules /></p>
         <el-form label-width="110px">
           <el-form-item label="最小承接量"><el-input-number v-model="wholeQty.minQty" :min="1" /></el-form-item>
           <el-form-item label="最大承接量"><el-input-number v-model="wholeQty.maxQty" :min="1" /></el-form-item>
@@ -103,8 +110,8 @@
         </template>
       </el-dialog>
 
-      <el-dialog v-model="commitDialog" title="继续报价" width="560px" :close-on-click-modal="false">
-        <p class="tip">报该品全部工序的一件单价。承接量沿用意向期，提交后按「单价 × 承接量」冻结 5% 保证金（只冻一次）。</p>
+      <el-dialog v-model="commitDialog" title="填报报价" width="560px" :close-on-click-modal="false">
+        <p class="tip">报该品全部工序的一件单价。承接量沿用意向期。工期与最低良率按买家发布需求执行，无需填写。提交后按「单价 × 承接量」冻结 5% 保证金（只冻一次）。</p>
         <el-form label-width="120px">
           <el-form-item label="实施方案" required>
             <el-input v-model="commitForm.planText" type="textarea" :rows="3"
@@ -114,12 +121,6 @@
           <el-form-item label="承接量">{{ commitQty }} 件</el-form-item>
           <el-form-item label="单价(元/件)" required>
             <el-input-number v-model="commitUnit" :min="0.01" :precision="2" />
-          </el-form-item>
-          <el-form-item label="工期(天)">
-            <el-input-number v-model="commitDays" :min="1" />
-          </el-form-item>
-          <el-form-item label="承诺良率">
-            <el-input-number v-model="commitYield" :min="0" :max="1" :step="0.01" />
           </el-form-item>
         </el-form>
         <div class="summary">
@@ -161,14 +162,13 @@ const commitDialog = ref(false)
 const current = ref({})
 const detail = ref({})
 const coverage = ref([])
+const detailCoverage = ref([])
 const selectedProcessNos = ref([])
 const itemForms = reactive({})
 const wholeQty = reactive({ minQty: null, maxQty: null })
 const confirmIntent = ref(false)
 const commitForm = reactive({ demandId: null, planText: '', deliveryPlan: [], items: [], confirm: false })
 const commitUnit = ref(null)
-const commitDays = ref(10)
-const commitYield = ref(0.98)
 const buyerDeliveryPlan = ref([])
 
 const commitQty = computed(() => commitForm.items[0]?.quantity || 0)
@@ -218,6 +218,12 @@ async function loadProcesses(row) {
 async function openDetail(row) {
   const d = await api.get(`/demand/${row.id}`)
   detail.value = d
+  try {
+    const cov = await getCoverage(row.id)
+    detailCoverage.value = cov.processes || []
+  } catch {
+    detailCoverage.value = []
+  }
   detailDialog.value = true
 }
 
@@ -271,11 +277,9 @@ async function openCommit(row) {
   commitForm.planText = ''
   commitForm.deliveryPlan = Array.from({ length: times }, () => '')
   commitForm.items = mine.map(q => ({
-    processNo: q.processNo, quantity: q.maxQty, unitPrice: null, promisedDays: 10, yieldRate: 0.98,
+    processNo: q.processNo, quantity: q.maxQty, unitPrice: null,
   }))
   commitUnit.value = null
-  commitDays.value = 10
-  commitYield.value = 0.98
   commitForm.confirm = false
   commitDialog.value = true
 }
@@ -288,7 +292,6 @@ async function submitCommit() {
     planText: commitForm.planText,
     items: commitForm.items.map(it => ({
       processNo: it.processNo, unitPrice: commitUnit.value,
-      yieldRate: commitYield.value, promisedDays: commitDays.value,
     })),
   })
   ElMessage.success('方案已提交，保证金已冻结')

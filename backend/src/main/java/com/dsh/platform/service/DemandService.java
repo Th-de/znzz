@@ -7,6 +7,7 @@ import com.dsh.platform.domain.coverage.CoverageView;
 import com.dsh.platform.domain.coverage.ProcessCoverageService;
 import com.dsh.platform.domain.inspect.InspectPrices;
 import com.dsh.platform.domain.fund.FundLedger;
+import com.dsh.platform.domain.notify.SiteNotify;
 import com.dsh.platform.domain.status.DemandStateMachine;
 import com.dsh.platform.domain.status.DemandStatus;
 import com.dsh.platform.dto.DemandDtos.*;
@@ -27,8 +28,10 @@ import org.springframework.util.StringUtils;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -43,9 +46,9 @@ public class DemandService {
     private final FundLedger fundLedger;
     private final ProcessCoverageService coverageService;
     private final QuotationMapper quotationMapper;
-    private final DeviceService deviceService;
     private final AuditService auditService;
     private final EnterprisePublicService enterprisePublicService;
+    private final SiteNotify siteNotify;
 
     @Transactional
     public Long publish(PublishRequest req) {
@@ -97,8 +100,8 @@ public class DemandService {
         }
         Demand d = get(demandId);
         DemandStatus cur = DemandStatus.of(d.getStatus());
-        if (cur != DemandStatus.PENDING_AUDIT && cur != DemandStatus.PUBLISHED) {
-            throw new BizException("仅待审核或意向期的需求可以退回");
+        if (cur != DemandStatus.PENDING_AUDIT) {
+            throw new BizException("仅待审核的需求可以退回修改，意向期不可退回");
         }
         stateMachine.transit(d, DemandStatus.RETURNED);
         d.setReturnReason(req.reason().trim());
@@ -108,7 +111,6 @@ public class DemandService {
                 .set(Demand::getIntentionEndAt, null)
                 .set(Demand::getPublishedAt, null));
         fundLedger.unfreezeIntentionsOfDemand(demandId);
-        deviceService.releaseByDemand(demandId);
     }
 
     @Transactional
@@ -126,8 +128,27 @@ public class DemandService {
         demandMapper.update(null, new LambdaUpdateWrapper<Demand>()
                 .eq(Demand::getId, d.getId())
                 .set(Demand::getIntentionEndAt, null));
+        notifyActiveFactories(d, "买家取消需求#" + demandId,
+                "买家已取消需求「" + d.getTitle() + "」，意向金将退回。");
+        siteNotify.send(d.getTenantId(), "需求已取消#" + demandId,
+                "需求「" + d.getTitle() + "」已取消。" + (StringUtils.hasText(d.getCancelReason())
+                        ? "原因：" + d.getCancelReason() : ""));
         fundLedger.unfreezeIntentionsOfDemand(demandId);
-        deviceService.releaseByDemand(demandId);
+    }
+
+    private void notifyActiveFactories(Demand d, String title, String content) {
+        List<Quotation> qs = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
+                .eq(Quotation::getDemandId, d.getId())
+                .in(Quotation::getStatus, "INTENTION", "LOCKED", "WIN"));
+        Set<Long> factories = new HashSet<>();
+        for (Quotation q : qs) {
+            if (q.getTenantId() != null) {
+                factories.add(q.getTenantId());
+            }
+        }
+        for (Long factoryId : factories) {
+            siteNotify.send(factoryId, title, content);
+        }
     }
 
     /** 兼容旧审核按钮：通过=发布，驳回=退回（无原因则拒绝）。 */
@@ -349,7 +370,7 @@ public class DemandService {
         d.setMinYield(InspectPrices.includesAql(InspectPrices.normalize(req.inspectMode())) ? null : req.minYield());
         d.setMinCreditScore(req.minCreditScore());
         d.setDeadlineHard(req.deadlineHard());
-        d.setDeadlineFlexible(req.deadlineFlexible());
+        d.setDeadlineFlexible(null);
         d.setDeliveryAddress(req.deliveryAddress().trim());
         d.setPackaging(req.packaging());
         d.setMultiProcess(1);
@@ -479,11 +500,27 @@ public class DemandService {
             throw new BizException("请为每一期填写交付时间（共 " + times + " 期）");
         }
         int percentSum = 0;
+        LocalDate prevEnd = null;
         for (int i = 0; i < times; i++) {
             var p = req.deliveryPlan().get(i);
             if (p == null || !StringUtils.hasText(p.startAt()) || !StringUtils.hasText(p.endAt())) {
                 throw new BizException("第 " + (i + 1) + " 期请填写开始时间和截止时间");
             }
+            LocalDate start;
+            LocalDate end;
+            try {
+                start = LocalDate.parse(p.startAt().trim().substring(0, Math.min(10, p.startAt().trim().length())));
+                end = LocalDate.parse(p.endAt().trim().substring(0, Math.min(10, p.endAt().trim().length())));
+            } catch (Exception e) {
+                throw new BizException("第 " + (i + 1) + " 期日期格式不正确");
+            }
+            if (end.isBefore(start)) {
+                throw new BizException("第 " + (i + 1) + " 期开始时间不能晚于截止时间");
+            }
+            if (i > 0 && !start.equals(prevEnd)) {
+                throw new BizException("第 " + (i + 1) + " 期开始时间必须等于第 " + i + " 期截止时间");
+            }
+            prevEnd = end;
             Integer percent = p.percent();
             if (percent == null && p.qty() != null && p.qty() >= 1 && p.qty() <= 100) {
                 percent = p.qty();
@@ -492,6 +529,9 @@ public class DemandService {
                 throw new BizException("第 " + (i + 1) + " 期请填写交付比例（1%～100%）");
             }
             percentSum += percent;
+        }
+        if (prevEnd == null || !prevEnd.equals(req.deadlineHard())) {
+            throw new BizException("最后一期截止时间必须等于硬交期");
         }
         if (percentSum != 100) {
             throw new BizException("各期交付比例之和必须为 100%");

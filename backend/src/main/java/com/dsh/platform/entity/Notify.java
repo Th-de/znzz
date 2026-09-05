@@ -13,6 +13,7 @@ public class Notify {
     @TableId(type = IdType.AUTO)
     private Long id;
     private Long tenantId;
+    private Long demandId;
     private String title;
     private String content;
     private Integer isRead;

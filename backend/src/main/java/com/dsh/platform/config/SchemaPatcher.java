@@ -61,6 +61,8 @@ public class SchemaPatcher {
                 "ALTER TABLE work_stage ADD COLUMN inspect_kind VARCHAR(16) NULL COMMENT '本轮检验 FAI/LOT'");
         patchColumn("work_stage", "fai_status",
                 "ALTER TABLE work_stage ADD COLUMN fai_status VARCHAR(16) NULL COMMENT '首件 NONE/PASS/FAIL'");
+        patchColumn("notify", "demand_id",
+                "ALTER TABLE notify ADD COLUMN demand_id BIGINT UNSIGNED NULL COMMENT '关联需求' AFTER tenant_id");
         backfillDeliveredQty();
     }
 

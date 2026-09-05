@@ -125,7 +125,8 @@ public class DeadlineScheduler {
                 String title = "工单逾期#" + ws.getId();
                 long days = ChronoUnit.DAYS.between(ws.getPromisedDate(), today);
                 String content = "工序「" + ws.getProcessName() + "」承诺交期 "
-                        + ws.getPromisedDate() + "，已逾期 " + days + " 天。";
+                        + ws.getPromisedDate() + "，已逾期 " + days
+                        + " 天。到期未完成请买家确定返工期限后开启返工工单，不延长原交期。";
                 if (!siteNotify.exists(ws.getTenantId(), title)) {
                     siteNotify.send(ws.getTenantId(), title, content);
                 }

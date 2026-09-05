@@ -3,18 +3,17 @@ package com.dsh.platform.domain.solution;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.dsh.platform.common.BizException;
 import com.dsh.platform.domain.credit.SurveyScores;
+import com.dsh.platform.domain.inspect.InspectPassRate;
 import com.dsh.platform.entity.CreditEvent;
 import com.dsh.platform.entity.Demand;
 import com.dsh.platform.entity.Device;
 import com.dsh.platform.entity.Enterprise;
-import com.dsh.platform.entity.Inspection;
 import com.dsh.platform.entity.Process;
 import com.dsh.platform.entity.Quotation;
 import com.dsh.platform.entity.Survey;
 import com.dsh.platform.entity.WorkStage;
 import com.dsh.platform.mapper.CreditEventMapper;
 import com.dsh.platform.mapper.EnterpriseMapper;
-import com.dsh.platform.mapper.InspectionMapper;
 import com.dsh.platform.mapper.ProcessMapper;
 import com.dsh.platform.mapper.QuotationMapper;
 import com.dsh.platform.mapper.SurveyMapper;
@@ -52,7 +51,7 @@ public class AiSolutionGenerator {
     private final EnterpriseMapper enterpriseMapper;
     private final CreditEventMapper creditEventMapper;
     private final WorkStageMapper workStageMapper;
-    private final InspectionMapper inspectionMapper;
+    private final InspectPassRate inspectPassRate;
     private final SurveyMapper surveyMapper;
     private final DeviceService deviceService;
     private final ObjectMapper objectMapper;
@@ -97,7 +96,7 @@ public class AiSolutionGenerator {
             throw new BizException("没有锁定报价，无法生成 AI 方案");
         }
         String content = callModel(buildPrompt(demand, processes, locked));
-        List<SolutionCombo> parsed = parseAndHydrate(content, processes, locked);
+        List<SolutionCombo> parsed = parseAndHydrate(content, demand, processes, locked);
         if (parsed.isEmpty()) {
             throw new BizException("AI 方案无法落到已锁定报价，已放弃");
         }
@@ -107,12 +106,12 @@ public class AiSolutionGenerator {
     private String buildPrompt(Demand demand, List<Process> processes, List<Quotation> locked) {
         StringBuilder sb = new StringBuilder();
         sb.append("你是制造业订单评审专家。综合产能可行性、历史履约记录、信用状况、质量表现、价格与工期，");
-        sb.append("为每个并行分包分配最合适的工厂，产出完整可执行的履约方案。\n");
-        sb.append("各工序是并行分包批次，不是同一批零件的流水线前后序；工厂各自独立制造并交货，互不等待。\n");
+        sb.append("按零件件数把整单需求分给工厂，产出完整可执行的履约方案。\n");
+        sb.append("一单一品：分给某厂的件数由该厂完成全部工序，不要按工序拆分件数，也不要按工序做小计。\n");
         sb.append("只能从候选工厂里选，不能发明工厂、价格或承接量。只返回 JSON。\n");
-        sb.append("同一分包可以拆给多家工厂按量分摊：该工序所有分配量之和必须等于该工序数量，");
+        sb.append("可把总需求件数拆给多家工厂：各厂 quantity 之和必须等于需求数量，");
         sb.append("每家分配量不得低于该厂约定的最小承接量 minQty，也不得超过该厂最大承接量 maxQty。");
-        sb.append("若某厂 minQty 大于本工序剩余可分配量，则不要选该厂。全部工序数量之和等于需求总数量。\n");
+        sb.append("若某厂 minQty 大于剩余可分配量，则不要选该厂。单价是该品一件的价格（含全部工序）。\n");
         sb.append("产能核算：需要的日产出 ≈ 分配数量 ÷ 承诺工期（天）。对比该厂勾选设备的日产能合计，判断是否可行、余量多少。\n");
         sb.append("生成 1~3 套最优推荐方案（至少 1 套，视候选丰富程度而定），每套给出总费用与分阶段交付节点, 如果只有一个阶段，则不要分阶段写明。\n\n");
         if (demand.getDeliveryTimes() != null && demand.getDeliveryTimes() > 0) {
@@ -178,10 +177,10 @@ public class AiSolutionGenerator {
         }
         sb.append("\n输出格式：{\"schemes\":[{\"type\":\"AI1\",\"rationale\":\"整套方案总述\",\"risks\":[\"风险提示\"],");
         sb.append("\"milestones\":[\"第1期：完成粗加工600件并交检\",\"第2期：…\"],");
-        sb.append("\"items\":[{\"processNo\":1,\"factoryId\":15,\"quantity\":600,\"reason\":\"选这家承接600件的具体理由\",");
+        sb.append("\"items\":[{\"factoryId\":15,\"quantity\":600,\"reason\":\"选这家承接600件的具体理由\",");
         sb.append("\"capacityCheck\":\"该厂勾选设备日产能合计300件/天，分配600件需2天+，工期10天余量充足\"}]}]}\n");
-        sb.append("type 依次为 AI1/AI2/AI3/AI4/AI5。每套必须覆盖全部工序且各工序 quantity 合计=工序数量；");
-        sb.append("factoryId 必须来自候选，且 minQty<=quantity<=maxQty（minQty 为空时按 1）。每个 item 必须写 quantity、reason 和 capacityCheck。");
+        sb.append("type 依次为 AI1/AI2/AI3/AI4/AI5。每套 items 按工厂写一行，quantity 为该厂承接零件数，合计必须等于需求数量；");
+        sb.append("不要按工序拆行。factoryId 必须来自候选，且 minQty<=quantity<=maxQty（minQty 为空时按 1）。每个 item 必须写 quantity、reason 和 capacityCheck。");
         sb.append("单价用候选 unitPrice，不要自编。milestones 按买家分期要求给出每阶段任务与交付节点。");
         return sb.toString();
     }
@@ -215,15 +214,11 @@ public class AiSolutionGenerator {
         List<WorkStage> factoryStages = workStageMapper.selectList(new LambdaQueryWrapper<WorkStage>()
                 .eq(WorkStage::getTenantId, tenantId));
         List<Long> stageIds = factoryStages.stream().map(WorkStage::getId).toList();
-        String passRate = "暂无质检记录";
-        if (!stageIds.isEmpty()) {
-            List<Inspection> ins = inspectionMapper.selectList(new LambdaQueryWrapper<Inspection>()
-                    .in(Inspection::getStageId, stageIds));
-            if (!ins.isEmpty()) {
-                long pass = ins.stream().filter(i -> "PASS".equals(i.getResult())).count();
-                passRate = "质检合格率" + String.format("%.0f%%", pass * 100.0 / ins.size()) + "（" + pass + "/" + ins.size() + "）";
-            }
-        }
+        InspectPassRate.Stats inspectStats = inspectPassRate.ofSettledStages(factoryStages);
+        String passRate = inspectStats.percent() == null
+                ? "暂无质检记录"
+                : ("质检合格率" + String.format("%.1f%%", inspectStats.percent())
+                + "（" + inspectStats.pass() + "/" + inspectStats.judged() + "）");
         String surveyAvg = "暂无评价";
         if (!stageIds.isEmpty()) {
             List<Survey> surveys = surveyMapper.selectList(new LambdaQueryWrapper<Survey>()
@@ -291,7 +286,7 @@ public class AiSolutionGenerator {
         }
     }
 
-    private List<SolutionCombo> parseAndHydrate(String content, List<Process> processes, List<Quotation> locked) {
+    private List<SolutionCombo> parseAndHydrate(String content, Demand demand, List<Process> processes, List<Quotation> locked) {
         JsonNode root;
         try {
             String json = extractJson(content);
@@ -303,47 +298,19 @@ public class AiSolutionGenerator {
         if (!schemes.isArray()) {
             return List.of();
         }
+        int demandQty = demand.getQuantity() == null ? 0 : demand.getQuantity();
         List<SolutionCombo> result = new ArrayList<>();
         int i = 1;
         for (JsonNode scheme : schemes) {
             if (result.size() >= 5) {
                 break;
             }
-            List<Map<String, Object>> items = new ArrayList<>();
-            boolean ok = true;
             JsonNode arr = scheme.path("items");
             if (!arr.isArray()) {
                 continue;
             }
-            for (Process p : processes) {
-                int need = p.getQuantity() == null ? 0 : p.getQuantity();
-                int allocated = 0;
-                List<Map<String, Object>> processItems = new ArrayList<>();
-                for (JsonNode it : arr) {
-                    if (p.getProcessNo() == null || p.getProcessNo() != it.path("processNo").asInt()) {
-                        continue;
-                    }
-                    Long factoryId = it.path("factoryId").asLong();
-                    int qty = it.path("quantity").asInt(0);
-                    if (qty <= 0) {
-                        qty = need; // 兼容 AI 未给量：单厂承接全量
-                    }
-                    Quotation q = findLocked(locked, factoryId, p.getProcessNo(), qty);
-                    if (q == null) {
-                        processItems.clear();
-                        break;
-                    }
-                    allocated += qty;
-                    processItems.add(hydrate(p, q, qty,
-                            it.path("reason").asText(""), it.path("capacityCheck").asText("")));
-                }
-                if (processItems.isEmpty() || allocated != need) {
-                    ok = false;
-                    break;
-                }
-                items.addAll(processItems);
-            }
-            if (!ok || items.isEmpty()) {
+            List<Map<String, Object>> items = hydrateByFactory(arr, demandQty, processes, locked);
+            if (items.isEmpty()) {
                 continue;
             }
             String type = scheme.path("type").asText("AI" + i);
@@ -354,6 +321,47 @@ public class AiSolutionGenerator {
             i++;
         }
         return result;
+    }
+
+    private List<Map<String, Object>> hydrateByFactory(JsonNode arr, int demandQty,
+            List<Process> processes, List<Quotation> locked) {
+        Map<Long, Integer> qtyByFactory = new LinkedHashMap<>();
+        Map<Long, String[]> meta = new LinkedHashMap<>();
+        for (JsonNode it : arr) {
+            long factoryId = it.path("factoryId").asLong(0);
+            if (factoryId <= 0) {
+                continue;
+            }
+            int qty = it.path("quantity").asInt(0);
+            if (qty <= 0) {
+                qty = demandQty;
+            }
+            Integer held = qtyByFactory.get(factoryId);
+            if (held == null) {
+                qtyByFactory.put(factoryId, qty);
+                meta.put(factoryId, new String[]{it.path("reason").asText(""), it.path("capacityCheck").asText("")});
+            } else if (qty > held) {
+                qtyByFactory.put(factoryId, qty);
+            }
+        }
+        int sum = qtyByFactory.values().stream().mapToInt(Integer::intValue).sum();
+        if (qtyByFactory.isEmpty() || sum != demandQty) {
+            return List.of();
+        }
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (Map.Entry<Long, Integer> e : qtyByFactory.entrySet()) {
+            Long factoryId = e.getKey();
+            int qty = e.getValue();
+            String[] m = meta.get(factoryId);
+            for (Process p : processes) {
+                Quotation q = findLocked(locked, factoryId, p.getProcessNo(), qty);
+                if (q == null) {
+                    return List.of();
+                }
+                items.add(hydrate(p, q, qty, m[0], m[1]));
+            }
+        }
+        return items;
     }
 
     private Map<String, Object> hydrate(Process p, Quotation q, int quantity, String reason, String capacityCheck) {

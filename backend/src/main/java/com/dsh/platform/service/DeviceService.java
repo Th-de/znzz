@@ -4,10 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.dsh.platform.common.BizException;
 import com.dsh.platform.entity.Device;
 import com.dsh.platform.entity.Enterprise;
-import com.dsh.platform.entity.Quotation;
 import com.dsh.platform.mapper.DeviceMapper;
 import com.dsh.platform.mapper.EnterpriseMapper;
-import com.dsh.platform.mapper.QuotationMapper;
 import com.dsh.platform.security.UserContext;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -27,19 +25,11 @@ public class DeviceService {
 
     private final DeviceMapper deviceMapper;
     private final EnterpriseMapper enterpriseMapper;
-    private final QuotationMapper quotationMapper;
     private final ObjectMapper objectMapper;
 
     public List<Device> listMine() {
         return deviceMapper.selectList(new LambdaQueryWrapper<Device>()
                 .eq(Device::getTenantId, UserContext.tenantId())
-                .orderByDesc(Device::getId));
-    }
-
-    public List<Device> listIdleMine() {
-        return deviceMapper.selectList(new LambdaQueryWrapper<Device>()
-                .eq(Device::getTenantId, UserContext.tenantId())
-                .eq(Device::getStatus, "GOOD")
                 .orderByDesc(Device::getId));
     }
 
@@ -86,33 +76,6 @@ public class DeviceService {
         Device d = requireMine(id);
         d.setStatus(status);
         deviceMapper.updateById(d);
-    }
-
-    public void assertSelectable(Long tenantId, List<Long> deviceIds) {
-        if (deviceIds == null || deviceIds.isEmpty()) {
-            throw new BizException("请勾选投入的设备");
-        }
-        for (Long id : deviceIds) {
-            Device d = deviceMapper.selectById(id);
-            if (d == null || !tenantId.equals(d.getTenantId())) {
-                throw new BizException("设备不存在或不属于本厂");
-            }
-            if (!"IDLE".equals(d.getStatus())) {
-                throw new BizException("设备「" + d.getName() + "」当前不可用（" + d.getStatus() + "）");
-            }
-        }
-    }
-
-    /** 报名工序必须勾选匹配该工序的设备：无匹配设备不能报该工序。 */
-    public void assertMatchProcess(List<Long> deviceIds, String processName) {
-        if (processName == null || processName.isBlank() || "整单".equals(processName)) {
-            return;
-        }
-        List<Device> devices = byIds(deviceIds);
-        boolean matched = devices.stream().anyMatch(d -> matchesProcess(d, processName));
-        if (!matched) {
-            throw new BizException("所选设备均不适用工序「" + processName + "」，没有对应设备不能承接该工序");
-        }
     }
 
     /** 设备是否适用某工序：按 processNames 精确匹配，未维护时按设备名关键字兜底。 */
@@ -223,46 +186,6 @@ public class DeviceService {
         for (Device d : list) {
             d.setProcessNames(guessProcessNames(d.getName()));
             deviceMapper.updateById(d);
-        }
-    }
-
-    @Transactional
-    public void releaseByQuotations(List<Quotation> qs) {
-        if (qs == null) {
-            return;
-        }
-        for (Quotation q : qs) {
-            releaseByQuotation(q);
-        }
-    }
-
-    @Transactional
-    public void markInUseByQuotation(Quotation q) {
-        // 设备状态由工厂维护（良好/故障），报名不再占用设备
-    }
-
-    @Transactional
-    public void releaseByQuotation(Quotation q) {
-        // 设备状态由工厂维护，解绑报名不改状态
-    }
-
-    @Transactional
-    public void releaseByDemand(Long demandId) {
-        List<Quotation> qs = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
-                .eq(Quotation::getDemandId, demandId));
-        for (Quotation q : qs) {
-            releaseByQuotation(q);
-        }
-    }
-
-    @Transactional
-    public void releaseLosers(Long demandId, List<Long> winFactoryIds) {
-        List<Quotation> qs = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
-                .eq(Quotation::getDemandId, demandId));
-        for (Quotation q : qs) {
-            if (winFactoryIds == null || !winFactoryIds.contains(q.getTenantId())) {
-                releaseByQuotation(q);
-            }
         }
     }
 

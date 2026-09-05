@@ -92,20 +92,7 @@ public class BiddingService {
                     .in(Quotation::getStatus, "INTENTION", "LOCKED")
                     .last("limit 1"));
             if (existing != null) {
-                if ("LOCKED".equals(existing.getStatus()) || "FROZEN".equals(existing.getIntentionStatus())
-                        || "COVERED".equals(existing.getIntentionStatus())) {
-                    throw new BizException("工序 " + item.processNo() + " 已报名，请勿重复提交");
-                }
-                existing.setMinQty(item.minQty());
-                existing.setMaxQty(item.maxQty());
-                existing.setDeviceIdsJson(deviceService.writeIds(item.deviceIds() == null ? List.of() : item.deviceIds()));
-                quotationMapper.updateById(existing);
-                if (first == null) {
-                    first = existing;
-                } else {
-                    markCovered(existing);
-                }
-                continue;
+                throw new BizException("该需求已报名，如需改承接量请先取消报名再重新填报");
             }
             Quotation q = new Quotation();
             q.setTenantId(UserContext.tenantId());
@@ -130,6 +117,7 @@ public class BiddingService {
         Quotation paid = quotationMapper.selectOne(new LambdaQueryWrapper<Quotation>()
                 .eq(Quotation::getDemandId, req.demandId())
                 .eq(Quotation::getTenantId, UserContext.tenantId())
+                .eq(Quotation::getStatus, "INTENTION")
                 .eq(Quotation::getIntentionStatus, "FROZEN")
                 .ne(Quotation::getId, first.getId())
                 .last("limit 1"));
@@ -143,6 +131,15 @@ public class BiddingService {
     private void markCovered(Quotation q) {
         q.setIntentionStatus("COVERED");
         quotationMapper.updateById(q);
+    }
+
+    /** 工期、良率以买家发布需求为准，工厂报价不再填报。 */
+    private static Integer promisedDaysOf(Demand d) {
+        if (d == null || d.getDeadlineHard() == null) {
+            return null;
+        }
+        long days = java.time.temporal.ChronoUnit.DAYS.between(java.time.LocalDate.now(), d.getDeadlineHard());
+        return (int) Math.max(days, 1);
     }
 
     private List<IntentionItem> normalizeItems(IntentionRequest req) {
@@ -167,12 +164,12 @@ public class BiddingService {
         return items;
     }
 
-    /** 意向期/工厂思考期继续报价：实施方案+单价，冻结总报价 5% 保证金。分期交付由买家填写。 */
+    /** 工厂思考期填报：实施方案+单价，冻结总报价 5% 保证金。意向期只能报名，不能报价。 */
     @Transactional
     public void commit(CommitRequest req) {
         Demand d = demandMapper.selectById(req.demandId());
-        if (d == null || (!"FACTORY_THINKING".equals(d.getStatus()) && !"PUBLISHED".equals(d.getStatus()))) {
-            throw new BizException("当前阶段无法继续报价");
+        if (d == null || !"FACTORY_THINKING".equals(d.getStatus())) {
+            throw new BizException("意向期结束后进入工厂思考期才可填报报价");
         }
         if (req.planText() == null || req.planText().isBlank()) {
             throw new BizException("请填写实施方案");
@@ -194,21 +191,16 @@ public class BiddingService {
                 .findFirst()
                 .orElseThrow(() -> new BizException("请填写该品全部工序的单价"));
         boolean depositFrozen = false;
+        Integer promisedDays = promisedDaysOf(d);
+        BigDecimal yieldRate = d.getMinYield();
         for (Quotation q : mine) {
-            if (priced.promisedDays() != null && d.getDeadlineHard() != null) {
-                long maxDays = java.time.temporal.ChronoUnit.DAYS.between(
-                        java.time.LocalDate.now(), d.getDeadlineHard());
-                if (priced.promisedDays() > maxDays) {
-                    throw new BizException("承诺工期不能超过硬交期");
-                }
-            }
             int qty = q.getMaxQty() == null ? 0 : q.getMaxQty();
             BigDecimal total = priced.unitPrice().multiply(BigDecimal.valueOf(qty))
                     .setScale(2, java.math.RoundingMode.HALF_UP);
             q.setUnitPrice(priced.unitPrice());
             q.setPrice(total);
-            q.setYieldRate(priced.yieldRate());
-            q.setPromisedDays(priced.promisedDays());
+            q.setYieldRate(yieldRate);
+            q.setPromisedDays(promisedDays);
             q.setPlanText(req.planText().trim());
             q.setDeliveryPlanJson(deliveryJson);
             q.setStatus("LOCKED");
@@ -222,6 +214,8 @@ public class BiddingService {
         }
         siteNotify.send(d.getTenantId(), "工厂已填报#" + d.getId(),
                 "需求「" + d.getTitle() + "」有工厂完成思考期填报（详情在方案核定期可见）。");
+        siteNotify.send(UserContext.tenantId(), "报价已提交#" + d.getId(),
+                "你已提交需求「" + d.getTitle() + "」的报价与实施方案，保证金已冻结。");
     }
 
     /** 工厂思考期退出：不参加，退回意向金。 */
@@ -241,10 +235,11 @@ public class BiddingService {
         for (Quotation q : mine) {
             fundLedger.unfreezeIntention(q);
         }
-        deviceService.releaseByQuotations(mine);
         creditScoring.onFactoryThinkingExit(UserContext.tenantId(), demandId);
         siteNotify.send(d.getTenantId(), "有工厂退出#" + demandId,
                 "需求「" + d.getTitle() + "」有报名工厂在思考期退出，意向金已退回该厂。");
+        siteNotify.send(UserContext.tenantId(), "已取消报价#" + demandId,
+                "你已退出需求「" + d.getTitle() + "」的工厂思考期，意向金已退回。");
     }
 
     @Transactional
@@ -263,7 +258,7 @@ public class BiddingService {
         var started = paymentChannel.startIntention(q.getId(), fundLedger.intentionAmount());
         if (started.held()) {
             fundLedger.freezeIntention(q);
-            notifyCoverage(q.getDemandId());
+            notifyIntentionJoined(q);
             return new IntentionStart(q.getId(), true, null);
         }
         q.setIntentionStatus("PENDING_PAY");
@@ -285,18 +280,19 @@ public class BiddingService {
             throw new BizException("回调金额与意向金不一致");
         }
         fundLedger.freezeIntention(q);
-        notifyCoverage(q.getDemandId());
+        notifyIntentionJoined(q);
     }
 
-    private void notifyCoverage(Long demandId) {
-        Demand d = demandMapper.selectById(demandId);
+    private void notifyIntentionJoined(Quotation q) {
+        Demand d = demandMapper.selectById(q.getDemandId());
         if (d == null) {
             return;
         }
-        CoverageView view = coverageService.of(demandId);
-        siteNotify.send(d.getTenantId(), "覆盖度更新#" + demandId,
-                "需求「" + d.getTitle() + "」有新的工厂报名。" + coverageService.unsatisfiedText(view)
-                        + (view.allSatisfied() ? "各工序产能已满足。" : ""));
+        CoverageView view = coverageService.of(d.getId());
+        siteNotify.send(q.getTenantId(), "报名成功#" + d.getId(),
+                "你已报名需求「" + d.getTitle() + "」，意向金已冻结。意向期只能报名，思考期开始后才可填报报价。");
+        siteNotify.send(d.getTenantId(), "工厂已报名#" + d.getId(),
+                "需求「" + d.getTitle() + "」有工厂完成意向报名。" + coverageService.unsatisfiedText(view));
     }
 
     /** 取消报名：意向金按单收，一并取消该需求下本厂全部工序报名。 */
@@ -316,6 +312,14 @@ public class BiddingService {
         for (Quotation each : all) {
             fundLedger.unfreezeIntention(each);
         }
+        Demand d = demandMapper.selectById(q.getDemandId());
+        if (d != null) {
+            CoverageView view = coverageService.of(d.getId());
+            siteNotify.send(UserContext.tenantId(), "已取消报名#" + d.getId(),
+                    "你已取消需求「" + d.getTitle() + "」的意向报名，意向金已退回。意向期内可重新报名。");
+            siteNotify.send(d.getTenantId(), "工厂取消报名#" + d.getId(),
+                    "需求「" + d.getTitle() + "」有工厂取消意向报名。" + coverageService.unsatisfiedText(view));
+        }
     }
 
     @Transactional
@@ -329,6 +333,10 @@ public class BiddingService {
             throw new BizException("仅保证金期可取消锁定报价，将扣除保证金");
         }
         fundLedger.forfeitDeposit(q);
+        siteNotify.send(q.getTenantId(), "已取消锁定报价#" + d.getId(),
+                "你已取消需求「" + d.getTitle() + "」的锁定报价，保证金已按规则扣除。");
+        siteNotify.send(d.getTenantId(), "工厂取消锁定报价#" + d.getId(),
+                "需求「" + d.getTitle() + "」有工厂取消锁定报价。");
     }
 
     @Transactional
@@ -339,12 +347,6 @@ public class BiddingService {
         }
         if (req.price() == null || req.price().compareTo(BigDecimal.ZERO) <= 0) {
             throw new BizException("请填写锁定报价");
-        }
-        if (req.promisedDays() != null && d.getDeadlineHard() != null) {
-            long maxDays = java.time.temporal.ChronoUnit.DAYS.between(java.time.LocalDate.now(), d.getDeadlineHard());
-            if (req.promisedDays() > maxDays) {
-                throw new BizException("承诺工期不能超过硬交期");
-            }
         }
         Quotation q = quotationMapper.selectOne(new LambdaQueryWrapper<Quotation>()
                 .eq(Quotation::getDemandId, req.demandId())
@@ -357,14 +359,18 @@ public class BiddingService {
             throw new BizException("请先完成意向报名并支付意向金");
         }
         q.setPrice(req.price());
-        q.setYieldRate(req.yieldRate());
-        q.setPromisedDays(req.promisedDays());
+        q.setYieldRate(d.getMinYield());
+        q.setPromisedDays(promisedDaysOf(d));
         q.setMinQty(req.minQty());
         q.setMaxQty(req.maxQty());
         q.setStageCurveJson(req.stageCurveJson());
         q.setStatus("LOCKED");
         quotationMapper.updateById(q);
         fundLedger.freezeDeposit(q, req.price().multiply(depositRate));
+        siteNotify.send(UserContext.tenantId(), "已锁定报价#" + d.getId(),
+                "你已锁定需求「" + d.getTitle() + "」的报价，保证金已冻结。");
+        siteNotify.send(d.getTenantId(), "工厂已锁定报价#" + d.getId(),
+                "需求「" + d.getTitle() + "」有工厂完成锁定报价。");
         return q.getId();
     }
 
@@ -430,11 +436,14 @@ public class BiddingService {
     private String actionOf(Quotation q, Demand d, Contract c) {
         String st = d.getStatus();
         if ("PUBLISHED".equals(st)) {
+            if ("INVALID".equals(q.getStatus()) || "LOSE".equals(q.getStatus())) {
+                return "REAPPLY";
+            }
             if ("PENDING_PAY".equals(q.getIntentionStatus())) {
                 return "PAY";
             }
             if ("INTENTION".equals(q.getStatus()) && ("FROZEN".equals(q.getIntentionStatus()) || "COVERED".equals(q.getIntentionStatus()))) {
-                return "COMMIT";
+                return "WAIT_INTENTION";
             }
             return "NONE";
         }

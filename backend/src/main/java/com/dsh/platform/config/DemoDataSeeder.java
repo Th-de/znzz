@@ -132,7 +132,7 @@ public class DemoDataSeeder implements CommandLineRunner {
         d.setMinYield(new BigDecimal("0.97"));
         d.setMinCreditScore(65);
         d.setDeadlineHard(LocalDate.now().plusDays(40));
-        d.setDeadlineFlexible(LocalDate.now().plusDays(50));
+        d.setDeadlineFlexible(null);
         d.setDeliveryAddress("杭州市余杭区仓前街道文一西路 1500 号 精工传动成品库");
         d.setPackaging("防锈油封+隔层纸+木箱，每箱 20 件");
         d.setMultiProcess(1);
@@ -183,7 +183,7 @@ public class DemoDataSeeder implements CommandLineRunner {
         d.setMinYield(new BigDecimal("0.98"));
         d.setMinCreditScore(60);
         d.setDeadlineHard(LocalDate.now().plusDays(25));
-        d.setDeadlineFlexible(LocalDate.now().plusDays(30));
+        d.setDeadlineFlexible(null);
         d.setDeliveryAddress("杭州市余杭区仓前街道文一西路 1500 号");
         d.setPackaging("气泡袋+纸箱，防磕碰");
         d.setMultiProcess(0);

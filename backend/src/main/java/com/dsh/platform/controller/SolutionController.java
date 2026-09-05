@@ -58,7 +58,7 @@ public class SolutionController {
     @PreAuthorize("hasAnyRole('BUYER','OPERATOR','SUPER_ADMIN')")
     public R<Void> replaceFactory(@PathVariable Long solutionId, @RequestBody ReplaceFactoryRequest req) {
         solutionService.replaceFactory(solutionId, req == null ? null : req.processNo(),
-                req == null ? null : req.factoryId());
+                req == null ? null : req.factoryId(), req == null ? null : req.fromFactoryId());
         return R.ok();
     }
 

@@ -7,6 +7,7 @@ import java.time.LocalDateTime;
 @Data
 public class NotifyView {
     private Long id;
+    private Long demandId;
     private String title;
     private String content;
     private Integer isRead;

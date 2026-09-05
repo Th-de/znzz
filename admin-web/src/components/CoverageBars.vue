@@ -1,9 +1,8 @@
 <template>
   <div v-if="items.length" class="cov">
-    <div v-for="p in items" :key="p.processNo" class="row">
-      <div class="name">{{ p.processName }}</div>
+    <div v-for="p in items" :key="p.processNo + '-' + p.processName" class="row">
       <el-progress :percentage="pct(p)" :status="p.satisfied ? 'success' : undefined" />
-      <div class="meta">已覆盖 {{ p.covered }} / 需要 {{ p.need }}</div>
+      <div class="meta">已覆盖 {{ p.covered }} / 需要 {{ p.need }} 件{{ p.satisfied ? '（已满足）' : '（未满足）' }}</div>
     </div>
   </div>
 </template>
@@ -20,6 +19,5 @@ function pct(p) {
 
 <style scoped>
 .cov { display: flex; flex-direction: column; gap: 8px; }
-.name { font-size: 13px; }
 .meta { color: #909399; font-size: 12px; }
 </style>

@@ -3,16 +3,15 @@ package com.dsh.platform.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.dsh.platform.common.BizException;
 import com.dsh.platform.domain.credit.SurveyScores;
+import com.dsh.platform.domain.inspect.InspectPassRate;
 import com.dsh.platform.entity.CreditEvent;
 import com.dsh.platform.entity.Device;
 import com.dsh.platform.entity.Enterprise;
-import com.dsh.platform.entity.Inspection;
 import com.dsh.platform.entity.Survey;
 import com.dsh.platform.entity.WorkStage;
 import com.dsh.platform.mapper.CreditEventMapper;
 import com.dsh.platform.mapper.DeviceMapper;
 import com.dsh.platform.mapper.EnterpriseMapper;
-import com.dsh.platform.mapper.InspectionMapper;
 import com.dsh.platform.mapper.SurveyMapper;
 import com.dsh.platform.mapper.WorkStageMapper;
 import com.dsh.platform.security.UserContext;
@@ -38,7 +37,7 @@ public class EnterprisePublicService {
     private final EnterpriseMapper enterpriseMapper;
     private final DeviceMapper deviceMapper;
     private final WorkStageMapper workStageMapper;
-    private final InspectionMapper inspectionMapper;
+    private final InspectPassRate inspectPassRate;
     private final SurveyMapper surveyMapper;
     private final CreditEventMapper creditEventMapper;
     private final ObjectMapper objectMapper;
@@ -93,17 +92,10 @@ public class EnterprisePublicService {
                 .eq(WorkStage::getTenantId, enterpriseId));
         long settled = stages.stream().filter(s -> "SETTLED".equals(s.getEscrowStatus())).count();
         out.put("settledStages", settled);
+        InspectPassRate.Stats inspectStats = inspectPassRate.ofSettledStages(stages);
+        out.put("inspectionCount", inspectStats.judged());
+        out.put("inspectionPassRate", inspectStats.percent());
         List<Long> stageIds = stages.stream().map(WorkStage::getId).toList();
-        long passCount = 0;
-        long insCount = 0;
-        if (!stageIds.isEmpty()) {
-            List<Inspection> ins = inspectionMapper.selectList(new LambdaQueryWrapper<Inspection>()
-                    .in(Inspection::getStageId, stageIds));
-            insCount = ins.size();
-            passCount = ins.stream().filter(i -> "PASS".equals(i.getResult())).count();
-        }
-        out.put("inspectionCount", insCount);
-        out.put("inspectionPassRate", insCount == 0 ? null : Math.round(passCount * 1000.0 / insCount) / 10.0);
         if (!stageIds.isEmpty()) {
             List<Survey> surveys = surveyMapper.selectList(new LambdaQueryWrapper<Survey>()
                     .eq(Survey::getRole, "BUYER")

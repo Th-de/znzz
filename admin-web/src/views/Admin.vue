@@ -116,7 +116,7 @@
               <el-button size="small" @click="openDetail(row)">详情</el-button>
               <el-button v-if="demandTab==='quote' && row.status==='SOLUTION_GENERATED'" size="small" type="success" @click="reviewAi(row)">审核AI方案</el-button>
               <el-button v-if="row.status==='PENDING_AUDIT'" size="small" type="primary" @click="audit(row,'PASS')">审核通过</el-button>
-              <el-button v-if="['PENDING_AUDIT','PUBLISHED'].includes(row.status)" size="small" type="danger" @click="openReturn(row)">退回修改</el-button>
+              <el-button v-if="row.status==='PENDING_AUDIT'" size="small" type="danger" @click="openReturn(row)">退回修改</el-button>
               <el-button v-if="row.status==='PUBLISHED'" size="small" type="warning" @click="endIntention(row)">结束意向期</el-button>
               <el-button v-if="row.status==='FACTORY_THINKING'" size="small" type="warning" @click="endFactoryThinking(row)">结束工厂思考期</el-button>
               <el-button v-if="row.status==='BUYER_THINKING'" size="small" type="danger" @click="endBuyerThinking(row)">超时流单</el-button>
@@ -130,7 +130,7 @@
         </el-table>
         </PagedBox>
         <el-alert style="margin-top:10px" type="info" :closable="false"
-          title="每次发布先申请发布，运营通过后工厂才能看到。退回改完须再审。已发布买家不能改字段，只能取消后发新单。" />
+          title="每次发布先申请发布，运营通过后工厂才能看到。待审核可退回修改，改完须再审。意向期不可退回；买家不能改字段，只能取消后发新单。" />
         <el-drawer v-model="detailOpen" title="需求详情" size="720px">
           <el-alert v-if="detail.demand?.returnReason" type="warning" :closable="false" :title="'退回原因：' + detail.demand.returnReason" style="margin-bottom:12px" />
           <el-descriptions :column="1" border size="small">
@@ -164,7 +164,7 @@
               </el-descriptions>
             </el-collapse-item>
           </el-collapse>
-          <h4>工序覆盖</h4>
+          <h4>零件覆盖</h4>
           <CoverageBars :items="coverage" />
           <h4>报名工厂</h4>
           <el-empty v-if="!(detail.factories || []).length" description="暂无工厂报名" :image-size="56" />
@@ -182,7 +182,6 @@
           <el-table :data="detail.processes" border size="small">
             <el-table-column prop="processNo" label="#" width="50" />
             <el-table-column prop="processName" label="工序" />
-            <el-table-column prop="quantity" label="数量" width="80" />
             <el-table-column prop="requirement" label="要求" />
           </el-table>
           <h4>附件</h4>
@@ -202,23 +201,17 @@
           <div v-if="detail.confirmedPlan.groups.length" class="confirmed-plan">
             <h4>买家确认方案 <el-tag type="info" size="small">不可修改</el-tag></h4>
             <p class="hint">{{ detail.confirmedPlan.hint }}</p>
-            <div v-for="g in detail.confirmedPlan.groups" :key="g.processNo" class="proc-block">
-              <div class="proc-head">
-                <span class="proc-title">{{ g.processName }} / {{ g.need }}件</span>
-                <span class="alloc-ok">已分配 {{ g.allocated }} / {{ g.need }}</span>
-              </div>
-              <div class="line head">
-                <span class="col-fac">工厂</span>
-                <span class="col-range">承接区间</span>
-                <span class="col-qty">分量(件)</span>
-                <span class="col-amt">金额</span>
-              </div>
-              <div v-for="(line, i) in g.lines" :key="g.processNo + '-' + i" class="line">
-                <span class="col-fac">{{ line.factoryName || ('工厂-' + line.factoryId) }}</span>
-                <span class="col-range">{{ (line.minQty ?? '-') + ' ~ ' + (line.maxQty ?? '-') }}</span>
-                <span class="col-qty">{{ line.quantity ?? '-' }}</span>
-                <span class="col-amt">{{ money(lineAmount(line)) }}</span>
-              </div>
+            <div class="line head">
+              <span class="col-fac">工厂</span>
+              <span class="col-range">承接区间</span>
+              <span class="col-qty">分配(件)</span>
+              <span class="col-amt">小计</span>
+            </div>
+            <div v-for="line in detail.confirmedPlan.groups" :key="line.factoryId" class="line">
+              <span class="col-fac">{{ line.factoryName || ('工厂-' + line.factoryId) }}</span>
+              <span class="col-range">{{ (line.minQty ?? '-') + ' ~ ' + (line.maxQty ?? '-') }}</span>
+              <span class="col-qty">{{ line.quantity ?? '-' }}</span>
+              <span class="col-amt">{{ money(line.price) }}</span>
             </div>
             <div class="total-bar">
               <span>总计金额</span>
@@ -232,7 +225,7 @@
             title="未找到买家确认的方案"
             style="margin-top:16px"
           />
-          <div style="margin-top:16px" v-if="['PENDING_AUDIT','PUBLISHED'].includes(detail.demand?.status)">
+          <div style="margin-top:16px" v-if="detail.demand?.status==='PENDING_AUDIT'">
             <el-button type="danger" @click="openReturn(detail.demand)">退回修改</el-button>
           </div>
         </el-drawer>
@@ -565,7 +558,7 @@
             <el-descriptions-item label="名称">{{ factoryProfile.name }}</el-descriptions-item>
             <el-descriptions-item label="信用分">{{ factoryProfile.creditScore ?? '-' }}</el-descriptions-item>
             <el-descriptions-item label="认证">{{ factoryProfile.authStatus === 'APPROVED' ? '已认证' : (factoryProfile.authStatus || '-') }}</el-descriptions-item>
-            <el-descriptions-item label="质检合格率(平台计算)">{{ factoryProfile.inspectionPassRate != null ? factoryProfile.inspectionPassRate + '%（共 ' + factoryProfile.inspectionCount + ' 次质检）' : '暂无质检记录' }}</el-descriptions-item>
+            <el-descriptions-item label="质检合格率(平台计算)">{{ factoryProfile.inspectionPassRate != null ? factoryProfile.inspectionPassRate + '%（已结算且已出结论 ' + factoryProfile.inspectionCount + ' 单）' : '暂无已结算质检' }}</el-descriptions-item>
             <el-descriptions-item label="已结算工单">{{ factoryProfile.settledStages ?? 0 }} 单</el-descriptions-item>
             <el-descriptions-item label="买家评分">{{ factoryProfile.surveyAvg != null ? factoryProfile.surveyAvg + ' 分' : '暂无评价' }}</el-descriptions-item>
             <el-descriptions-item label="报名后未填报次数">{{ factoryProfile.noLockCount ?? 0 }}</el-descriptions-item>
@@ -680,12 +673,11 @@
             :title="r"
             style="margin-bottom:8px"
           />
-          <el-table :data="s._items || []" size="small" border>
-            <el-table-column prop="processName" label="工序" width="80" />
-            <el-table-column prop="factoryName" label="工厂" width="140" />
+          <el-table :data="s._alloc || []" size="small" border>
+            <el-table-column prop="factoryName" label="工厂" width="160" />
             <el-table-column label="分配(件)" width="150">
               <template #default="{ row }">
-                <el-input-number v-if="s.status!=='ACTIVE'" v-model="row.quantity" :min="row.minQty || 1" :max="row.maxQty || 999999" size="small" />
+                <el-input-number v-if="s.status!=='ACTIVE'" v-model="row.quantity" :min="row.minQty || 1" :max="row.maxQty || 999999" size="small" @change="syncAlloc(s, row)" />
                 <span v-else>{{ row.quantity ?? '-' }}</span>
               </template>
             </el-table-column>
@@ -697,7 +689,9 @@
             </el-table-column>
             <el-table-column prop="reason" label="选厂理由" min-width="140" />
             <el-table-column prop="capacityCheck" label="产能核算" min-width="120" />
-            <el-table-column prop="price" label="小计" width="90" />
+            <el-table-column label="小计" width="90">
+              <template #default="{ row }">{{ money(allocSubtotal(row)) }}</template>
+            </el-table-column>
             <el-table-column prop="days" label="工期" width="60" />
             <el-table-column v-if="s.status!=='ACTIVE'" label="修改" width="80">
               <template #default="{ row }">
@@ -705,6 +699,10 @@
               </template>
             </el-table-column>
           </el-table>
+          <div class="total-bar">
+            <span>总计金额</span>
+            <strong>{{ money(allocTotal(s._alloc)) }} 元</strong>
+          </div>
           <div v-if="s.status!=='ACTIVE'" style="margin-top:8px;display:flex;gap:8px">
             <el-button size="small" @click="saveAiEdits(s)">保存修改</el-button>
             <el-button size="small" type="success" @click="approveAi(s)">审核通过</el-button>
@@ -712,7 +710,7 @@
         </div>
       </el-dialog>
       <el-dialog v-model="repOpen" title="换厂（价格不变）" width="640px" :close-on-click-modal="false">
-        <p>工序 {{ currentProcess?.processName }}，原价 {{ currentProcess?.price }} 不可改。</p>
+        <p>将替换该厂在方案中的全部工序分配，单价按新厂报价更新后以件数小计。</p>
         <PagedBox :data="alts" :page-size="8" v-slot="{ rows }">
         <el-table :data="rows" size="small" border>
           <el-table-column prop="factoryName" label="工厂" />
@@ -989,33 +987,32 @@ function buildConfirmedPlan(list, processes) {
   if (!picked) return empty
   const items = parse(picked.finalComboJson || picked.suggestedComboJson)
   const map = new Map()
-  for (const p of processes || []) {
-    map.set(p.processNo, {
-      processNo: p.processNo,
-      processName: p.processName || ('工序' + p.processNo),
-      need: Number(p.quantity) || 0,
-      allocated: 0,
-      lines: [],
-    })
-  }
   for (const it of items) {
-    const no = it.processNo
-    if (!map.has(no)) {
-      map.set(no, {
-        processNo: no,
-        processName: it.processName || ('工序' + no),
-        need: 0,
-        allocated: 0,
-        lines: [],
+    const fid = it.factoryId
+    if (fid == null) continue
+    const qty = Number(it.quantity) || 0
+    const unit = Number(it.unitPrice)
+    if (!map.has(fid)) {
+      map.set(fid, {
+        factoryId: fid,
+        factoryName: it.factoryName,
+        minQty: it.minQty,
+        maxQty: it.maxQty,
+        unitPrice: Number.isFinite(unit) ? unit : null,
+        quantity: qty,
       })
+    } else {
+      const g = map.get(fid)
+      if (qty > g.quantity) g.quantity = qty
     }
-    const g = map.get(no)
-    g.lines.push(it)
-    g.allocated += Number(it.quantity) || 0
-    if (!g.need) g.need = g.allocated
   }
-  const groups = [...map.values()].filter(g => g.lines.length)
-  const total = items.reduce((s, it) => s + lineAmount(it), 0)
+  const groups = [...map.values()].map(g => ({
+    ...g,
+    price: g.unitPrice != null && g.quantity
+      ? Math.round(g.unitPrice * g.quantity * 100) / 100
+      : 0,
+  }))
+  const total = groups.reduce((s, g) => s + (Number(g.price) || 0), 0)
   const kind = (picked.type || '').startsWith('AI') ? '买家已按推荐方案确认' : '买家已按自选分配确认'
   return { groups, total, hint: kind + '，派单将按此分配通知中标厂。' }
 }
@@ -1206,11 +1203,62 @@ async function reviewAi(row) {
   } finally { aiLoading.value = false }
 }
 function decorateSolutions(list) {
-  solutions.value = (list || []).map(s => ({
-    ...s,
-    _rationale: parseRationale(s.rationaleJson).rationale,
-    _items: parse(s.finalComboJson || s.suggestedComboJson),
-  }))
+  solutions.value = (list || []).map(s => {
+    const items = parse(s.finalComboJson || s.suggestedComboJson)
+    return {
+      ...s,
+      _rationale: parseRationale(s.rationaleJson).rationale,
+      _items: items,
+      _alloc: factoryAllocFromItems(items),
+    }
+  })
+}
+function factoryAllocFromItems(items) {
+  const map = new Map()
+  for (const it of items || []) {
+    const fid = it.factoryId
+    if (fid == null) continue
+    const qty = Number(it.quantity) || 0
+    const unit = Number(it.unitPrice)
+    if (!map.has(fid)) {
+      map.set(fid, {
+        factoryId: fid,
+        factoryName: it.factoryName,
+        unitPrice: Number.isFinite(unit) ? unit : null,
+        quantity: qty,
+        days: Number(it.days) || 0,
+        minQty: it.minQty,
+        maxQty: it.maxQty,
+        reason: it.reason,
+        capacityCheck: it.capacityCheck,
+        processNo: it.processNo,
+      })
+    } else {
+      const row = map.get(fid)
+      if (qty > row.quantity) row.quantity = qty
+      if (!row.reason && it.reason) row.reason = it.reason
+      if (!row.capacityCheck && it.capacityCheck) row.capacityCheck = it.capacityCheck
+    }
+  }
+  return [...map.values()]
+}
+function allocSubtotal(row) {
+  const unit = Number(row?.unitPrice)
+  const qty = Number(row?.quantity)
+  if (!Number.isFinite(unit) || !Number.isFinite(qty) || qty <= 0) return 0
+  return Math.round(unit * qty * 100) / 100
+}
+function allocTotal(rows) {
+  return (rows || []).reduce((s, r) => s + allocSubtotal(r), 0)
+}
+function syncAlloc(s, row) {
+  for (const it of s._items || []) {
+    if (it.factoryId === row.factoryId) {
+      it.quantity = row.quantity
+      const unit = Number(it.unitPrice)
+      if (Number.isFinite(unit)) it.price = Math.round(unit * Number(row.quantity) * 100) / 100
+    }
+  }
 }
 async function retryAi() {
   if (!currentSolDemand.value) return
@@ -1222,6 +1270,9 @@ async function retryAi() {
   } finally { aiLoading.value = false }
 }
 async function saveAiEdits(s) {
+  for (const row of s._alloc || []) {
+    syncAlloc(s, row)
+  }
   const list = await api.post(`/solution/item/${s.id}/save-review`, {
     rationale: s._rationale,
     items: (s._items || []).map(it => ({ factoryId: it.factoryId, processNo: it.processNo, quantity: it.quantity })),
@@ -1243,7 +1294,8 @@ async function genAiFromDialog() {
 async function openReplace(s, row) {
   currentSol.value = s
   currentProcess.value = row
-  alts.value = await api.get(`/solution/item/${s.id}/alternatives`, { params: { processNo: row.processNo } })
+  const item = (s._items || []).find(i => i.factoryId === row.factoryId)
+  alts.value = await api.get(`/solution/item/${s.id}/alternatives`, { params: { processNo: item?.processNo || row.processNo } })
   repOpen.value = true
 }
 async function viewSolutions(row) {
@@ -1252,8 +1304,19 @@ async function viewSolutions(row) {
   solDialog.value = true
 }
 async function doReplace(row) {
-  await api.post(`/solution/item/${currentSol.value.id}/replace-factory`, { processNo: currentProcess.value.processNo, factoryId: row.factoryId })
-  ElMessage.success('已换厂，价格未改')
+  const fromId = currentProcess.value.factoryId
+  const processNos = [...new Set((currentSol.value._items || [])
+    .filter(i => i.factoryId === fromId)
+    .map(i => i.processNo)
+    .filter(n => n != null))]
+  for (const processNo of processNos) {
+    await api.post(`/solution/item/${currentSol.value.id}/replace-factory`, {
+      processNo,
+      factoryId: row.factoryId,
+      fromFactoryId: fromId,
+    })
+  }
+  ElMessage.success('已换厂')
   repOpen.value = false
   decorateSolutions(await api.get(`/solution/${currentSol.value.demandId}`))
 }

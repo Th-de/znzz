@@ -26,7 +26,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 按「工厂 × 交付期」拆工单。该厂承接件数走完全部工序，金额为各工序价之和，按期分摊。
+ * 按「工厂 × 交付期」拆工单。该厂承接件数走完全部工序，金额为单价×件数（不按工序累加），按期分摊。
  */
 @Component
 @RequiredArgsConstructor
@@ -53,8 +53,8 @@ public class WorkStageSplitter {
             throw new BizException("方案中没有该厂的工序");
         }
         int quantity = 0;
-        java.util.LinkedHashSet<BigDecimal> prices = new java.util.LinkedHashSet<>();
-        BigDecimal priceSum = BigDecimal.ZERO;
+        BigDecimal unitPrice = null;
+        BigDecimal linePrice = null;
         int days = 1;
         Set<String> names = new LinkedHashSet<>();
         for (Map<String, Object> item : mine) {
@@ -62,9 +62,14 @@ public class WorkStageSplitter {
             if (q != null && q > quantity) {
                 quantity = q;
             }
+            BigDecimal u = asDecimal(item.get("unitPrice"));
+            if (unitPrice == null && u != null && u.compareTo(BigDecimal.ZERO) > 0) {
+                unitPrice = u;
+            }
             BigDecimal p = asDecimal(item.get("price"));
-            prices.add(p);
-            priceSum = priceSum.add(p);
+            if (linePrice == null && p != null && p.compareTo(BigDecimal.ZERO) > 0) {
+                linePrice = p;
+            }
             Integer d = asInt(item.get("days"));
             if (d != null && d > days) {
                 days = d;
@@ -73,7 +78,9 @@ public class WorkStageSplitter {
                 names.add(item.get("processName").toString().trim());
             }
         }
-        BigDecimal price = prices.size() == 1 ? prices.iterator().next() : priceSum;
+        BigDecimal price = unitPrice != null && unitPrice.compareTo(BigDecimal.ZERO) > 0 && quantity > 0
+                ? unitPrice.multiply(BigDecimal.valueOf(quantity)).setScale(2, RoundingMode.HALF_UP)
+                : (linePrice == null ? BigDecimal.ZERO : linePrice);
         String processName = names.isEmpty() ? "全部工序" : String.join("+", names);
         Demand demand = demandMapper.selectById(order.getDemandId());
         List<PeriodSpec> periods = periodsOf(demand);

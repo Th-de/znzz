@@ -48,7 +48,7 @@ public class Quotation {
     /** 当前阶段截止时间 */
     @TableField(exist = false)
     private LocalDateTime demandStageEndAt;
-    /** 报名行操作：PAY/COMMIT/WAIT_BUYER/WAIT_SOLUTION/WAIT_DISPATCH/WAIT_ISSUE/SIGN/PENDING_REVIEW/SIGNED/LOSE/NONE */
+    /** 报名行操作：PAY/WAIT_INTENTION/COMMIT/WAIT_BUYER/WAIT_SOLUTION/WAIT_DISPATCH/WAIT_ISSUE/SIGN/PENDING_REVIEW/SIGNED/LOSE/REAPPLY/NONE */
     @TableField(exist = false)
     private String actionKey;
     @TableField(exist = false)

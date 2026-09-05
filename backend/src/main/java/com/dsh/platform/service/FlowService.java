@@ -14,7 +14,6 @@ import com.dsh.platform.entity.Enterprise;
 import com.dsh.platform.entity.Quotation;
 import com.dsh.platform.mapper.DemandMapper;
 import com.dsh.platform.mapper.EnterpriseMapper;
-import com.dsh.platform.mapper.ProcessMapper;
 import com.dsh.platform.mapper.QuotationMapper;
 import com.dsh.platform.security.UserContext;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -40,7 +39,6 @@ public class FlowService {
     private final DemandMapper demandMapper;
     private final QuotationMapper quotationMapper;
     private final EnterpriseMapper enterpriseMapper;
-    private final ProcessMapper processMapper;
     private final CreditScoring creditScoring;
     private final AuditService auditService;
     private final DemandStateMachine stateMachine;
@@ -49,7 +47,6 @@ public class FlowService {
     private final FundLedger fundLedger;
     private final SolutionService solutionService;
     private final ObjectMapper objectMapper;
-    private final DeviceService deviceService;
 
     @Value("${dsh.time.thinking-hours:24}")
     private int thinkingHours;
@@ -84,8 +81,8 @@ public class FlowService {
         CoverageView view = coverageService.of(demandId);
         siteNotify.send(d.getTenantId(), "意向期结束#" + demandId,
                 "需求「" + d.getTitle() + "」意向期已结束，进入 " + factoryThinkingHours + " 小时工厂思考期。"
-                        + (view.allSatisfied() ? "各工序报名产能已满足。"
-                        : "以下工序产能未满足：" + coverageService.unsatisfiedText(view)));
+                        + (view.allSatisfied() ? "零件报名产能已满足。"
+                        : coverageService.unsatisfiedText(view)));
         notifyFactories(demandId, "工厂思考期开始",
                 "需求「" + d.getTitle() + "」进入工厂思考期（" + factoryThinkingHours
                         + " 小时）。参加请填报实施方案、单件报价和分期交付内容，并冻结总报价 5% 保证金；"
@@ -101,16 +98,15 @@ public class FlowService {
             return;
         }
         deductFactoryThinkingTimeout(d);
-        if (!committedCovered(d)) {
+        if (!coverageService.committedPiecesCovered(d.getId())) {
             stateMachine.transit(d, DemandStatus.FLOW_FAILED);
             demandMapper.updateById(d);
-            fundLedger.unfreezeIntentionsOfDemand(demandId);
-            fundLedger.unfreezeDepositsOfDemand(demandId);
-            deviceService.releaseByDemand(demandId);
             siteNotify.send(d.getTenantId(), "需求流拍#" + demandId,
                     "需求「" + d.getTitle() + "」工厂思考期结束后各工序填报产能不足，已流拍，相关资金已退回。");
             notifyFactories(demandId, "需求流拍#" + demandId,
                     "需求「" + d.getTitle() + "」已流拍，意向金/保证金已退回。");
+            fundLedger.unfreezeIntentionsOfDemand(demandId);
+            fundLedger.unfreezeDepositsOfDemand(demandId);
             return;
         }
         forfeitSilentFactories(d);
@@ -147,6 +143,8 @@ public class FlowService {
             demandMapper.updateById(d);
             siteNotify.send(d.getTenantId(), "保证金已冻结#" + demandId,
                     "已冻结保证金 ¥" + deposit + "（履约后抵扣尾款）。各厂报价已可见，AI 正在生成推荐方案，经运营审核后作为参考下发。");
+            notifyFactories(demandId, "买家已确认继续#" + demandId,
+                    "买家已确认继续需求「" + d.getTitle() + "」，正在生成推荐方案。");
             Long id = d.getId();
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
@@ -182,40 +180,12 @@ public class FlowService {
         stateMachine.transit(d, target);
         d.setCancelReason(reason);
         demandMapper.updateById(d);
-        fundLedger.unfreezeIntentionsOfDemand(d.getId());
-        fundLedger.unfreezeDepositsOfDemand(d.getId());
-        deviceService.releaseByDemand(d.getId());
         siteNotify.send(d.getTenantId(), "订单已结束#" + d.getId(),
                 "需求「" + d.getTitle() + "」" + reason + "。");
         notifyFactories(d.getId(), "订单已结束#" + d.getId(),
                 "需求「" + d.getTitle() + "」" + factoryMsg);
-    }
-
-    /** 各工序已填报（COMMITTED/LOCKED）承接量合计是否覆盖需求量（同工序允许多厂分摊）。 */
-    private boolean committedCovered(Demand d) {
-        List<com.dsh.platform.entity.Process> processes = processMapper.selectList(
-                new LambdaQueryWrapper<com.dsh.platform.entity.Process>()
-                        .eq(com.dsh.platform.entity.Process::getDemandId, d.getId()));
-        List<Quotation> committed = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
-                .eq(Quotation::getDemandId, d.getId())
-                .eq(Quotation::getStatus, "LOCKED"));
-        if (processes.isEmpty()) {
-            int need = d.getQuantity() == null ? 0 : d.getQuantity();
-            int got = committed.stream().mapToInt(q -> q.getMaxQty() == null ? 0 : q.getMaxQty()).sum();
-            return need > 0 && got >= need;
-        }
-        for (com.dsh.platform.entity.Process p : processes) {
-            int need = p.getQuantity() == null ? 0 : p.getQuantity();
-            Integer no = p.getProcessNo() == null ? 1 : p.getProcessNo();
-            int got = committed.stream()
-                    .filter(q -> no.equals(q.getProcessNo() == null ? 1 : q.getProcessNo()))
-                    .mapToInt(q -> q.getMaxQty() == null ? 0 : q.getMaxQty())
-                    .sum();
-            if (need <= 0 || got < need) {
-                return false;
-            }
-        }
-        return true;
+        fundLedger.unfreezeIntentionsOfDemand(d.getId());
+        fundLedger.unfreezeDepositsOfDemand(d.getId());
     }
 
     /** 工厂思考期截止仍未填报：按退出同等扣守信分 5 分（按厂去重）。 */
@@ -290,7 +260,7 @@ public class FlowService {
             return;
         }
         siteNotify.send(d.getTenantId(), title,
-                "需求「" + d.getTitle() + "」距截止还有 24 小时。当前凑不齐："
+                "需求「" + d.getTitle() + "」距截止还有 24 小时。"
                         + coverageService.unsatisfiedText(view));
     }
 
@@ -319,6 +289,8 @@ public class FlowService {
                 demandMapper.updateById(d);
                 siteNotify.send(d.getTenantId(), "取消进入审核#" + demandId,
                         "需求「" + d.getTitle() + "」产能与门槛已满足，取消申请已提交审核。");
+                notifyFactories(demandId, "买家申请取消需求#" + demandId,
+                        "买家已申请取消需求「" + d.getTitle() + "」，等待平台审核。");
             }
             return;
         }
@@ -437,10 +409,11 @@ public class FlowService {
     }
 
     private void cancelAndRefund(Demand d) {
+        notifyFactories(d.getId(), "买家取消需求#" + d.getId(),
+                "买家已取消需求「" + d.getTitle() + "」，意向金将退回。");
         stateMachine.transit(d, DemandStatus.CANCELLED);
         demandMapper.updateById(d);
         fundLedger.unfreezeIntentionsOfDemand(d.getId());
-        deviceService.releaseByDemand(d.getId());
         siteNotify.send(d.getTenantId(), "需求已取消#" + d.getId(), "需求「" + d.getTitle() + "」已取消，意向金已退还");
     }
 
@@ -448,8 +421,18 @@ public class FlowService {
         List<Quotation> qs = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
                 .eq(Quotation::getDemandId, demandId)
                 .in(Quotation::getStatus, "INTENTION", "LOCKED"));
+        String fullTitle = title != null && title.contains("#") ? title : (title + "#" + demandId);
+        Set<Long> factories = new HashSet<>();
         for (Quotation q : qs) {
-            siteNotify.send(q.getTenantId(), title + "#" + demandId, content);
+            if (q.getTenantId() != null) {
+                factories.add(q.getTenantId());
+            }
+        }
+        for (Long factoryId : factories) {
+            if (siteNotify.exists(factoryId, fullTitle)) {
+                continue;
+            }
+            siteNotify.send(factoryId, fullTitle, content);
         }
     }
 

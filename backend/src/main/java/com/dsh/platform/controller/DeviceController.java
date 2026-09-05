@@ -23,12 +23,6 @@ public class DeviceController {
         return R.ok(deviceService.listMine());
     }
 
-    @GetMapping("/idle")
-    @PreAuthorize("hasRole('FACTORY')")
-    public R<List<Device>> idle() {
-        return R.ok(deviceService.listIdleMine());
-    }
-
     @PostMapping
     @PreAuthorize("hasRole('FACTORY')")
     public R<Long> save(@RequestBody Device body) {

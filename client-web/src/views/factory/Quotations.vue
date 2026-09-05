@@ -20,11 +20,15 @@
           <el-table-column label="截止时间" width="170">
             <template #default="{ row }">{{ fmtTime(row.demandStageEndAt) }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="240">
+          <el-table-column label="操作" width="320">
             <template #default="{ row }">
               <el-button v-if="row.actionKey==='PAY'" size="small" type="primary" @click="pay(row)">继续支付</el-button>
+              <template v-else-if="row.actionKey==='WAIT_INTENTION'">
+                <span class="op-text">已报名，等待意向期结束</span>
+                <el-button size="small" type="danger" @click="cancel(row)">取消报名</el-button>
+              </template>
               <template v-else-if="row.actionKey==='COMMIT'">
-                <el-button size="small" type="warning" @click="openCommit(row)">继续报价</el-button>
+                <el-button size="small" type="warning" @click="openCommit(row)">填报报价</el-button>
                 <el-button size="small" type="danger" @click="cancel(row)">取消报名</el-button>
               </template>
               <span v-else-if="row.actionKey==='WAIT_BUYER'" class="op-text">等待买家决定</span>
@@ -35,6 +39,7 @@
               <span v-else-if="row.actionKey==='PENDING_REVIEW'" class="op-text">待运营确认</span>
               <span v-else-if="row.actionKey==='SIGNED'" class="op-text">已签约</span>
               <span v-else-if="row.actionKey==='LOSE'" class="op-text">未中标</span>
+              <el-button v-else-if="row.actionKey==='REAPPLY'" size="small" type="primary" @click="$router.push('/factory/demands')">重新填报意向</el-button>
               <span v-else class="op-text">-</span>
             </template>
           </el-table-column>
@@ -86,8 +91,8 @@
       <div v-else class="tip">无附件</div>
     </el-dialog>
 
-    <el-dialog v-model="commitDialog" title="继续报价" width="560px" :close-on-click-modal="false">
-      <p class="tip">报该品全部工序的一件单价。提交后按「单价 × 承接量」冻结 5% 保证金（只冻一次）。</p>
+    <el-dialog v-model="commitDialog" title="填报报价" width="560px" :close-on-click-modal="false">
+      <p class="tip">报该品全部工序的一件单价。工期与最低良率按买家发布需求执行。提交后按「单价 × 承接量」冻结 5% 保证金（只冻一次）。</p>
       <el-form label-width="120px">
         <el-form-item label="实施方案" required>
           <el-input v-model="commitForm.planText" type="textarea" :rows="3" />
@@ -96,8 +101,6 @@
         <el-form-item label="单价(元/件)" required>
           <el-input-number v-model="commitUnit" :min="0.01" :precision="2" />
         </el-form-item>
-        <el-form-item label="工期(天)"><el-input-number v-model="commitDays" :min="1" /></el-form-item>
-        <el-form-item label="承诺良率"><el-input-number v-model="commitYield" :min="0" :max="1" :step="0.01" /></el-form-item>
       </el-form>
       <div class="summary">总报价：<b>￥{{ commitTotal }}</b>　需冻结保证金(5%)：<b>￥{{ commitDeposit }}</b></div>
       <el-form label-width="120px">
@@ -153,8 +156,6 @@ const detailQuotes = ref([])
 const processes = ref([])
 const commitForm = reactive({ demandId: null, planText: '', items: [], confirm: false })
 const commitUnit = ref(null)
-const commitDays = ref(10)
-const commitYield = ref(0.98)
 const signOpen = ref(false)
 const signOrderId = ref(null)
 const contract = ref({})
@@ -182,6 +183,11 @@ const rows = computed(() => {
     const g = map.get(q.demandId)
     g.quotes.push(q)
     if (q.createdAt && (!g.createdAt || q.createdAt < g.createdAt)) g.createdAt = q.createdAt
+    const prefer = { PAY: 6, COMMIT: 6, WAIT_INTENTION: 5, SIGN: 5, PENDING_REVIEW: 5, WAIT_ISSUE: 4, WAIT_BUYER: 4, WAIT_SOLUTION: 4, WAIT_DISPATCH: 4, SIGNED: 4, REAPPLY: 2, LOSE: 1, NONE: 0 }
+    if ((prefer[q.actionKey] || 0) > (prefer[g.actionKey] || 0)) {
+      g.actionKey = q.actionKey
+      g.orderId = q.orderId || g.orderId
+    }
   }
   return [...map.values()]
 })
@@ -247,12 +253,8 @@ async function openCommit(row) {
     processNo: q.processNo,
     quantity: q.maxQty,
     unitPrice: q.unitPrice || null,
-    promisedDays: q.promisedDays || 10,
-    yieldRate: q.yieldRate || 0.98,
   }))
   commitUnit.value = mine.find(q => q.unitPrice)?.unitPrice || null
-  commitDays.value = mine.find(q => q.promisedDays)?.promisedDays || 10
-  commitYield.value = mine.find(q => q.yieldRate)?.yieldRate || 0.98
   commitForm.confirm = false
   commitDialog.value = true
 }
@@ -265,7 +267,6 @@ async function submitCommit() {
     planText: commitForm.planText,
     items: commitForm.items.map(it => ({
       processNo: it.processNo, unitPrice: commitUnit.value,
-      yieldRate: commitYield.value, promisedDays: commitDays.value,
     })),
   })
   ElMessage.success('方案已提交，保证金已冻结')
@@ -286,9 +287,9 @@ async function pay(row) {
 async function cancel(row) {
   const q = row.quotes.find(x => x.status === 'INTENTION')
   if (!q) return
-  await ElMessageBox.confirm('确认取消报名？意向金将退回，取消后不能再参加该需求。', '取消报名', { type: 'warning' })
+  await ElMessageBox.confirm('确认取消报名？意向金将退回。意向期内取消后，可重新填写承接量并再次报名。', '取消报名', { type: 'warning' })
   await api.post(`/bidding/${q.id}/cancel-intention`)
-  ElMessage.success('已取消报名，意向金退还')
+  ElMessage.success('已取消。请到「浏览需求」重新填报意向')
   load()
 }
 

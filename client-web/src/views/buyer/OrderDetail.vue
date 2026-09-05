@@ -181,7 +181,7 @@
     </el-dialog>
     <el-dialog v-model="decideOpen" title="处理质检结果" width="560px" :close-on-click-modal="false">
       <p>分支 {{ decideStage?.branchCode || '-' }}。让步：B 不齐但抽检/全检过关（托管已交工费 + 本阶段工费 5%）；C1 齐但轻微不良（托管全款。抽检再赔本阶段工费 5%；全检赔工费×(最低良率−实际良率)）。C2/D/E 不能让步。</p>
-      <p class="hint">关闭将取消该厂后续期，并按「本期+后续工费」5% 从工厂保证金赔你；保证金不足则无法关闭。返工全程一次。</p>
+      <p class="hint">关闭将取消该厂后续期，并按「本期+后续工费」5% 从工厂保证金赔你；保证金不足则无法关闭。返工全程一次，期限由你填写（12～72 小时），与原分期截止无关。</p>
       <el-form label-width="120px" style="margin-top:12px">
         <el-form-item label="返工期限(小时)">
           <el-input-number v-model="reworkHours" :min="12" :max="72" :disabled="!decideStage?.canRework" />

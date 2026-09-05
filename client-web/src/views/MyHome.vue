@@ -8,6 +8,13 @@
       <el-descriptions-item label="地址">{{ info.address || '-' }}</el-descriptions-item>
       <el-descriptions-item label="信用分">{{ info.creditScore ?? '-' }}</el-descriptions-item>
     </el-descriptions>
+    <el-descriptions v-if="info.type === 'FACTORY'" title="平台履约数据（买家可见，不可手改）" :column="1" border style="margin-top:16px">
+      <el-descriptions-item label="质检合格率">
+        {{ profile.inspectionPassRate != null ? profile.inspectionPassRate + '%（已结算且已出结论 ' + profile.inspectionCount + ' 单）' : '暂无已结算质检' }}
+      </el-descriptions-item>
+      <el-descriptions-item label="已结算工单">{{ profile.settledStages ?? 0 }}</el-descriptions-item>
+      <el-descriptions-item label="买家评分">{{ profile.surveyAvg != null ? profile.surveyAvg + ' 星' : '暂无' }}</el-descriptions-item>
+    </el-descriptions>
     <el-descriptions title="账户" :column="1" border style="margin-top:16px">
       <el-descriptions-item label="可用余额">¥ {{ money(info.balance) }}</el-descriptions-item>
       <el-descriptions-item label="冻结中">¥ {{ money(info.frozen) }}</el-descriptions-item>
@@ -33,6 +40,7 @@ import api from '../api'
 import { ElMessage } from 'element-plus'
 
 const info = ref({})
+const profile = ref({})
 const pwd = reactive({ oldPassword: '', newPassword: '', confirm: '' })
 function money(v) {
   if (v == null) return '0.00'
@@ -48,5 +56,8 @@ async function changePwd() {
 }
 onMounted(async () => {
   info.value = await api.get('/enterprise/mine')
+  if (info.value?.type === 'FACTORY' && info.value.id) {
+    profile.value = await api.get(`/enterprise/${info.value.id}/public-profile`)
+  }
 })
 </script>

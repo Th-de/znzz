@@ -72,7 +72,6 @@ public class OrderService {
     private final StageProgressLogMapper stageProgressLogMapper;
     private final FileService fileService;
     private final AttachmentMapper attachmentMapper;
-    private final DeviceService deviceService;
     private final FundLedger fundLedger;
     private final AuditService auditService;
 
@@ -163,7 +162,6 @@ public class OrderService {
             }
         }
         List<Long> winFactoryIds = new java.util.ArrayList<>(winProcessNames.keySet());
-        deviceService.releaseLosers(demandId, winFactoryIds);
         stateMachine.transit(d, DemandStatus.SOLUTION_SELECTED);
         demandMapper.updateById(d);
         siteNotify.send(d.getTenantId(), "请按厂上传合同#" + o.getId(), "方案已派单。请按中标厂分别上传你们拟定的合同并签名。");
@@ -199,23 +197,6 @@ public class OrderService {
         }
         ws.setStatus("IN_PRODUCTION");
         workStageMapper.updateById(ws);
-        Order order = orderMapper.selectById(ws.getOrderId());
-        if (order != null) {
-            Quotation q = quotationMapper.selectOne(new LambdaQueryWrapper<Quotation>()
-                    .eq(Quotation::getDemandId, order.getDemandId())
-                    .eq(Quotation::getTenantId, ws.getTenantId())
-                    .eq(Quotation::getProcessNo, ws.getProcessNo())
-                    .in(Quotation::getStatus, "WIN", "LOCKED")
-                    .last("limit 1"));
-            if (q == null) {
-                q = quotationMapper.selectOne(new LambdaQueryWrapper<Quotation>()
-                        .eq(Quotation::getDemandId, order.getDemandId())
-                        .eq(Quotation::getTenantId, ws.getTenantId())
-                        .eq(Quotation::getStatus, "WIN")
-                        .last("limit 1"));
-            }
-            deviceService.markInUseByQuotation(q);
-        }
     }
 
     @Transactional
@@ -932,7 +913,6 @@ public class OrderService {
         stateMachine.transit(d, DemandStatus.COMPLETED);
         demandMapper.updateById(d);
         creditScoring.applyOnComplete(o);
-        deviceService.releaseByDemand(o.getDemandId());
         siteNotify.send(d.getTenantId(), "订单已完成#" + orderId, "完工确认完成，工厂工钱已结算，平台佣金已从托管工钱扣除。");
         byFactory.keySet().forEach(fid -> siteNotify.send(fid, "订单已结算#" + orderId, "工钱已到账，佣金已从托管工钱扣除，剩余保证金已退回。"));
     }

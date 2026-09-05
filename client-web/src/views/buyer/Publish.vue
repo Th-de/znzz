@@ -1,6 +1,6 @@
 <template>
-  <div>
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="130px" style="max-width:800px" @submit.prevent>
+  <div class="publish-page">
+      <el-form ref="formRef" :model="form" :rules="rules" label-width="130px" class="publish-form" @submit.prevent>
         <el-card shadow="never" class="block">
           <template #header>基础</template>
           <el-form-item label="需求标题" prop="title"><el-input v-model="form.title" /></el-form-item>
@@ -82,7 +82,6 @@
         <el-card shadow="never" class="block">
           <template #header>交期与交付</template>
           <el-form-item label="硬交期" prop="deadlineHard"><el-date-picker v-model="form.deadlineHard" type="date" value-format="YYYY-MM-DD" /></el-form-item>
-          <el-form-item label="弹性交期"><el-date-picker v-model="form.deadlineFlexible" type="date" value-format="YYYY-MM-DD" /></el-form-item>
           <el-form-item label="交付地址" prop="deliveryAddress"><el-input v-model="form.deliveryAddress" /></el-form-item>
           <el-form-item label="包装要求" prop="packaging"><el-input v-model="form.packaging" /></el-form-item>
           <el-form-item label="分期交付次数">
@@ -91,20 +90,40 @@
               <span class="step-num">{{ deliveryTimes }}</span>
               <button type="button" class="step-btn" @click="setTimes(deliveryTimes + 1)">+</button>
             </div>
-            <div class="hint" style="margin-left:0">每一期都必须填开始、截止日期，以及该期交付比例。各期比例之和须为 100%。工厂只在开始日期当天及之后才能上报和交付。</div>
+            <div class="hint" style="margin-left:0">后一期开始日必须等于前一期截止日；最后一期截止日必须等于硬交期。逾期未完成由买家另行确定返工期限，不延长原交期。</div>
           </el-form-item>
           <el-form-item v-for="(row, i) in deliveryPlan" :key="'plan-' + i" :label="`第${i + 1}期`">
             <div class="period-row">
               <div class="qty-wrap">
                 <div class="step">
                   <button type="button" class="step-btn" @click="bumpPercent(i, -1)">−</button>
-                  <span class="step-num">{{ row.percent }}</span>
+                  <input
+                    class="step-input"
+                    type="number"
+                    min="1"
+                    max="100"
+                    v-model.number="row.percent"
+                    @blur="clampPercent(i)"
+                  />
                   <button type="button" class="step-btn" @click="bumpPercent(i, 1)">+</button>
                 </div>
                 <span class="qty-unit">%</span>
               </div>
-              <el-date-picker v-model="row.startAt" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" />
-              <el-date-picker v-model="row.endAt" type="date" value-format="YYYY-MM-DD" placeholder="截止日期" />
+              <el-date-picker
+                v-model="row.startAt"
+                type="date"
+                value-format="YYYY-MM-DD"
+                placeholder="开始日期"
+                :disabled="i > 0"
+              />
+              <el-date-picker
+                v-model="row.endAt"
+                type="date"
+                value-format="YYYY-MM-DD"
+                placeholder="截止日期"
+                :disabled="i === deliveryPlan.length - 1"
+                @change="onPeriodEndChange(i)"
+              />
             </div>
           </el-form-item>
           <div class="hint" style="margin:-4px 0 12px 130px">已分配 {{ planPercentSum }}% / 100%</div>
@@ -119,13 +138,16 @@
             <div class="row head">
               <span class="col-name">工序名</span>
               <span class="col-req">特殊要求</span>
+              <span class="col-actions"></span>
             </div>
             <div v-for="(p, i) in form.processes" :key="i" class="row">
               <el-input v-model="p.processName" placeholder="如 粗车 / 热处理" class="col-name" />
               <el-input v-model="p.requirement" placeholder="该工序特殊要求，可空" class="col-req" />
-              <el-button type="danger" :icon="Delete" circle plain @click="removeProcess(i)" />
+              <div class="proc-actions">
+                <el-button type="danger" :icon="Delete" circle plain @click="removeProcess(i)" />
+                <el-button v-if="i === form.processes.length - 1" type="primary" :icon="Plus" plain @click="addProcess">添加工序</el-button>
+              </div>
             </div>
-            <el-button type="primary" :icon="Plus" plain @click="addProcess">添加工序</el-button>
           </el-form-item>
           <el-form-item label="意向期天数">
             <div class="step">
@@ -230,7 +252,7 @@ const form = reactive({
   roughness: '3.2', surfaceTreatment: '', heatTreatment: '',
   aql: '1.0', inspectMode: 'AQL', certList: [],
   minYield: null, minCreditScore: 60,
-  deadlineHard: '', deadlineFlexible: null,
+  deadlineHard: '',
   deliveryAddress: '', packaging: '',
   multiProcess: 1, intentionDays: 5,
   remark: '', fileName: '', processes: [
@@ -263,20 +285,49 @@ function blankPeriod(prev = {}, percent = 100) {
 }
 
 function fillEmptyPeriodDates() {
-  const today = todayStr()
-  const hard = form.deadlineHard || ''
-  for (const row of deliveryPlan.value) {
-    if (!row.startAt) row.startAt = today
-    if (!row.endAt && hard) row.endAt = hard
+  const rows = deliveryPlan.value
+  if (!rows.length) return
+  if (!rows[0].startAt) rows[0].startAt = todayStr()
+  chainPeriodStarts()
+  applyHardOnLast()
+}
+
+function chainPeriodStarts() {
+  const rows = deliveryPlan.value
+  for (let i = 1; i < rows.length; i++) {
+    rows[i].startAt = rows[i - 1].endAt || ''
   }
 }
 
+function applyHardOnLast() {
+  const rows = deliveryPlan.value
+  const hard = form.deadlineHard || ''
+  if (!rows.length || !hard) return
+  rows[rows.length - 1].endAt = hard
+}
+
+function onPeriodEndChange(i) {
+  const rows = deliveryPlan.value
+  if (i === rows.length - 1) {
+    applyHardOnLast()
+    return
+  }
+  chainPeriodStarts()
+}
+
 function setTimes(n) {
+  const oldTimes = deliveryTimes.value
   const times = Math.min(10, Math.max(1, Number(n) || 1))
   deliveryTimes.value = times
   const kept = deliveryPlan.value || []
   const percents = evenPercents(times)
   deliveryPlan.value = Array.from({ length: times }, (_, i) => blankPeriod(kept[i], percents[i]))
+  if (times > oldTimes) {
+    const formerLast = deliveryPlan.value[oldTimes - 1]
+    if (formerLast && formerLast.endAt && formerLast.endAt === form.deadlineHard) {
+      formerLast.endAt = ''
+    }
+  }
   fillEmptyPeriodDates()
 }
 
@@ -284,6 +335,17 @@ function bumpPercent(i, delta) {
   const row = deliveryPlan.value[i]
   if (!row) return
   row.percent = Math.min(100, Math.max(1, (Number(row.percent) || 1) + delta))
+}
+
+function clampPercent(i) {
+  const row = deliveryPlan.value[i]
+  if (!row) return
+  const n = Number(row.percent)
+  if (!Number.isFinite(n)) {
+    row.percent = 1
+    return
+  }
+  row.percent = Math.min(100, Math.max(1, Math.round(n)))
 }
 
 const planPercentSum = computed(() => deliveryPlan.value.reduce((s, r) => s + (Number(r.percent) || 0), 0))
@@ -373,7 +435,7 @@ function buildBody(attachmentId) {
     minYield: form.inspectMode === 'FULL' ? form.minYield : null,
     minCreditScore: form.minCreditScore,
     deadlineHard: form.deadlineHard,
-    deadlineFlexible: form.deadlineFlexible || null,
+    deadlineFlexible: null,
     deliveryAddress: form.deliveryAddress,
     packaging: form.packaging,
     multiProcess: 1,
@@ -434,7 +496,6 @@ async function fillFrom(id, mode) {
   form.minYield = form.inspectMode === 'FULL' ? (d.minYield ?? 0.97) : null
   form.minCreditScore = d.minCreditScore
   form.deadlineHard = dateOnly(d.deadlineHard)
-  form.deadlineFlexible = dateOnly(d.deadlineFlexible) || null
   form.deliveryAddress = d.deliveryAddress || ''
   form.packaging = d.packaging || ''
   form.multiProcess = d.multiProcess || 0
@@ -456,6 +517,7 @@ async function fillFrom(id, mode) {
         endAt: dateOnly(x.endAt) || row.endAt,
       }
     })
+    fillEmptyPeriodDates()
   } catch {
     setTimes(d.deliveryTimes || 1)
   }
@@ -500,6 +562,13 @@ function firstError() {
   if (!form.packaging?.trim()) return '请填写包装要求'
   if (deliveryPlan.value.some(r => !r.startAt || !r.endAt)) return '请为每一期填写开始时间和截止时间'
   if (deliveryPlan.value.some(r => r.startAt && r.endAt && r.startAt > r.endAt)) return '每期开始时间不能晚于截止时间'
+  for (let i = 1; i < deliveryPlan.value.length; i++) {
+    if (deliveryPlan.value[i].startAt !== deliveryPlan.value[i - 1].endAt) {
+      return `第${i + 1}期开始时间必须等于第${i}期截止时间`
+    }
+  }
+  const last = deliveryPlan.value[deliveryPlan.value.length - 1]
+  if (last && last.endAt !== hard) return '最后一期截止时间必须等于硬交期'
   if (deliveryPlan.value.some(r => !r.percent || r.percent < 1 || r.percent > 100)) return '请填写每一期的交付比例（1%～100%）'
   if (planPercentSum.value !== 100) return '各期交付比例之和必须为 100%'
   const named = (form.processes || []).filter(p => p.processName?.trim())
@@ -566,13 +635,15 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.publish-page { display: flex; justify-content: center; }
+.publish-form { width: 100%; max-width: 800px; }
 .block { margin-bottom: 12px; }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.row { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
 .row.head { color: #606266; font-size: 12px; margin-bottom: 8px; }
-.col-name { width: 160px; }
-.col-qty { width: 150px; }
-.col-req { width: 220px; }
+.col-name { width: 160px; flex-shrink: 0; }
+.col-req { flex: 1; min-width: 180px; }
+.proc-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .hint { margin-left: 8px; color: #909399; font-size: 12px; }
 .step {
   display: inline-flex;
@@ -599,6 +670,28 @@ onMounted(async () => {
   border-left: 1px solid #dcdfe6;
   border-right: 1px solid #dcdfe6;
   background: #fff;
+}
+.step-input {
+  flex: 1;
+  width: 0;
+  min-width: 56px;
+  height: 32px;
+  border: 0;
+  border-left: 1px solid #dcdfe6;
+  border-right: 1px solid #dcdfe6;
+  text-align: center;
+  outline: none;
+  background: #fff;
+  font-size: 14px;
+}
+.step-input::-webkit-outer-spin-button,
+.step-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.step-input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
 }
 .period-row {
   display: flex;

@@ -157,7 +157,7 @@ public class TodoService {
         long needSign = contracts.stream().filter(c -> c.getAttachmentId() != null).count();
         if (needSign > 0) {
             out.add(new TodoItem("SIGN_CONTRACT", "有 " + needSign + " 份合同待你签署",
-                    "/factory/stages", (int) needSign));
+                    "/factory/quotations", (int) needSign));
         }
         List<WorkStage> stages = workStageMapper.selectList(new LambdaQueryWrapper<WorkStage>()
                 .eq(WorkStage::getTenantId, tid));

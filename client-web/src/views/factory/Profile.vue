@@ -26,7 +26,7 @@
         </el-form-item>
         <el-form-item label="历史合格率">
           <el-input-number v-model="form.yieldRate" :min="0" :max="1" :step="0.01" />
-          <span class="hint">0~1，如 0.98 表示 98%</span>
+          <span class="hint">档案自报（0~1，如 0.98 表示 98%）。买家看到的「质检合格率」由平台按质检单另算，请到「我的主页」查看。</span>
         </el-form-item>
 
         <h4>企业介绍（买家可见）</h4>
@@ -37,7 +37,7 @@
 
         <h4>工序产能（件/天，由设备自动推导）</h4>
         <el-alert type="info" :closable="false"
-          title="产能不可手填：按「我的设备」里每台设备的适用工序与日产能自动合计。要调整请去改设备。"
+          title="产能不可手填：按「我的设备」日产能自动合计，仅供买家参考，报名不会占用设备。"
           style="margin-bottom:10px" />
         <el-table :data="deviceCapacity" border size="small" style="max-width:520px">
           <el-table-column prop="processName" label="工序" />

@@ -1,20 +1,18 @@
 <template>
   <div>
       <el-alert type="info" :closable="false" :title="topHint" style="margin-bottom:12px" />
-      <el-card v-if="quoteRows.length" shadow="never" style="margin-bottom:12px">
+      <el-card v-if="factoryQuoteList.length" shadow="never" style="margin-bottom:12px">
         <template #header>各工厂报价</template>
-        <el-table :data="quoteRows" size="small" border>
+        <el-table :data="factoryQuoteList" size="small" border>
           <el-table-column label="工厂" min-width="180">
             <template #default="{ row }">
               <el-button link type="primary" @click="openFactory(row.factoryId)">{{ row.factoryName }}</el-button>
             </template>
           </el-table-column>
-          <el-table-column prop="processName" label="工序" width="100" />
           <el-table-column prop="unitPrice" label="单价" width="90" />
-          <el-table-column label="承接区间" width="120">
-            <template #default="{ row }">{{ (row.minQty ?? '-') }} ~ {{ row.maxQty ?? '-' }} 件</template>
+          <el-table-column label="承接区间" width="140">
+            <template #default="{ row }">{{ (row.minQty ?? '-') }} ~ {{ (row.maxQty ?? '-') }} 件</template>
           </el-table-column>
-          <el-table-column prop="promisedDays" label="工期(天)" width="90" />
         </el-table>
       </el-card>
       <el-empty v-if="!aiSolutions.length && !canEdit" description="推荐方案尚未审核下发，请等待运营" />
@@ -35,62 +33,65 @@
               <div class="meta" style="font-weight:600">分期节点</div>
               <div v-for="(m, i) in parseRationale(s.rationaleJson).milestones" :key="i" class="meta">· {{ m }}</div>
             </div>
-            <el-table :data="parseCombo(s.finalComboJson)" size="small" border>
-              <el-table-column prop="processName" label="工序" width="80" />
+            <el-table :data="factoryAllocRows(s.finalComboJson)" size="small" border>
               <el-table-column label="工厂" min-width="160">
                 <template #default="{ row }">
                   <el-button link type="primary" @click="openFactory(row.factoryId)">{{ row.factoryName || ('工厂-' + row.factoryId) }}</el-button>
                   <div class="meta">信用 {{ row.creditScore ?? '-' }} · {{ authText(row.authStatus) }}</div>
                 </template>
               </el-table-column>
-              <el-table-column label="分量(件)" width="80">
+              <el-table-column label="分配(件)" width="88">
                 <template #default="{ row }">{{ row.quantity ?? '-' }}</template>
               </el-table-column>
               <el-table-column label="单价" width="76">
                 <template #default="{ row }">{{ row.unitPrice ?? '-' }}</template>
               </el-table-column>
-              <el-table-column prop="price" label="小计" width="80" />
+              <el-table-column label="小计" width="90">
+                <template #default="{ row }">{{ moneyText(row.price) }}</template>
+              </el-table-column>
               <el-table-column prop="days" label="工期" width="56" />
             </el-table>
+            <div class="total-bar">
+              <span>总计金额</span>
+              <strong>{{ moneyText(comboTotal(s.finalComboJson)) }} 元</strong>
+            </div>
             <el-button v-if="canEdit" type="primary" style="width:100%;margin-top:10px" @click="select(s)">按此分配确认方案</el-button>
           </el-card>
         </el-col>
         <el-col v-if="canEdit" :span="12">
           <el-card header="自选方案">
-            <p class="meta">按工序下拉选择已报名工厂，填写分量。可增删行；每道工序分量合计须等于该工序需求量，且落在该厂承接区间内。</p>
-            <div v-for="g in customGroups" :key="g.processNo" class="proc-block">
-              <div class="proc-head">
-                <span class="proc-title">{{ g.processName }} / {{ g.need }}件</span>
-                <span class="alloc-status" :class="groupSum(g) === g.need ? 'ok' : 'bad'">
-                  已分配 {{ groupSum(g) }} / {{ g.need }}
-                </span>
-              </div>
-              <div class="line head">
-                <span class="col-del" />
-                <span class="col-fac">报名工厂</span>
-                <span class="col-range">承接区间</span>
-                <span class="col-qty">分量(件)</span>
-                <span class="col-amt">金额</span>
-              </div>
-              <div v-for="(line, i) in g.lines" :key="g.processNo + '-' + i" class="line">
-                <span class="col-del">
-                  <el-button type="danger" :icon="Delete" circle plain size="small" @click="removeLine(g, i)" />
-                </span>
-                <el-select v-model="line.factoryId" placeholder="选择工厂" class="col-fac" size="small" filterable clearable>
-                  <el-option
-                    v-for="f in factoriesOf(g.processNo)"
-                    :key="f.factoryId"
-                    :label="f.factoryName"
-                    :value="f.factoryId"
-                    :disabled="usedFactory(g, f.factoryId, i)"
-                  />
-                </el-select>
-                <span class="col-range">{{ rangeText(g.processNo, line.factoryId) }}</span>
-                <el-input-number v-model="line.quantity" :min="1" class="col-qty" size="small" controls-position="right" />
-                <span class="col-amt">{{ moneyText(lineAmount(g, line)) }}</span>
-              </div>
-              <el-button type="primary" :icon="Plus" plain size="small" @click="addLine(g)">添加工厂</el-button>
+            <p class="meta">按零件件数把整单分给已报名工厂。可增删行；各厂件数合计须等于需求量 {{ demandNeed }} 件，且落在该厂承接区间内。小计 = 单价 × 分配件数。</p>
+            <div class="proc-head">
+              <span class="proc-title">需求 {{ demandNeed }} 件</span>
+              <span class="alloc-status" :class="allocSum === demandNeed ? 'ok' : 'bad'">
+                已分配 {{ allocSum }} / {{ demandNeed }}
+              </span>
             </div>
+            <div class="line head">
+              <span class="col-del" />
+              <span class="col-fac">报名工厂</span>
+              <span class="col-range">承接区间</span>
+              <span class="col-qty">分配(件)</span>
+              <span class="col-amt">小计</span>
+            </div>
+            <div v-for="(line, i) in customLines" :key="'c-' + i" class="line">
+              <span class="col-del">
+                <el-button type="danger" :icon="Delete" circle plain size="small" @click="removeLine(i)" />
+              </span>
+              <el-select v-model="line.factoryId" placeholder="选择工厂" class="col-fac" size="small" filterable clearable>
+                <el-option
+                  v-for="f in factoryQuoteList"
+                  :key="f.factoryId"
+                  :label="f.factoryName"
+                  :value="f.factoryId"
+                  :disabled="usedFactory(f.factoryId, i)"
+                />
+              </el-select>
+              <span class="col-range">{{ rangeText(line.factoryId) }}</span>
+              <el-input-number v-model="line.quantity" :min="1" class="col-qty" size="small" controls-position="right" />
+              <span class="col-amt">{{ moneyText(lineAmount(line)) }}</span>
+            </div>
+            <el-button type="primary" :icon="Plus" plain size="small" @click="addLine">添加工厂</el-button>
             <div class="total-bar">
               <span>总计金额</span>
               <strong>{{ moneyText(customTotal) }} 元</strong>
@@ -145,11 +146,11 @@ const router = useRouter()
 const demandId = route.params.demandId
 const solutions = ref([])
 const demandStatus = ref('')
-const demandProcesses = ref([])
+const demandNeed = ref(0)
 const factoryOpen = ref(false)
 const factoryInfo = ref({})
 const factoryQuotes = ref([])
-const customGroups = ref([])
+const customLines = ref([{ factoryId: null, quantity: null }])
 const savingCustom = ref(false)
 
 async function openFactory(id) {
@@ -159,22 +160,67 @@ async function openFactory(id) {
 
 const canEdit = computed(() => demandStatus.value === 'SOLUTION_GENERATED')
 const aiSolutions = computed(() => (solutions.value || []).filter(s => (s.type || '').startsWith('AI')))
-const quoteRows = computed(() => {
-  const rows = []
+const factoryQuoteList = computed(() => {
+  const out = []
+  const seen = new Set()
   for (const f of factoryQuotes.value) {
-    for (const q of (f.quotes || [])) {
-      rows.push({ factoryName: f.name, factoryId: f.id, ...q })
-    }
+    if (seen.has(f.id)) continue
+    seen.add(f.id)
+    const q = (f.quotes || [])[0] || {}
+    out.push({
+      factoryId: f.id,
+      factoryName: f.name,
+      unitPrice: q.unitPrice,
+      minQty: q.minQty,
+      maxQty: q.maxQty,
+    })
   }
-  return rows
+  return out
 })
 const topHint = computed(() => {
   if (demandStatus.value === 'SOLUTION_CONFIRMED') return '方案已确认，等待运营派单。确认后不可再改分配。'
-  return '上方是各厂报价。AI 推荐仅供参考且不可改；可在自选方案里按工序选择工厂并分配分量后确认。'
+  return '上方是各厂报价。AI 推荐仅供参考且不可改；可在自选方案里按零件件数把整单分给工厂后确认。'
 })
 
 function parseCombo(json) {
   try { return JSON.parse(json) } catch { return [] }
+}
+function factoryAllocRows(json) {
+  const map = new Map()
+  for (const it of parseCombo(json)) {
+    const fid = it.factoryId
+    if (fid == null) continue
+    const qty = Number(it.quantity) || 0
+    const unit = Number(it.unitPrice)
+    if (!map.has(fid)) {
+      map.set(fid, {
+        factoryId: fid,
+        factoryName: it.factoryName,
+        creditScore: it.creditScore,
+        authStatus: it.authStatus,
+        unitPrice: Number.isFinite(unit) ? unit : null,
+        quantity: qty,
+        days: Number(it.days) || 0,
+        minQty: it.minQty,
+        maxQty: it.maxQty,
+      })
+    } else {
+      const row = map.get(fid)
+      if (qty > row.quantity) row.quantity = qty
+      if ((Number(it.days) || 0) > row.days) row.days = Number(it.days) || 0
+    }
+  }
+  return [...map.values()].map(r => ({
+    ...r,
+    price: r.unitPrice != null && r.quantity
+      ? Math.round(r.unitPrice * r.quantity * 100) / 100
+      : null,
+  }))
+}
+function comboTotal(json) {
+  const rows = factoryAllocRows(json)
+  if (!rows.length) return null
+  return Math.round(rows.reduce((s, r) => s + (Number(r.price) || 0), 0) * 100) / 100
 }
 function parseRationale(raw) {
   if (!raw) return { rationale: '', risks: [], milestones: [] }
@@ -197,22 +243,19 @@ function certsText(c) {
   if (Array.isArray(c)) return c.join('、') || '-'
   return c || '-'
 }
-function factoriesOf(processNo) {
-  return quoteRows.value.filter(r => r.processNo === processNo)
+function quoteOf(factoryId) {
+  return factoryQuoteList.value.find(f => f.factoryId === factoryId)
 }
-function usedFactory(g, factoryId, idx) {
-  return g.lines.some((l, i) => i !== idx && l.factoryId === factoryId)
+function usedFactory(factoryId, idx) {
+  return customLines.value.some((l, i) => i !== idx && l.factoryId === factoryId)
 }
-function quoteOf(processNo, factoryId) {
-  return factoriesOf(processNo).find(f => f.factoryId === factoryId)
-}
-function rangeText(processNo, factoryId) {
-  const q = quoteOf(processNo, factoryId)
+function rangeText(factoryId) {
+  const q = quoteOf(factoryId)
   if (!q) return '-'
   return (q.minQty ?? '-') + ' ~ ' + (q.maxQty ?? '-')
 }
-function lineAmount(g, line) {
-  const q = quoteOf(g.processNo, line.factoryId)
+function lineAmount(line) {
+  const q = quoteOf(line.factoryId)
   const price = Number(q?.unitPrice)
   const qty = Number(line.quantity)
   if (!Number.isFinite(price) || !Number.isFinite(qty) || qty <= 0) return null
@@ -222,43 +265,30 @@ function moneyText(n) {
   if (n == null || !Number.isFinite(n)) return '-'
   return n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
+const allocSum = computed(() =>
+  customLines.value.reduce((s, l) => s + (Number(l.quantity) || 0), 0)
+)
 const customTotal = computed(() => {
   let total = 0
   let any = false
-  for (const g of customGroups.value) {
-    for (const line of g.lines || []) {
-      const amt = lineAmount(g, line)
-      if (amt != null) {
-        total += amt
-        any = true
-      }
+  for (const line of customLines.value) {
+    const amt = lineAmount(line)
+    if (amt != null) {
+      total += amt
+      any = true
     }
   }
   return any ? Math.round(total * 100) / 100 : null
 })
-function groupSum(g) {
-  return (g.lines || []).reduce((s, l) => s + (Number(l.quantity) || 0), 0)
+function addLine() {
+  customLines.value.push({ factoryId: null, quantity: null })
 }
-function addLine(g) {
-  g.lines.push({ factoryId: null, quantity: null })
-}
-function removeLine(g, i) {
-  if (g.lines.length <= 1) {
-    ElMessage.warning('每道工序至少保留一行')
+function removeLine(i) {
+  if (customLines.value.length <= 1) {
+    ElMessage.warning('至少保留一行')
     return
   }
-  g.lines.splice(i, 1)
-}
-function initCustom() {
-  const processes = demandProcesses.value.length
-    ? demandProcesses.value
-    : [{ processNo: 1, processName: '整单', quantity: 0 }]
-  customGroups.value = processes.map(p => ({
-    processNo: p.processNo,
-    processName: p.processName || ('工序' + p.processNo),
-    need: p.quantity || 0,
-    lines: [{ factoryId: null, quantity: null }],
-  }))
+  customLines.value.splice(i, 1)
 }
 
 async function load() {
@@ -266,12 +296,12 @@ async function load() {
   try {
     const view = await getDetail(demandId)
     demandStatus.value = view.demand?.status || ''
-    demandProcesses.value = view.processes || []
+    demandNeed.value = Number(view.demand?.quantity) || Number(view.processes?.[0]?.quantity) || 0
   } catch { demandStatus.value = '' }
   try {
     factoryQuotes.value = await listBidFactories(demandId)
   } catch { factoryQuotes.value = [] }
-  initCustom()
+  customLines.value = [{ factoryId: null, quantity: null }]
 }
 
 async function select(s) {
@@ -282,30 +312,28 @@ async function select(s) {
 }
 
 async function confirmCustom() {
+  const lines = customLines.value.filter(l => l.factoryId && Number(l.quantity) > 0)
+  if (!lines.length) {
+    ElMessage.warning('请选择工厂并填写分配件数')
+    return
+  }
+  if (allocSum.value !== demandNeed.value) {
+    ElMessage.warning(`已分配 ${allocSum.value} 件，须等于需求 ${demandNeed.value} 件`)
+    return
+  }
   const items = []
-  for (const g of customGroups.value) {
-    const lines = g.lines.filter(l => l.factoryId && Number(l.quantity) > 0)
-    if (!lines.length) {
-      ElMessage.warning(`请为工序「${g.processName}」选择工厂并填写分量`)
+  for (const l of lines) {
+    const q = quoteOf(l.factoryId)
+    const qty = Number(l.quantity)
+    if (q?.minQty != null && qty < q.minQty) {
+      ElMessage.warning(`「${q.factoryName}」分配低于最小承接量 ${q.minQty}`)
       return
     }
-    if (groupSum(g) !== g.need) {
-      ElMessage.warning(`工序「${g.processName}」已分配 ${groupSum(g)} 件，须等于 ${g.need} 件`)
+    if (q?.maxQty != null && qty > q.maxQty) {
+      ElMessage.warning(`「${q.factoryName}」分配超过最大承接量 ${q.maxQty}`)
       return
     }
-    for (const l of lines) {
-      const q = quoteOf(g.processNo, l.factoryId)
-      const qty = Number(l.quantity)
-      if (q?.minQty != null && qty < q.minQty) {
-        ElMessage.warning(`「${q.factoryName}」分量低于最小承接量 ${q.minQty}`)
-        return
-      }
-      if (q?.maxQty != null && qty > q.maxQty) {
-        ElMessage.warning(`「${q.factoryName}」分量超过最大承接量 ${q.maxQty}`)
-        return
-      }
-      items.push({ processNo: g.processNo, factoryId: l.factoryId, quantity: qty })
-    }
+    items.push({ factoryId: l.factoryId, quantity: qty })
   }
   await ElMessageBox.confirm('确认后将按自选分配提交给运营派单，此后不可再改。', '确认自选方案', { type: 'warning' })
   savingCustom.value = true

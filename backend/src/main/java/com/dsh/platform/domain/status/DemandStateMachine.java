@@ -20,7 +20,7 @@ public class DemandStateMachine {
     static {
         ALLOWED.put(DemandStatus.DRAFT, EnumSet.of(DemandStatus.PUBLISHED, DemandStatus.PENDING_AUDIT, DemandStatus.CANCELLED));
         ALLOWED.put(DemandStatus.PENDING_AUDIT, EnumSet.of(DemandStatus.PUBLISHED, DemandStatus.RETURNED, DemandStatus.CANCELLED));
-        ALLOWED.put(DemandStatus.PUBLISHED, EnumSet.of(DemandStatus.RETURNED, DemandStatus.FACTORY_THINKING,
+        ALLOWED.put(DemandStatus.PUBLISHED, EnumSet.of(DemandStatus.FACTORY_THINKING,
                 DemandStatus.THINKING, DemandStatus.CANCELLED));
         ALLOWED.put(DemandStatus.RETURNED, EnumSet.of(DemandStatus.PENDING_AUDIT, DemandStatus.CANCELLED));
         ALLOWED.put(DemandStatus.FACTORY_THINKING, EnumSet.of(DemandStatus.BUYER_THINKING,

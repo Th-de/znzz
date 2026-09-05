@@ -47,9 +47,9 @@
             <span v-else>-</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="320">
+        <el-table-column label="操作" width="360">
           <template #default="{ row }">
-            <el-button size="small" @click="$router.push('/buyer/demand/' + row.id)">查看</el-button>
+            <el-button size="small" type="primary" @click="$router.push('/buyer/demand/' + row.id)">详情</el-button>
             <el-button v-if="row.status==='PENDING_AUDIT'" size="small" disabled>等待运营审核</el-button>
             <el-button v-if="row.status==='RETURNED'" size="small" type="warning" @click="$router.push('/buyer/publish?id=' + row.id)">退回修改</el-button>
             <el-button v-if="row.status==='PUBLISHED'" size="small" type="danger" @click="cancelAndRepublish(row)">取消并重新发布</el-button>

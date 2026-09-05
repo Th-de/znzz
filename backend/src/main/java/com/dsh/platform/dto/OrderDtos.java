@@ -33,7 +33,7 @@ public class OrderDtos {
                                    String detail, Integer progress, BigDecimal totalAmount, String status,
                                    Boolean contractSigned, List<WorkStage> periods) {}
 
-    public record ReplaceFactoryRequest(Integer processNo, Long factoryId) {}
+    public record ReplaceFactoryRequest(Integer processNo, Long factoryId, Long fromFactoryId) {}
 
     public record OrderListView(Long id, Long demandId, String title, String productName,
                                 String factoryNames, BigDecimal totalAmount,
