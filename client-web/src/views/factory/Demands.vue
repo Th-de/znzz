@@ -28,6 +28,9 @@
         <el-table-column label="操作" width="230">
           <template #default="{ row }">
             <el-button v-if="row.status==='PUBLISHED' && row.applied" size="small" disabled>已报名</el-button>
+            <el-tooltip v-else-if="row.status==='PUBLISHED' && !creditOk(row)" :content="'当前信用分 ' + myCredit + '，未达到最低要求 ' + (row.minCreditScore ?? 0)" placement="top">
+              <el-button size="small" disabled>信用分不足</el-button>
+            </el-tooltip>
             <el-button v-else-if="row.status==='PUBLISHED'" size="small" type="primary" @click="openIntention(row)">意向报名</el-button>
             <template v-if="row.status==='FACTORY_THINKING' && row.applied">
               <el-button v-if="row.myQuoteStatus==='LOCKED'" size="small" disabled>已报价</el-button>
@@ -61,6 +64,7 @@
           <el-descriptions-item label="包装">{{ detail.demand.packaging }}</el-descriptions-item>
           <el-descriptions-item label="检验方式">{{ formatInspectMode(detail.demand.inspectMode) }}</el-descriptions-item>
           <el-descriptions-item label="图号/版本">{{ detail.demand.partRevision }}</el-descriptions-item>
+          <el-descriptions-item label="最低信用分">{{ detail.demand.minCreditScore ?? '-' }}</el-descriptions-item>
           <el-descriptions-item label="分期交付">{{ detail.demand.deliveryTimes || 1 }} 期</el-descriptions-item>
           <el-descriptions-item label="备注" :span="2">{{ detail.demand.remark || '-' }}</el-descriptions-item>
         </el-descriptions>
@@ -111,14 +115,14 @@
       </el-dialog>
 
       <el-dialog v-model="commitDialog" title="填报报价" width="560px" :close-on-click-modal="false">
-        <p class="tip">报该品全部工序的一件单价。承接量沿用意向期。工期与最低良率按买家发布需求执行，无需填写。提交后按「单价 × 承接量」冻结 5% 保证金（只冻一次）。</p>
+        <p class="tip">报该品全部工序的一件单价。承接量为意向报名时填写的区间，不可改。工期与最低良率按买家发布需求执行，无需填写。提交后按「单价 × 承接区间最高值」冻结 5% 保证金（只冻一次）。</p>
         <el-form label-width="120px">
           <el-form-item label="实施方案" required>
             <el-input v-model="commitForm.planText" type="textarea" :rows="3"
                       placeholder="如何组织生产、工艺路线、质量控制措施等" />
           </el-form-item>
           <el-form-item label="工艺">{{ processes.map(p => p.processName).join('、') || '-' }}</el-form-item>
-          <el-form-item label="承接量">{{ commitQty }} 件</el-form-item>
+          <el-form-item label="承接区间">{{ commitRangeText }}</el-form-item>
           <el-form-item label="单价(元/件)" required>
             <el-input-number v-model="commitUnit" :min="0.01" :precision="2" />
           </el-form-item>
@@ -155,6 +159,7 @@ import { DEMAND_STATUS, label, fmtTime, formatDeliveryPeriod, formatInspectMode 
 
 const router = useRouter()
 const demands = ref([])
+const myCredit = ref(0)
 const processes = ref([])
 const dialog = ref(false)
 const detailDialog = ref(false)
@@ -171,9 +176,20 @@ const commitForm = reactive({ demandId: null, planText: '', deliveryPlan: [], it
 const commitUnit = ref(null)
 const buyerDeliveryPlan = ref([])
 
-const commitQty = computed(() => commitForm.items[0]?.quantity || 0)
-const commitTotal = computed(() => ((commitUnit.value || 0) * (commitQty.value || 0)).toFixed(2))
-const commitDeposit = computed(() => (commitTotal.value * 0.05).toFixed(2))
+const commitMinQty = computed(() => Number(commitForm.items[0]?.minQty) || 1)
+const commitMaxQty = computed(() => {
+  const max = Number(commitForm.items[0]?.maxQty)
+  const qty = Number(commitForm.items[0]?.quantity)
+  return Math.max(Number.isFinite(max) ? max : 0, Number.isFinite(qty) ? qty : 0, commitMinQty.value || 0)
+})
+const commitRangeText = computed(() => {
+  const min = commitMinQty.value
+  const max = commitMaxQty.value
+  if (!max) return '-'
+  return min + ' ~ ' + max + ' 件'
+})
+const commitTotal = computed(() => ((commitUnit.value || 0) * (commitMaxQty.value || 0)).toFixed(2))
+const commitDeposit = computed(() => (Number(commitTotal.value) * 0.05).toFixed(2))
 
 function processName(pno) {
   return processes.value.find(p => p.processNo === pno)?.processName || ('工序' + pno)
@@ -193,6 +209,16 @@ function buyerPlanHint(i) {
 
 async function load() {
   demands.value = await api.get('/demand/for-factory')
+  try {
+    const me = await api.get('/enterprise/mine')
+    myCredit.value = Number(me?.creditScore) || 0
+  } catch {
+    myCredit.value = 0
+  }
+}
+
+function creditOk(row) {
+  return myCredit.value >= (Number(row.minCreditScore) || 0)
 }
 
 async function ensureProfile() {
@@ -228,6 +254,9 @@ async function openDetail(row) {
 }
 
 async function openIntention(row) {
+  if (!creditOk(row)) {
+    return ElMessage.warning('信用分 ' + myCredit.value + ' 未达到该需求最低要求 ' + (row.minCreditScore ?? 0) + '，无法报名')
+  }
   if (!(await ensureProfile())) return
   current.value = row
   selectedProcessNos.value = []
@@ -277,7 +306,7 @@ async function openCommit(row) {
   commitForm.planText = ''
   commitForm.deliveryPlan = Array.from({ length: times }, () => '')
   commitForm.items = mine.map(q => ({
-    processNo: q.processNo, quantity: q.maxQty, unitPrice: null,
+    processNo: q.processNo, minQty: q.minQty, maxQty: q.maxQty, quantity: q.maxQty, unitPrice: null,
   }))
   commitUnit.value = null
   commitForm.confirm = false

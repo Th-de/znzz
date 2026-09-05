@@ -213,6 +213,8 @@ CREATE TABLE IF NOT EXISTS `order` (
   commission_rate   DECIMAL(5,4) NOT NULL DEFAULT 0.0100,
   commission_amount DECIMAL(18,2) NOT NULL,
   status            VARCHAR(24) NOT NULL DEFAULT 'CREATED',
+  contract_issue_end_at DATETIME DEFAULT NULL COMMENT '买家上传合同截止',
+  contract_sign_end_at DATETIME DEFAULT NULL COMMENT '双方签署截止',
   created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   deleted           TINYINT NOT NULL DEFAULT 0,

@@ -77,6 +77,14 @@ export function accept(orderId) {
   return api.post(`/order/${orderId}/accept`)
 }
 
+export function cancelByBuyer(orderId, reason) {
+  return api.post(`/order/${orderId}/cancel-by-buyer`, reason ? { reason } : {})
+}
+
+export function cancelByFactory(orderId, reason) {
+  return api.post(`/order/${orderId}/cancel-by-factory`, reason ? { reason } : {})
+}
+
 export function submitSurvey(stageId, scores) {
   return api.post(`/order/stage/${stageId}/survey`, { scores })
 }

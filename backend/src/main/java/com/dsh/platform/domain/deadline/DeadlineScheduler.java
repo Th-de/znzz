@@ -33,6 +33,7 @@ public class DeadlineScheduler {
     private final WorkStageMapper workStageMapper;
     private final OrderMapper orderMapper;
     private final SiteNotify siteNotify;
+    private final com.dsh.platform.service.OrderService orderService;
 
     @Scheduled(fixedDelay = 60000)
     public void tick() {
@@ -110,6 +111,16 @@ public class DeadlineScheduler {
             } catch (Exception e) {
                 log.warn("保证金期调度失败 demandId={}: {}", d.getId(), e.getMessage());
             }
+        }
+        try {
+            orderService.timeoutContractIssue();
+        } catch (Exception e) {
+            log.warn("合同发布逾期处理失败: {}", e.getMessage());
+        }
+        try {
+            orderService.timeoutContractSign();
+        } catch (Exception e) {
+            log.warn("合同签署逾期处理失败: {}", e.getMessage());
         }
     }
 

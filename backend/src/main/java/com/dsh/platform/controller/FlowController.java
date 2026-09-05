@@ -78,4 +78,11 @@ public class FlowController {
         flowService.buyerDecide(demandId, action, req == null ? null : req.reason());
         return R.ok();
     }
+
+    @PostMapping("/{demandId}/close-solution")
+    @PreAuthorize("hasRole('BUYER')")
+    public R<Void> closeSolution(@PathVariable Long demandId, @RequestBody(required = false) CancelRequest req) {
+        flowService.closeAtSolution(demandId, req == null ? null : req.reason());
+        return R.ok();
+    }
 }

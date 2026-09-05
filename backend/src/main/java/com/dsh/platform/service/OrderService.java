@@ -16,6 +16,7 @@ import com.dsh.platform.dto.OrderDtos.InspectRequest;
 import com.dsh.platform.dto.OrderDtos.ProgressRequest;
 import com.dsh.platform.dto.OrderDtos.SurveyRequest;
 import com.dsh.platform.entity.Attachment;
+import com.dsh.platform.entity.Contract;
 import com.dsh.platform.entity.Demand;
 import com.dsh.platform.entity.Inspection;
 import com.dsh.platform.entity.Order;
@@ -74,9 +75,14 @@ public class OrderService {
     private final AttachmentMapper attachmentMapper;
     private final FundLedger fundLedger;
     private final AuditService auditService;
+    private final com.dsh.platform.mapper.ContractMapper contractMapper;
 
     @Value("${dsh.fee.commission-rate}")
     private BigDecimal commissionRate;
+    @Value("${dsh.time.contract-issue-hours:48}")
+    private int contractIssueHours;
+    @Value("${dsh.time.contract-sign-hours:24}")
+    private int contractSignHours;
 
     @Transactional
     public void confirmSolution(Long demandId, Long solutionId) {
@@ -135,6 +141,8 @@ public class OrderService {
         o.setCommissionAmount(total.multiply(commissionRate).setScale(2, RoundingMode.HALF_UP));
         o.setStatus("CREATED");
         orderMapper.insert(o);
+        o.setContractIssueEndAt(LocalDateTime.now().plusHours(Math.max(contractIssueHours, 1)));
+        orderMapper.updateById(o);
         contractService.createDrafts(o.getId(), s.getFinalComboJson());
         // 同工序可多厂分量：按 (厂, 工序) 组合判定 WIN/LOSE，落选逐一退款
         java.util.Set<String> winPairs = new java.util.HashSet<>();
@@ -1108,6 +1116,174 @@ public class OrderService {
         } catch (Exception e) {
             return "{}";
         }
+    }
+
+    @Transactional
+    public void timeoutContractIssue() {
+        List<Order> list = orderMapper.selectList(new LambdaQueryWrapper<Order>()
+                .eq(Order::getStatus, "CREATED")
+                .isNotNull(Order::getContractIssueEndAt)
+                .le(Order::getContractIssueEndAt, LocalDateTime.now())
+                .isNull(Order::getContractSignEndAt));
+        for (Order o : list) {
+            try {
+                List<Contract> cs = contractMapper.selectList(new LambdaQueryWrapper<Contract>()
+                        .eq(Contract::getOrderId, o.getId()));
+                boolean missing = cs.stream().anyMatch(c -> c.getAttachmentId() == null);
+                if (!missing) {
+                    continue;
+                }
+                forfeitBuyerAllToCombo(o, "ISSUE-TIMEOUT-" + o.getId(),
+                        "买家未在 48 小时内发布全部合同，已扣除全部保证金按方案件数比重赔偿工厂。");
+            } catch (Exception ignored) {
+                // 单笔失败不影响其它订单
+            }
+        }
+    }
+
+    @Transactional
+    public void timeoutContractSign() {
+        List<Order> list = orderMapper.selectList(new LambdaQueryWrapper<Order>()
+                .eq(Order::getStatus, "CREATED")
+                .isNotNull(Order::getContractSignEndAt)
+                .le(Order::getContractSignEndAt, LocalDateTime.now()));
+        for (Order o : list) {
+            Demand d = demandMapper.selectById(o.getDemandId());
+            if (d == null) {
+                continue;
+            }
+            List<Contract> cs = contractMapper.selectList(new LambdaQueryWrapper<Contract>()
+                    .eq(Contract::getOrderId, o.getId()));
+            for (Contract c : cs) {
+                if ("SIGNED".equals(c.getStatus()) || "CANCELLED".equals(c.getStatus())) {
+                    continue;
+                }
+                boolean factorySigned = c.getFactorySign() != null && !c.getFactorySign().isBlank();
+                if (c.getAttachmentId() != null && !factorySigned) {
+                    dropFactoryFromSign(o, d, c, "签署期超时未签");
+                }
+            }
+        }
+    }
+
+    @Transactional
+    public void cancelByBuyer(Long orderId, String reason) {
+        Order o = orderMapper.selectById(orderId);
+        if (o == null) {
+            throw new BizException("订单不存在");
+        }
+        Demand d = demandMapper.selectById(o.getDemandId());
+        if (d == null || !UserContext.tenantId().equals(d.getTenantId())) {
+            throw new BizException(403, "只能取消自己的订单");
+        }
+        if (!"CREATED".equals(o.getStatus())) {
+            throw new BizException("合同已生效，不能整单取消");
+        }
+        if (o.getContractSignEndAt() == null) {
+            throw new BizException("仅合同签署期内可取消订单");
+        }
+        forfeitBuyerAllToCombo(o, "BUYER-CANCEL-" + o.getId(),
+                reason == null || reason.isBlank()
+                        ? "买家在签署期取消订单，已扣除全部保证金按方案件数比重赔偿工厂。"
+                        : reason.trim());
+    }
+
+    @Transactional
+    public void cancelByFactory(Long orderId, String reason) {
+        if (!"FACTORY".equals(UserContext.role())) {
+            throw new BizException(403, "仅中标工厂可取消");
+        }
+        Order o = orderMapper.selectById(orderId);
+        if (o == null) {
+            throw new BizException("订单不存在");
+        }
+        Demand d = demandMapper.selectById(o.getDemandId());
+        Contract c = contractMapper.selectOne(new LambdaQueryWrapper<Contract>()
+                .eq(Contract::getOrderId, orderId)
+                .eq(Contract::getTenantId, UserContext.tenantId())
+                .last("limit 1"));
+        if (c == null) {
+            throw new BizException("你没有该订单合同");
+        }
+        if ("SIGNED".equals(c.getStatus())) {
+            throw new BizException("合同已签署，不能取消");
+        }
+        if (o.getContractSignEndAt() == null) {
+            throw new BizException("仅合同签署期内可取消订单");
+        }
+        dropFactoryFromSign(o, d, c, reason == null || reason.isBlank() ? "工厂取消订单" : reason.trim());
+    }
+
+    private void forfeitBuyerAllToCombo(Order o, String tag, String reason) {
+        Demand d = demandMapper.selectById(o.getDemandId());
+        Solution s = solutionMapper.selectById(o.getSolutionId());
+        Map<Long, Integer> weights = comboQtyWeights(s);
+        BigDecimal remain = fundLedger.buyerDepositRemaining(d.getId(), d.getTenantId());
+        fundLedger.splitBuyerDepositToFactories(d.getId(), d.getTenantId(), o.getId(), remain, weights, tag);
+        fundLedger.unfreezeIntentionsOfDemand(d.getId());
+        fundLedger.unfreezeDepositsOfDemand(d.getId());
+        DemandStatus st = DemandStatus.of(d.getStatus());
+        if (st == DemandStatus.SOLUTION_SELECTED || st == DemandStatus.CONTRACTED) {
+            stateMachine.transit(d, DemandStatus.CANCELLED);
+        }
+        d.setCancelReason(reason);
+        demandMapper.updateById(d);
+        o.setStatus("CANCELLED");
+        orderMapper.updateById(o);
+        List<Contract> cs = contractMapper.selectList(new LambdaQueryWrapper<Contract>()
+                .eq(Contract::getOrderId, o.getId()));
+        for (Contract c : cs) {
+            if (!"SIGNED".equals(c.getStatus())) {
+                c.setStatus("CANCELLED");
+                contractMapper.updateById(c);
+            }
+        }
+        siteNotify.send(d.getTenantId(), "订单已取消#" + o.getId(), reason);
+        for (Long fid : weights.keySet()) {
+            siteNotify.send(fid, "买家违约赔偿#" + o.getId(),
+                    "需求「" + d.getTitle() + "」" + reason);
+        }
+        auditService.record("合同期买家取消/逾期", "ORDER", o.getId(), reason);
+    }
+
+    private void dropFactoryFromSign(Order o, Demand d, Contract c, String reason) {
+        fundLedger.payFactoryDepositToBuyer(d.getId(), c.getTenantId(), d.getTenantId(), o.getId(),
+                "FACTORY-DROP-" + o.getId());
+        c.setStatus("CANCELLED");
+        contractMapper.updateById(c);
+        List<Quotation> qs = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
+                .eq(Quotation::getDemandId, d.getId())
+                .eq(Quotation::getTenantId, c.getTenantId()));
+        for (Quotation q : qs) {
+            q.setStatus("LOSE");
+            quotationMapper.updateById(q);
+        }
+        siteNotify.send(c.getTenantId(), "合同取消已扣保证金#" + o.getId(),
+                "需求「" + d.getTitle() + "」" + reason + "，保证金已赔偿买家。其它厂合同继续。");
+        siteNotify.send(d.getTenantId(), "工厂未签已获赔偿#" + o.getId(),
+                "工厂未签署或取消合同，已将其保证金赔偿给你。其它工厂合同继续。");
+        auditService.record("工厂未签/取消合同", "CONTRACT", c.getId(), reason);
+    }
+
+    private Map<Long, Integer> comboQtyWeights(Solution s) {
+        Map<Long, Integer> weights = new LinkedHashMap<>();
+        if (s == null) {
+            return weights;
+        }
+        for (Map<String, Object> item : readCombo(s.getFinalComboJson())) {
+            Object fid = item.get("factoryId");
+            if (fid == null) {
+                continue;
+            }
+            int qty = 0;
+            Object q = item.get("quantity");
+            if (q != null) {
+                qty = new BigDecimal(q.toString()).intValue();
+            }
+            Long id = Long.valueOf(fid.toString());
+            weights.merge(id, qty, Integer::max);
+        }
+        return weights;
     }
 
     private String sha256(String s) {

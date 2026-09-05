@@ -1,6 +1,7 @@
 package com.dsh.platform.controller;
 
 import com.dsh.platform.common.R;
+import com.dsh.platform.dto.DemandDtos.CancelRequest;
 import com.dsh.platform.dto.OrderDtos.DecisionRequest;
 import com.dsh.platform.dto.OrderDtos.DeliverRequest;
 import com.dsh.platform.dto.OrderDtos.InspectRequest;
@@ -192,6 +193,20 @@ public class OrderController {
     @PreAuthorize("hasRole('BUYER')")
     public R<Void> accept(@PathVariable Long orderId) {
         orderService.accept(orderId);
+        return R.ok();
+    }
+
+    @PostMapping("/{orderId}/cancel-by-buyer")
+    @PreAuthorize("hasRole('BUYER')")
+    public R<Void> cancelByBuyer(@PathVariable Long orderId, @RequestBody(required = false) CancelRequest req) {
+        orderService.cancelByBuyer(orderId, req == null ? null : req.reason());
+        return R.ok();
+    }
+
+    @PostMapping("/{orderId}/cancel-by-factory")
+    @PreAuthorize("hasRole('FACTORY')")
+    public R<Void> cancelByFactory(@PathVariable Long orderId, @RequestBody(required = false) CancelRequest req) {
+        orderService.cancelByFactory(orderId, req == null ? null : req.reason());
         return R.ok();
     }
 

@@ -63,6 +63,10 @@ public class SchemaPatcher {
                 "ALTER TABLE work_stage ADD COLUMN fai_status VARCHAR(16) NULL COMMENT '首件 NONE/PASS/FAIL'");
         patchColumn("notify", "demand_id",
                 "ALTER TABLE notify ADD COLUMN demand_id BIGINT UNSIGNED NULL COMMENT '关联需求' AFTER tenant_id");
+        patchColumn("order", "contract_issue_end_at",
+                "ALTER TABLE `order` ADD COLUMN contract_issue_end_at DATETIME NULL COMMENT '合同发布截止'");
+        patchColumn("order", "contract_sign_end_at",
+                "ALTER TABLE `order` ADD COLUMN contract_sign_end_at DATETIME NULL COMMENT '合同签署截止'");
         backfillDeliveredQty();
     }
 

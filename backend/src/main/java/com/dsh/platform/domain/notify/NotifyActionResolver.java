@@ -54,8 +54,8 @@ public class NotifyActionResolver {
         Long hashId = trailingId(title);
         if (title.startsWith("请按厂上传合同#") || title.startsWith("请上传合同#") || title.startsWith("合同已审过#")) {
             Long orderId = firstId(hashId);
-            v.setLink("/buyer/order/" + orderId);
-            v.setAction(title.contains("上传") ? "去上传合同" : "查看订单");
+            v.setLink(buyerDemandByOrder(orderId));
+            v.setAction(title.contains("上传") ? "去上传合同" : "查看需求");
             if (factory) {
                 v.setLink("/factory/stages");
                 v.setAction("去工单");
@@ -83,8 +83,8 @@ public class NotifyActionResolver {
             return;
         }
         if (title.startsWith("订单已完成#")) {
-            v.setLink("/buyer/order/" + hashId);
-            v.setAction("查看订单");
+            v.setLink(buyerDemandByOrder(hashId));
+            v.setAction("查看需求");
             return;
         }
         if (title.startsWith("订单已结算#")) {
@@ -103,7 +103,7 @@ public class NotifyActionResolver {
             return;
         }
         if (title.startsWith("运营下发了AI方案#") || title.startsWith("方案已生成#")) {
-            v.setLink(hashId != null ? "/buyer/solutions/" + hashId : "/buyer/home");
+            v.setLink(hashId != null ? "/buyer/demand/" + hashId : "/buyer/home");
             v.setAction("去看方案");
             return;
         }
@@ -303,13 +303,24 @@ public class NotifyActionResolver {
 
     private String buyerOrderByStage(Long stageId) {
         if (stageId == null) {
-            return "/buyer/orders";
+            return "/buyer/home";
         }
         WorkStage ws = workStageMapper.selectById(stageId);
         if (ws == null || ws.getOrderId() == null) {
-            return "/buyer/orders";
+            return "/buyer/home";
         }
-        return "/buyer/order/" + ws.getOrderId();
+        return buyerDemandByOrder(ws.getOrderId());
+    }
+
+    private String buyerDemandByOrder(Long orderId) {
+        if (orderId == null) {
+            return "/buyer/home";
+        }
+        Order o = orderMapper.selectById(orderId);
+        if (o == null || o.getDemandId() == null) {
+            return "/buyer/home";
+        }
+        return "/buyer/demand/" + o.getDemandId();
     }
 
     private static Long firstId(Long raw) {

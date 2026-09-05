@@ -6,7 +6,6 @@
         <el-menu-item index="/buyer/home">我的需求</el-menu-item>
         <el-menu-item index="/buyer/mine">我的主页</el-menu-item>
         <el-menu-item index="/buyer/publish">发布需求</el-menu-item>
-        <el-menu-item index="/buyer/orders">我的订单</el-menu-item>
         <el-menu-item index="/buyer/notifies">通知</el-menu-item>
       </el-menu>
     </el-aside>
@@ -32,8 +31,7 @@ import { useRoute, useRouter } from 'vue-router'
 const route = useRoute()
 const router = useRouter()
 const active = computed(() => {
-  if (route.path.startsWith('/buyer/order')) return '/buyer/orders'
-  if (route.path.startsWith('/buyer/demand') || route.path.startsWith('/buyer/solutions')) return '/buyer/home'
+  if (route.path.startsWith('/buyer/order') || route.path.startsWith('/buyer/demand') || route.path.startsWith('/buyer/solutions')) return '/buyer/home'
   if (route.path.startsWith('/buyer/mine')) return '/buyer/mine'
   if (route.path.startsWith('/buyer/publish')) return '/buyer/publish'
   if (route.path.startsWith('/buyer/notifies')) return '/buyer/notifies'

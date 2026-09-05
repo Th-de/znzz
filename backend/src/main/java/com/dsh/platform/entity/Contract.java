@@ -31,6 +31,9 @@ public class Contract {
     private Integer minQty;
     @com.baomidou.mybatisplus.annotation.TableField(exist = false)
     private Integer maxQty;
+    /** 确认方案中该厂承接数量 */
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private Integer allocQty;
     @com.baomidou.mybatisplus.annotation.TableField(exist = false)
     private String processNames;
     @com.baomidou.mybatisplus.annotation.TableField(exist = false)

@@ -7,9 +7,11 @@ import com.dsh.platform.domain.coverage.ProcessCoverageService;
 import com.dsh.platform.domain.credit.CreditScoring;
 import com.dsh.platform.domain.fund.FundLedger;
 import com.dsh.platform.domain.notify.SiteNotify;
+import com.dsh.platform.domain.quote.QuoteEstimate;
 import com.dsh.platform.domain.status.DemandStateMachine;
 import com.dsh.platform.domain.status.DemandStatus;
 import com.dsh.platform.entity.Demand;
+import com.dsh.platform.domain.quote.QuoteEstimate;
 import com.dsh.platform.entity.Enterprise;
 import com.dsh.platform.entity.Quotation;
 import com.dsh.platform.mapper.DemandMapper;
@@ -98,19 +100,11 @@ public class FlowService {
             return;
         }
         deductFactoryThinkingTimeout(d);
-        if (!coverageService.committedPiecesCovered(d.getId())) {
-            stateMachine.transit(d, DemandStatus.FLOW_FAILED);
-            demandMapper.updateById(d);
-            siteNotify.send(d.getTenantId(), "需求流拍#" + demandId,
-                    "需求「" + d.getTitle() + "」工厂思考期结束后各工序填报产能不足，已流拍，相关资金已退回。");
-            notifyFactories(demandId, "需求流拍#" + demandId,
-                    "需求「" + d.getTitle() + "」已流拍，意向金/保证金已退回。");
-            fundLedger.unfreezeIntentionsOfDemand(demandId);
-            fundLedger.unfreezeDepositsOfDemand(demandId);
-            return;
-        }
         forfeitSilentFactories(d);
-        BigDecimal estimate = estimateTotal(d);
+        List<Quotation> committed = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
+                .eq(Quotation::getDemandId, d.getId())
+                .eq(Quotation::getStatus, "LOCKED"));
+        BigDecimal estimate = (BigDecimal) QuoteEstimate.of(d, committed).get("estimatedTotal");
         stateMachine.transit(d, DemandStatus.BUYER_THINKING);
         d.setBuyerThinkingAt(LocalDateTime.now());
         d.setBuyerThinkingEndAt(LocalDateTime.now().plusHours(Math.max(buyerThinkingHours, 1)));
@@ -125,7 +119,7 @@ public class FlowService {
                 "进入买家思考期，预估总价 " + estimate);
     }
 
-    /** 买家思考期决定：CONTINUE 交保证金并触发 AI 方案；CANCEL 结束订单全退。 */
+    /** 买家思考期决定：CONTINUE 交保证金并触发 AI 方案；CANCEL 结束订单全退意向金与保证金。 */
     @Transactional
     public void buyerDecide(Long demandId, String action, String reason) {
         Demand d = get(demandId);
@@ -216,18 +210,52 @@ public class FlowService {
         }
     }
 
-    /** 预估总价：该品最低单价 × 需求件数（工序不再拆数量）。 */
+    /** 方案期买家关闭订单：扣除保证金 50% 按各厂承接区间最高值比重赔偿，余款退回。 */
+    @Transactional
+    public void closeAtSolution(Long demandId, String reason) {
+        Demand d = get(demandId);
+        DemandStatus st = DemandStatus.of(d.getStatus());
+        if (st != DemandStatus.SOLUTION_GENERATED && st != DemandStatus.SOLUTION_CONFIRMED) {
+            throw new BizException("仅方案期可以关闭订单");
+        }
+        if (!UserContext.tenantId().equals(d.getTenantId())) {
+            throw new BizException(403, "只能操作自己的需求");
+        }
+        List<Quotation> locked = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
+                .eq(Quotation::getDemandId, demandId)
+                .in(Quotation::getStatus, "LOCKED", "WIN"));
+        java.util.Map<Long, Integer> weights = new java.util.LinkedHashMap<>();
+        for (Quotation q : locked) {
+            if (q.getTenantId() == null) {
+                continue;
+            }
+            int max = Math.max(q.getMaxQty() == null ? 0 : q.getMaxQty(),
+                    q.getMinQty() == null ? 0 : q.getMinQty());
+            weights.merge(q.getTenantId(), max, Integer::max);
+        }
+        BigDecimal remain = fundLedger.buyerDepositRemaining(demandId, d.getTenantId());
+        BigDecimal pool = remain.multiply(new BigDecimal("0.5")).setScale(2, java.math.RoundingMode.HALF_UP);
+        fundLedger.splitBuyerDepositToFactories(demandId, d.getTenantId(), null, pool, weights, "SOLUTION-CLOSE-" + demandId);
+        fundLedger.refundBuyerDeposit(demandId, d.getTenantId());
+        fundLedger.unfreezeIntentionsOfDemand(demandId);
+        fundLedger.unfreezeDepositsOfDemand(demandId);
+        stateMachine.transit(d, DemandStatus.CANCELLED);
+        d.setCancelReason(reason == null || reason.isBlank() ? "买家方案期关闭订单，保证金 50% 赔偿工厂" : reason.trim());
+        demandMapper.updateById(d);
+        siteNotify.send(d.getTenantId(), "订单已关闭#" + demandId,
+                "需求「" + d.getTitle() + "」已关闭。已扣除保证金 50% 按各厂承接区间最高值比重赔偿，剩余保证金已退回。");
+        notifyFactories(demandId, "买家关闭订单#" + demandId,
+                "买家已关闭需求「" + d.getTitle() + "」，已按承接区间最高值比重获得赔偿，意向金/保证金余额已退回。");
+        auditService.record("方案期关闭订单", "DEMAND", demandId, d.getCancelReason());
+    }
+
+    /** 预估总价：去极值后按各厂承接区间最高值加权的单价 × 需求件数。 */
     private BigDecimal estimateTotal(Demand d) {
         List<Quotation> committed = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
                 .eq(Quotation::getDemandId, d.getId())
                 .eq(Quotation::getStatus, "LOCKED"));
-        BigDecimal minUnit = committed.stream()
-                .map(this::unitPriceOf)
-                .filter(u -> u != null && u.compareTo(BigDecimal.ZERO) > 0)
-                .min(BigDecimal::compareTo)
-                .orElse(BigDecimal.ZERO);
-        int qty = d.getQuantity() == null ? 0 : d.getQuantity();
-        return minUnit.multiply(BigDecimal.valueOf(qty)).setScale(2, java.math.RoundingMode.HALF_UP);
+        Object v = QuoteEstimate.of(d, committed).get("estimatedTotal");
+        return v instanceof BigDecimal b ? b : BigDecimal.ZERO;
     }
 
     private BigDecimal unitPriceOf(Quotation q) {

@@ -22,6 +22,8 @@ public class Order {
     private String status;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+    private LocalDateTime contractIssueEndAt;
+    private LocalDateTime contractSignEndAt;
     @TableLogic
     private Integer deleted;
 }

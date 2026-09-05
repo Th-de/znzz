@@ -35,7 +35,10 @@
               <span v-else-if="row.actionKey==='WAIT_SOLUTION'" class="op-text">等待买家确认方案</span>
               <span v-else-if="row.actionKey==='WAIT_DISPATCH'" class="op-text">等待运营派单</span>
               <span v-else-if="row.actionKey==='WAIT_ISSUE'" class="op-text">待下发合同</span>
-              <el-button v-else-if="row.actionKey==='SIGN'" size="small" type="primary" @click="openSign(row)">签署合同</el-button>
+              <template v-else-if="row.actionKey==='SIGN'">
+                <el-button size="small" type="primary" @click="openSign(row)">签署合同</el-button>
+                <el-button size="small" type="danger" @click="cancelOrder(row)">取消订单</el-button>
+              </template>
               <span v-else-if="row.actionKey==='PENDING_REVIEW'" class="op-text">待运营确认</span>
               <span v-else-if="row.actionKey==='SIGNED'" class="op-text">已签约</span>
               <span v-else-if="row.actionKey==='LOSE'" class="op-text">未中标</span>
@@ -68,6 +71,7 @@
         <el-descriptions-item label="备注" :span="2">{{ detail.demand.remark || '-' }}</el-descriptions-item>
         <el-descriptions-item label="意向金">{{ intentionLabel }}</el-descriptions-item>
         <el-descriptions-item label="保证金">{{ depositLabel }}</el-descriptions-item>
+        <el-descriptions-item label="承接区间">{{ qtyRangeLabel }}</el-descriptions-item>
         <el-descriptions-item label="报价单价">{{ unitPriceLabel }}</el-descriptions-item>
         <el-descriptions-item label="总报价">{{ totalPriceLabel }}</el-descriptions-item>
       </el-descriptions>
@@ -92,12 +96,12 @@
     </el-dialog>
 
     <el-dialog v-model="commitDialog" title="填报报价" width="560px" :close-on-click-modal="false">
-      <p class="tip">报该品全部工序的一件单价。工期与最低良率按买家发布需求执行。提交后按「单价 × 承接量」冻结 5% 保证金（只冻一次）。</p>
+      <p class="tip">报该品全部工序的一件单价。承接量为意向报名时填写的区间，不可改。工期与最低良率按买家发布需求执行。提交后按「单价 × 承接区间最高值」冻结 5% 保证金（只冻一次）。</p>
       <el-form label-width="120px">
         <el-form-item label="实施方案" required>
           <el-input v-model="commitForm.planText" type="textarea" :rows="3" />
         </el-form-item>
-        <el-form-item label="承接量">{{ commitQty }} 件</el-form-item>
+        <el-form-item label="承接区间">{{ commitRangeText }}</el-form-item>
         <el-form-item label="单价(元/件)" required>
           <el-input-number v-model="commitUnit" :min="0.01" :precision="2" />
         </el-form-item>
@@ -143,7 +147,7 @@ import { ref, computed, reactive, onMounted } from 'vue'
 import api from '../../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { payIntention, commit } from '../../api/bidding'
-import { getContract, factorySign } from '../../api/order'
+import { getContract, factorySign, cancelByFactory } from '../../api/order'
 import { downloadAttachment } from '../../api/file'
 import SignPad from '../../components/SignPad.vue'
 import { DEMAND_STATUS, INTENTION_STATUS, DEPOSIT_STATUS, label, fmtTime, formatDeliveryPeriod, formatInspectMode } from '../../utils/labels'
@@ -216,9 +220,28 @@ const totalPriceLabel = computed(() => {
   return (uniq.length === 1 ? uniq[0] : Math.max(...nums)).toFixed(2)
 })
 
-const commitQty = computed(() => commitForm.items[0]?.quantity || 0)
-const commitTotal = computed(() => ((commitUnit.value || 0) * (commitQty.value || 0)).toFixed(2))
+const commitMinQty = computed(() => Number(commitForm.items[0]?.minQty) || 1)
+const commitMaxQty = computed(() => {
+  const max = Number(commitForm.items[0]?.maxQty)
+  const qty = Number(commitForm.items[0]?.quantity)
+  return Math.max(Number.isFinite(max) ? max : 0, Number.isFinite(qty) ? qty : 0, commitMinQty.value || 0)
+})
+const commitRangeText = computed(() => {
+  const min = commitMinQty.value
+  const max = commitMaxQty.value
+  if (!max) return '-'
+  return min + ' ~ ' + max + ' 件'
+})
+const commitTotal = computed(() => ((commitUnit.value || 0) * (commitMaxQty.value || 0)).toFixed(2))
 const commitDeposit = computed(() => (Number(commitTotal.value) * 0.05).toFixed(2))
+const qtyRangeLabel = computed(() => {
+  const q = detailQuotes.value[0]
+  if (!q) return '-'
+  const min = q.minQty ?? 1
+  const max = q.maxQty ?? q.quantity
+  if (max == null) return '-'
+  return min + ' ~ ' + max + ' 件'
+})
 
 function processName(pno) {
   return processes.value.find(p => p.processNo === pno)?.processName || ('工序' + pno)
@@ -251,6 +274,8 @@ async function openCommit(row) {
   commitForm.planText = mine.find(q => q.planText)?.planText || ''
   commitForm.items = mine.map(q => ({
     processNo: q.processNo,
+    minQty: q.minQty,
+    maxQty: q.maxQty,
     quantity: q.maxQty,
     unitPrice: q.unitPrice || null,
   }))
@@ -314,6 +339,23 @@ async function doSign() {
   await factorySign(signOrderId.value, true, signData.value)
   ElMessage.success('已签署合同')
   signOpen.value = false
+  load()
+}
+
+async function cancelOrder(row) {
+  if (!row.orderId) return ElMessage.warning('尚未生成订单')
+  await ElMessageBox.confirm(
+    '取消后将扣除你缴纳的保证金赔偿买家，其他工厂合同继续。确定取消？',
+    '取消订单',
+    { type: 'warning', confirmButtonText: '再确认一次', cancelButtonText: '返回' },
+  )
+  await ElMessageBox.confirm(
+    '请再次确认：此操作不可撤销，将扣除本厂保证金赔偿买家。',
+    '二次确认',
+    { type: 'warning', confirmButtonText: '确认取消订单', cancelButtonText: '返回' },
+  )
+  await cancelByFactory(row.orderId)
+  ElMessage.success('已取消本厂订单')
   load()
 }
 

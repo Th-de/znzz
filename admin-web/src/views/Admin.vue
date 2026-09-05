@@ -36,7 +36,7 @@
             </el-card>
           </el-col>
         </el-row>
-        <h4>待办与关注（按阶段截止排序处理）</h4>
+        <h4>待办与关注（按提交时间，最新在上）</h4>
         <PagedBox :data="overview.attention || []" v-slot="{ rows }">
         <el-table :data="rows" border size="small">
           <el-table-column prop="demandId" label="需求" width="70" />
@@ -147,10 +147,19 @@
             <el-descriptions-item label="工厂思考截止">{{ fmtTime(detail.demand?.factoryThinkingEndAt) }}</el-descriptions-item>
             <el-descriptions-item label="买家思考开始">{{ fmtTime(detail.demand?.buyerThinkingAt) }}</el-descriptions-item>
             <el-descriptions-item label="买家思考截止">{{ fmtTime(detail.demand?.buyerThinkingEndAt) }}</el-descriptions-item>
-            <el-descriptions-item label="来源需求">{{ detail.demand?.sourceDemandId || '-' }}</el-descriptions-item>
             <el-descriptions-item label="取消原因">{{ detail.demand?.cancelReason || '-' }}</el-descriptions-item>
             <el-descriptions-item label="备注">{{ detail.demand?.remark || '-' }}</el-descriptions-item>
           </el-descriptions>
+          <h4>分期交付计划</h4>
+          <el-table v-if="adminDeliveryRows.length" :data="adminDeliveryRows" border size="small" style="margin:8px 0 12px">
+            <el-table-column label="期次" width="90">
+              <template #default="{ $index }">第{{ $index + 1 }}期</template>
+            </el-table-column>
+            <el-table-column prop="percent" label="交付比例" width="120" />
+            <el-table-column prop="startAt" label="开始日期" width="140" />
+            <el-table-column prop="endAt" label="截止日期" min-width="140" />
+          </el-table>
+          <p v-else class="hint">未填写分期计划</p>
           <el-collapse style="margin-top:12px">
             <el-collapse-item title="技术要求（材料/公差/认证等）" name="tech">
               <el-descriptions :column="1" border size="small">
@@ -833,6 +842,30 @@ const fileTitle = ref('')
 const fileText = ref('')
 const detailOpen = ref(false)
 const detail = reactive({ demand: null, processes: [], attachments: [], factories: [], confirmedPlan: { groups: [], total: 0, hint: '' } })
+const adminDeliveryRows = computed(() => {
+  try {
+    const arr = JSON.parse(detail.demand?.deliveryPlanJson || '[]')
+    if (!Array.isArray(arr)) return []
+    return arr.map((x) => {
+      if (x == null) return { percent: '-', startAt: '-', endAt: '-' }
+      let percent = '-'
+      if (x.percent != null && Number(x.percent) > 0) {
+        percent = Number(x.percent) + '%'
+      } else if (String(x.text || '').includes('%')) {
+        percent = x.text
+      } else if (x.qty != null && Number(x.qty) > 0 && Number(x.qty) <= 100) {
+        percent = Number(x.qty) + '%'
+      }
+      return {
+        percent,
+        startAt: String(x.startAt || '').slice(0, 10) || '-',
+        endAt: String(x.endAt || '').slice(0, 10) || '-',
+      }
+    })
+  } catch {
+    return []
+  }
+})
 const returnOpen = ref(false)
 const returnReason = ref('')
 const returnTarget = ref(null)

@@ -1,5 +1,8 @@
 <template>
   <div>
+      <div style="margin-bottom:12px">
+        <el-button v-if="canCloseSolution" type="danger" @click="closeOrder">关闭订单</el-button>
+      </div>
       <el-alert type="info" :closable="false" :title="topHint" style="margin-bottom:12px" />
       <el-card v-if="factoryQuoteList.length" shadow="never" style="margin-bottom:12px">
         <template #header>各工厂报价</template>
@@ -135,7 +138,7 @@
 import { computed, ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listByDemand, selectSolution, saveCustom } from '../../api/solution'
-import { getDetail, listBidFactories } from '../../api/demand'
+import { getDetail, listBidFactories, closeSolution } from '../../api/demand'
 import api from '../../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete } from '@element-plus/icons-vue'
@@ -159,6 +162,7 @@ async function openFactory(id) {
 }
 
 const canEdit = computed(() => demandStatus.value === 'SOLUTION_GENERATED')
+const canCloseSolution = computed(() => ['SOLUTION_GENERATED', 'SOLUTION_CONFIRMED'].includes(demandStatus.value))
 const aiSolutions = computed(() => (solutions.value || []).filter(s => (s.type || '').startsWith('AI')))
 const factoryQuoteList = computed(() => {
   const out = []
@@ -289,6 +293,17 @@ function removeLine(i) {
     return
   }
   customLines.value.splice(i, 1)
+}
+
+async function closeOrder() {
+  await ElMessageBox.confirm(
+    '关闭后将扣除买家保证金 50%，按各厂承接区间最高值比重赔偿工厂，剩余保证金退回。确定关闭？',
+    '关闭订单',
+    { type: 'warning', confirmButtonText: '确认关闭', cancelButtonText: '再想想' },
+  )
+  await closeSolution(demandId)
+  ElMessage.success('订单已关闭')
+  router.push('/buyer/demand/' + demandId)
 }
 
 async function load() {

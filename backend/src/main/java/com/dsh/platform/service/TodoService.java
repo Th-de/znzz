@@ -63,7 +63,7 @@ public class TodoService {
             if (!pay.isEmpty()) {
                 WorkStage first = pay.get(0);
                 out.add(new TodoItem("PAY_STAGE", "有 " + pay.size() + " 笔阶段款待支付托管",
-                        "/buyer/order/" + first.getOrderId(), pay.size()));
+                        buyerDemandLink(first.getOrderId()), pay.size()));
             }
             List<Contract> unsigned = contractMapper.selectList(new LambdaQueryWrapper<Contract>()
                     .in(Contract::getOrderId, orderIds)
@@ -72,7 +72,7 @@ public class TodoService {
                     || c.getBuyerSign() == null || c.getBuyerSign().isBlank()).count();
             if (needSign > 0) {
                 out.add(new TodoItem("SIGN_CONTRACT", "有 " + needSign + " 份合同待你上传或签名",
-                        "/buyer/order/" + unsigned.get(0).getOrderId(), (int) needSign));
+                        buyerDemandLink(unsigned.get(0).getOrderId()), (int) needSign));
             }
             for (Order o : orders) {
                 if (!"IN_PRODUCTION".equals(o.getStatus())) {
@@ -84,7 +84,7 @@ public class TodoService {
                         "PASS".equals(s.getStatus()) && "HELD".equals(s.getEscrowStatus()));
                 if (allReady) {
                     out.add(new TodoItem("ACCEPT_ORDER", "订单#" + o.getId() + " 可完工确认",
-                            "/buyer/order/" + o.getId(), 1));
+                            buyerDemandLink(o.getId()), 1));
                 }
             }
         }
@@ -92,7 +92,7 @@ public class TodoService {
         if (returned > 0) {
             Demand d = demands.stream().filter(x -> "RETURNED".equals(x.getStatus())).findFirst().orElse(null);
             out.add(new TodoItem("RETURNED_DEMAND", "有 " + returned + " 条需求被退回，请修改后重提",
-                    "/buyer/publish?id=" + (d == null ? "" : d.getId()), (int) returned));
+                    "/buyer/demand/" + (d == null ? "" : d.getId()), (int) returned));
         }
         long thinking = demands.stream().filter(d -> "THINKING".equals(d.getStatus())).count();
         if (thinking > 0) {
@@ -114,7 +114,7 @@ public class TodoService {
                     .eq(Solution::getStatus, "ACTIVE"));
             if (n != null && n > 0) {
                 out.add(new TodoItem("PICK_SOLUTION", "需求「" + d.getTitle() + "」可选择方案",
-                        "/buyer/solutions/" + d.getId(), 1));
+                        "/buyer/demand/" + d.getId(), 1));
             }
         }
         return out;
@@ -172,5 +172,16 @@ public class TodoService {
                     "/factory/stages", (int) producing));
         }
         return out;
+    }
+
+    private String buyerDemandLink(Long orderId) {
+        if (orderId == null) {
+            return "/buyer/home";
+        }
+        Order o = orderMapper.selectById(orderId);
+        if (o == null || o.getDemandId() == null) {
+            return "/buyer/home";
+        }
+        return "/buyer/demand/" + o.getDemandId();
     }
 }

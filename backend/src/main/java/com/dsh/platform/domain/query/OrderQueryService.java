@@ -36,6 +36,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -73,6 +74,16 @@ public class OrderQueryService {
                 .eq(Contract::getOrderId, orderId));
         List<WorkStage> stages = workStageMapper.selectList(new LambdaQueryWrapper<WorkStage>()
                 .eq(WorkStage::getOrderId, orderId));
+        boolean created = "CREATED".equals(o.getStatus());
+        boolean inSign = created && o.getContractSignEndAt() != null;
+        boolean canBuyer = "BUYER".equals(UserContext.role()) && inSign;
+        boolean canFactory = false;
+        if ("FACTORY".equals(UserContext.role()) && inSign) {
+            canFactory = contracts.stream().anyMatch(c ->
+                    UserContext.tenantId().equals(c.getTenantId())
+                            && !"SIGNED".equals(c.getStatus())
+                            && !"CANCELLED".equals(c.getStatus()));
+        }
         return new OrderDetailView(
                 o.getId(),
                 o.getDemandId(),
@@ -86,7 +97,11 @@ public class OrderQueryService {
                 o.getCreatedAt(),
                 comboOf(s, o.getDemandId()),
                 flowSteps(contracts),
-                flowActive(o.getStatus(), contracts, stages)
+                flowActive(o.getStatus(), contracts, stages),
+                o.getContractIssueEndAt(),
+                o.getContractSignEndAt(),
+                canBuyer,
+                canFactory
         );
     }
 
@@ -309,7 +324,8 @@ public class OrderQueryService {
         if (s == null) {
             return List.of();
         }
-        List<ComboItem> out = new ArrayList<>();
+        Map<Long, Acc> byFactory = new LinkedHashMap<>();
+        int orphan = 0;
         for (Map<String, Object> item : readCombo(s.getFinalComboJson())) {
             Long factoryId = asLong(item.get("factoryId"));
             String factoryName = item.get("factoryName") == null ? null : item.get("factoryName").toString();
@@ -317,7 +333,7 @@ public class OrderQueryService {
                 Enterprise e = enterpriseMapper.selectById(factoryId);
                 factoryName = e == null ? ("厂" + factoryId) : e.getName();
             }
-            Object qty = item.get("quantity");
+            Integer qty = asInt(item.get("quantity"));
             Integer minQty = asInt(item.get("minQty"));
             Integer maxQty = asInt(item.get("maxQty"));
             Integer[] range = bidRange(demandId, factoryId);
@@ -327,19 +343,55 @@ public class OrderQueryService {
             if (maxQty == null) {
                 maxQty = range[1];
             }
+            Long key = factoryId != null ? factoryId : --orphan;
+            Acc acc = byFactory.get(key);
+            if (acc == null) {
+                acc = new Acc(factoryId, factoryName, minQty, maxQty);
+                byFactory.put(key, acc);
+            }
+            acc.quantity += qty == null ? 0 : qty;
+            acc.price = acc.price.add(asDecimal(item.get("price")) == null ? BigDecimal.ZERO : asDecimal(item.get("price")));
+            if (minQty != null) {
+                acc.minQty = acc.minQty == null ? minQty : Math.min(acc.minQty, minQty);
+            }
+            if (maxQty != null) {
+                acc.maxQty = acc.maxQty == null ? maxQty : Math.max(acc.maxQty, maxQty);
+            }
+            if (acc.factoryName == null || acc.factoryName.isBlank()) {
+                acc.factoryName = factoryName;
+            }
+        }
+        List<ComboItem> out = new ArrayList<>();
+        for (Acc acc : byFactory.values()) {
             out.add(new ComboItem(
-                    factoryId,
-                    factoryName,
-                    asInt(item.get("processNo")),
-                    item.get("processName") == null ? "工序" : item.get("processName").toString(),
-                    qty == null ? null : asInt(qty),
-                    item.get("price"),
-                    item.get("days"),
-                    minQty,
-                    maxQty
+                    acc.factoryId,
+                    acc.factoryName,
+                    null,
+                    null,
+                    acc.quantity,
+                    acc.price,
+                    null,
+                    acc.minQty,
+                    acc.maxQty
             ));
         }
         return out;
+    }
+
+    private static final class Acc {
+        final Long factoryId;
+        String factoryName;
+        int quantity;
+        BigDecimal price = BigDecimal.ZERO;
+        Integer minQty;
+        Integer maxQty;
+
+        Acc(Long factoryId, String factoryName, Integer minQty, Integer maxQty) {
+            this.factoryId = factoryId;
+            this.factoryName = factoryName;
+            this.minQty = minQty;
+            this.maxQty = maxQty;
+        }
     }
 
     private Integer[] bidRange(Long demandId, Long factoryId) {

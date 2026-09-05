@@ -15,7 +15,9 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 资金流水唯一写入入口。禁止在 Bidding/Flow/Order 里再插流水。
@@ -398,6 +400,75 @@ public class FundLedger {
             return last.getAmount();
         }
         return "INTENTION".equals(type) ? intentionFixed : BigDecimal.ZERO;
+    }
+
+    /**
+     * 从买家冻结保证金划给工厂（赔偿），幂等。
+     */
+    public void payBuyerDepositToFactory(Long demandId, Long buyerTenantId, Long factoryTenantId,
+                                         Long orderId, BigDecimal amount, String tag) {
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0 || factoryTenantId == null) {
+            return;
+        }
+        BigDecimal remain = buyerDepositRemaining(demandId, buyerTenantId);
+        BigDecimal use = remain.min(amount);
+        if (use.compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+        accountService.deductFrozen(buyerTenantId, use);
+        accountService.credit(factoryTenantId, use);
+        write("BUYER_DEPOSIT", "OUT", use, demandId, buyerTenantId, orderId,
+                "BUYER-DEPOSIT-COMP-" + tag + "-" + factoryTenantId);
+        write("PENALTY", "IN", use, demandId, factoryTenantId, orderId,
+                "FACTORY-COMP-" + tag + "-" + factoryTenantId);
+    }
+
+    /** 按权重把买家保证金池分给各厂，余数给最后一个。 */
+    public void splitBuyerDepositToFactories(Long demandId, Long buyerTenantId, Long orderId,
+                                             BigDecimal pool, Map<Long, Integer> weights, String tag) {
+        if (pool == null || pool.compareTo(BigDecimal.ZERO) <= 0 || weights == null || weights.isEmpty()) {
+            return;
+        }
+        int sum = weights.values().stream().mapToInt(v -> v == null ? 0 : Math.max(v, 0)).sum();
+        if (sum <= 0) {
+            return;
+        }
+        List<Map.Entry<Long, Integer>> entries = new ArrayList<>(weights.entrySet());
+        BigDecimal given = BigDecimal.ZERO;
+        for (int i = 0; i < entries.size(); i++) {
+            Long fid = entries.get(i).getKey();
+            int w = entries.get(i).getValue() == null ? 0 : Math.max(entries.get(i).getValue(), 0);
+            BigDecimal part = (i == entries.size() - 1)
+                    ? pool.subtract(given)
+                    : pool.multiply(BigDecimal.valueOf(w)).divide(BigDecimal.valueOf(sum), 2, RoundingMode.DOWN);
+            if (part.compareTo(BigDecimal.ZERO) < 0) {
+                part = BigDecimal.ZERO;
+            }
+            payBuyerDepositToFactory(demandId, buyerTenantId, fid, orderId, part, tag);
+            given = given.add(part.max(BigDecimal.ZERO));
+        }
+    }
+
+    /** 工厂冻结保证金全额划给买家。 */
+    public void payFactoryDepositToBuyer(Long demandId, Long factoryTenantId, Long buyerTenantId, Long orderId, String tag) {
+        BigDecimal available = frozenDepositOf(demandId, factoryTenantId);
+        if (available.compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+        accountService.deductFrozen(factoryTenantId, available);
+        accountService.credit(buyerTenantId, available);
+        write("DEPOSIT", "OUT", available, demandId, factoryTenantId, orderId,
+                "DEPOSIT-TO-BUYER-" + tag + "-" + factoryTenantId);
+        write("PENALTY", "IN", available, demandId, buyerTenantId, orderId,
+                "BUYER-FROM-FACTORY-" + tag + "-" + factoryTenantId);
+        List<Quotation> qs = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
+                .eq(Quotation::getDemandId, demandId)
+                .eq(Quotation::getTenantId, factoryTenantId)
+                .eq(Quotation::getDepositStatus, "FROZEN"));
+        for (Quotation q : qs) {
+            q.setDepositStatus("DEDUCTED");
+            quotationMapper.updateById(q);
+        }
     }
 
     private void write(String type, String direction, BigDecimal amount,

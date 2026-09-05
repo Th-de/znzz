@@ -25,6 +25,7 @@ import com.dsh.platform.security.UserContext;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -52,6 +53,9 @@ public class ContractService {
     private final ObjectMapper objectMapper;
     private final AuditService auditService;
     private final QuotationMapper quotationMapper;
+
+    @Value("${dsh.time.contract-sign-hours:24}")
+    private int contractSignHours;
 
     public void createDrafts(Long orderId, String comboJson) {
         for (Long factoryId : factoryIdsFromCombo(comboJson)) {
@@ -161,6 +165,29 @@ public class ContractService {
         markPendingIfReady(c);
         contractMapper.updateById(c);
         touchFactoryQuotes(o.getDemandId(), factoryTenantId);
+        maybeOpenSignWindow(o);
+    }
+
+    private void maybeOpenSignWindow(Order o) {
+        if (o == null || o.getContractSignEndAt() != null) {
+            return;
+        }
+        List<Contract> all = contractMapper.selectList(new LambdaQueryWrapper<Contract>()
+                .eq(Contract::getOrderId, o.getId()));
+        if (all.isEmpty() || all.stream().anyMatch(x -> x.getAttachmentId() == null)) {
+            return;
+        }
+        o.setContractSignEndAt(LocalDateTime.now().plusHours(Math.max(contractSignHours, 1)));
+        orderMapper.updateById(o);
+        Demand d = demandMapper.selectById(o.getDemandId());
+        if (d != null) {
+            siteNotify.send(d.getTenantId(), "合同签署期开始#" + o.getId(),
+                    "各厂合同已上传，请于 24 小时内完成签署。逾期未签的工厂将扣除保证金赔偿你。");
+        }
+        for (Contract x : all) {
+            siteNotify.send(x.getTenantId(), "请在24小时内签署合同#" + o.getId(),
+                    "买家已上传合同，请在 24 小时内签署。未签或取消将扣除保证金赔偿买家。");
+        }
     }
 
     @Transactional
@@ -363,13 +390,23 @@ public class ContractService {
             return;
         }
         List<String> names = new ArrayList<>();
+        int alloc = 0;
+        boolean hasAlloc = false;
         for (Map<String, Object> item : readCombo(s.getFinalComboJson())) {
             if (c.getTenantId().equals(asLong(item.get("factoryId")))) {
                 Object n = item.get("processName");
                 names.add(n == null ? "工序" : n.toString());
+                Integer q = asInt(item.get("quantity"));
+                if (q != null) {
+                    alloc += q;
+                    hasAlloc = true;
+                }
             }
         }
         c.setProcessNames(String.join("、", names));
+        if (hasAlloc) {
+            c.setAllocQty(alloc);
+        }
         if (c.getAttachmentId() != null) {
             Attachment a = attachmentMapper.selectById(c.getAttachmentId());
             c.setFileName(a == null ? null : a.getFileName());
@@ -464,6 +501,17 @@ public class ContractService {
             return objectMapper.readValue(json, new TypeReference<>() {});
         } catch (Exception e) {
             return List.of();
+        }
+    }
+
+    private static Integer asInt(Object v) {
+        if (v == null) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(new java.math.BigDecimal(v.toString()).intValue());
+        } catch (Exception e) {
+            return null;
         }
     }
 

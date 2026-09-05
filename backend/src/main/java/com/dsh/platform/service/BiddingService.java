@@ -15,7 +15,9 @@ import com.dsh.platform.entity.Demand;
 import com.dsh.platform.entity.Order;
 import com.dsh.platform.entity.Process;
 import com.dsh.platform.entity.Quotation;
+import com.dsh.platform.entity.Enterprise;
 import com.dsh.platform.mapper.AttachmentMapper;
+import com.dsh.platform.mapper.EnterpriseMapper;
 import com.dsh.platform.mapper.ContractMapper;
 import com.dsh.platform.mapper.DemandMapper;
 import com.dsh.platform.mapper.OrderMapper;
@@ -53,6 +55,7 @@ public class BiddingService {
     private final ContractMapper contractMapper;
     private final AttachmentMapper attachmentMapper;
     private final CreditScoring creditScoring;
+    private final EnterpriseMapper enterpriseMapper;
 
     @Value("${dsh.fee.deposit-rate}")
     private BigDecimal depositRate;
@@ -68,6 +71,12 @@ public class BiddingService {
         Demand d = demandMapper.selectById(req.demandId());
         if (d == null || !"PUBLISHED".equals(d.getStatus())) {
             throw new BizException("需求不在意向期，无法报名");
+        }
+        Enterprise self = enterpriseMapper.selectById(UserContext.tenantId());
+        int credit = self == null || self.getCreditScore() == null ? 0 : self.getCreditScore();
+        int needCredit = d.getMinCreditScore() == null ? 0 : d.getMinCreditScore();
+        if (credit < needCredit) {
+            throw new BizException("信用分 " + credit + " 未达到该需求最低要求 " + needCredit + "，无法报名");
         }
         List<IntentionItem> items = normalizeItems(req);
         JsonNode capJson = capabilityService.requireComplete(UserContext.tenantId());
@@ -164,7 +173,7 @@ public class BiddingService {
         return items;
     }
 
-    /** 工厂思考期填报：实施方案+单价，冻结总报价 5% 保证金。意向期只能报名，不能报价。 */
+    /** 工厂思考期填报：实施方案+单价，按意向承接区间最高值×单价冻结 5% 保证金。意向期只能报名，不能报价。 */
     @Transactional
     public void commit(CommitRequest req) {
         Demand d = demandMapper.selectById(req.demandId());
@@ -194,7 +203,9 @@ public class BiddingService {
         Integer promisedDays = promisedDaysOf(d);
         BigDecimal yieldRate = d.getMinYield();
         for (Quotation q : mine) {
-            int qty = q.getMaxQty() == null ? 0 : q.getMaxQty();
+            int min = q.getMinQty() == null ? 0 : q.getMinQty();
+            int max = q.getMaxQty() == null ? 0 : q.getMaxQty();
+            int qty = Math.max(min, max); // 保证金按意向承接区间最高值
             BigDecimal total = priced.unitPrice().multiply(BigDecimal.valueOf(qty))
                     .setScale(2, java.math.RoundingMode.HALF_UP);
             q.setUnitPrice(priced.unitPrice());

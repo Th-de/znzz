@@ -48,5 +48,7 @@ public class OrderDtos {
                                   Integer quantity, LocalDate deadlineHard, String status,
                                   BigDecimal totalAmount, BigDecimal commissionAmount,
                                   LocalDateTime createdAt, List<ComboItem> combo,
-                                  List<String> flowSteps, Integer flowActive) {}
+                                  List<String> flowSteps, Integer flowActive,
+                                  LocalDateTime contractIssueEndAt, LocalDateTime contractSignEndAt,
+                                  Boolean canBuyerCancel, Boolean canFactoryCancel) {}
 }

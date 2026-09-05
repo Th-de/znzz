@@ -59,12 +59,13 @@ public class OpsOverviewService {
         return m;
     }
 
-    /** 需要运营立即处理/关注的需求清单（带阶段截止时间）。 */
+    /** 需要运营立即处理/关注的需求清单（最新提交在上）。 */
     private List<Map<String, Object>> attentionList() {
         List<Demand> list = demandMapper.selectList(new LambdaQueryWrapper<Demand>()
                 .in(Demand::getStatus, "PENDING_AUDIT", "PUBLISHED", "FACTORY_THINKING",
                         "BUYER_THINKING", "SOLUTION_GENERATED", "SOLUTION_CONFIRMED")
-                .orderByAsc(Demand::getId));
+                .orderByDesc(Demand::getCreatedAt)
+                .orderByDesc(Demand::getId));
         List<Map<String, Object>> out = new ArrayList<>();
         for (Demand d : list) {
             Enterprise buyer = enterpriseMapper.selectById(d.getTenantId());

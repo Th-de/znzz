@@ -29,7 +29,8 @@ public class DemandDtos {
 
     public record ReturnRequest(String reason) {}
 
-    public record DemandDetailView(Demand demand, List<Process> processes, List<Attachment> attachments) {}
+    public record DemandDetailView(Demand demand, List<Process> processes, List<Attachment> attachments,
+                                   java.util.Map<String, Object> quoteStats) {}
 
     public record AuditRequest(String result, String reason) {}
 

@@ -59,7 +59,8 @@ dsh:
     thinking-hours: 24         # 旧流程思考期（兼容历史数据）
     review-hours: 6            # 旧流程审核期
     locking-hours: 48          # 旧流程保证金期
-    contract-sign-hours: 24    # 签约期：下发/签署合同时限
+    contract-sign-hours: 24    # 签约期：双方签署合同时限
+    contract-issue-hours: 48   # 合同发布期：买家上传合同文件时限
   upload:
     dir: uploads
   ai:

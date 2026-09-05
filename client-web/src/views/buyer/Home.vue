@@ -51,17 +51,16 @@
           <template #default="{ row }">
             <el-button size="small" type="primary" @click="$router.push('/buyer/demand/' + row.id)">详情</el-button>
             <el-button v-if="row.status==='PENDING_AUDIT'" size="small" disabled>等待运营审核</el-button>
-            <el-button v-if="row.status==='RETURNED'" size="small" type="warning" @click="$router.push('/buyer/publish?id=' + row.id)">退回修改</el-button>
-            <el-button v-if="row.status==='PUBLISHED'" size="small" type="danger" @click="cancelAndRepublish(row)">取消并重新发布</el-button>
+            <el-button v-if="row.status==='RETURNED'" size="small" type="warning" @click="$router.push('/buyer/demand/' + row.id)">退回修改</el-button>
             <el-button v-if="row.status==='THINKING'" size="small" type="success" @click="decide(row, 'CONTINUE')">继续</el-button>
             <el-button v-if="row.status==='THINKING'" size="small" type="danger" @click="decide(row, 'CANCEL')">取消</el-button>
             <el-button v-if="row.status==='BUYER_THINKING'" size="small" type="success" @click="$router.push('/buyer/demand/' + row.id)">去决定(交保证金/取消)</el-button>
-            <el-button v-if="row.status==='SOLUTION_GENERATED' && canPick(row)" size="small" type="primary" @click="$router.push('/buyer/solutions/'+row.id)">参考推荐并选定工厂</el-button>
-            <el-tooltip v-else-if="row.status==='SOLUTION_GENERATED'" content="运营审核通过后即可参考推荐并自行分配工厂" placement="top">
+            <el-button v-if="row.status==='SOLUTION_GENERATED' && canPick(row)" size="small" type="primary" @click="$router.push('/buyer/demand/'+row.id)">选定方案</el-button>
+            <el-tooltip v-else-if="row.status==='SOLUTION_GENERATED'" content="运营审核通过后即可在详情页参考推荐并自行分配工厂" placement="top">
               <el-button size="small" disabled>等待运营审核推荐方案</el-button>
             </el-tooltip>
             <el-button v-if="row.status==='SOLUTION_CONFIRMED'" size="small" disabled>等待运营派单</el-button>
-            <el-button v-if="row.status==='SOLUTION_SELECTED'" size="small" @click="$router.push('/buyer/orders')">看订单</el-button>
+            <el-button v-if="row.status==='SOLUTION_GENERATED' || row.status==='SOLUTION_CONFIRMED'" size="small" type="danger" @click="closeOrder(row)">关闭订单</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -71,15 +70,13 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { listMine, decide as decideDemand, cancelPublished, getCancelStats } from '../../api/demand'
+import { listMine, decide as decideDemand, closeSolution, getCancelStats } from '../../api/demand'
 import api from '../../api'
 import IntentionCountdown from '../../components/IntentionCountdown.vue'
 import PagedBox from '../../components/PagedBox.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { DEMAND_STATUS, label, fmtTime } from '../../utils/labels'
 
-const router = useRouter()
 const demands = ref([])
 const cancelStats = ref({ last90Days: 0, warn: false })
 const todos = ref([])
@@ -115,16 +112,15 @@ async function decide(row, action) {
   load()
 }
 
-async function cancelAndRepublish(row) {
-  const { value } = await ElMessageBox.prompt('已发布需求不能改内容，取消后将发一条新需求。请填写取消原因（平台会记录）。', '取消并重新发布', {
-    confirmButtonText: '取消并去发布',
-    cancelButtonText: '再想想',
-    inputPlaceholder: '必填',
-    inputValidator: (v) => !!String(v || '').trim() || '请填写原因',
-  })
-  await cancelPublished(row.id, String(value).trim())
-  ElMessage.success('已取消，请发布新需求')
-  router.push('/buyer/publish?from=' + row.id)
+async function closeOrder(row) {
+  await ElMessageBox.confirm(
+    '关闭后将扣除买家保证金 50%，按各厂承接区间最高值比重赔偿工厂，剩余保证金退回。确定关闭？',
+    '关闭订单',
+    { type: 'warning', confirmButtonText: '确认关闭', cancelButtonText: '再想想' },
+  )
+  await closeSolution(row.id)
+  ElMessage.success('订单已关闭')
+  load()
 }
 
 onMounted(load)

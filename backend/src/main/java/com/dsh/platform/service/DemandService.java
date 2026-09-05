@@ -6,6 +6,7 @@ import com.dsh.platform.common.BizException;
 import com.dsh.platform.domain.coverage.CoverageView;
 import com.dsh.platform.domain.coverage.ProcessCoverageService;
 import com.dsh.platform.domain.inspect.InspectPrices;
+import com.dsh.platform.domain.quote.QuoteEstimate;
 import com.dsh.platform.domain.fund.FundLedger;
 import com.dsh.platform.domain.notify.SiteNotify;
 import com.dsh.platform.domain.status.DemandStateMachine;
@@ -119,8 +120,18 @@ public class DemandService {
             throw new BizException("取消必须填写原因");
         }
         Demand d = getOwned(demandId);
-        if (DemandStatus.of(d.getStatus()) != DemandStatus.PUBLISHED) {
-            throw new BizException("只有已发布的需求可以取消后重新发布");
+        DemandStatus st = DemandStatus.of(d.getStatus());
+        if (st == DemandStatus.RETURNED || st == DemandStatus.PENDING_AUDIT) {
+            stateMachine.transit(d, DemandStatus.CANCELLED);
+            d.setCancelReason(req.reason().trim());
+            demandMapper.updateById(d);
+            siteNotify.send(d.getTenantId(), "需求已取消#" + demandId,
+                    "需求「" + d.getTitle() + "」已取消。" + (StringUtils.hasText(d.getCancelReason())
+                            ? "原因：" + d.getCancelReason() : ""));
+            return;
+        }
+        if (st != DemandStatus.PUBLISHED) {
+            throw new BizException("当前状态不可取消");
         }
         stateMachine.transit(d, DemandStatus.CANCELLED);
         d.setCancelReason(req.reason().trim());
@@ -187,7 +198,11 @@ public class DemandService {
         if (!owner && !staff && !factoryBid && !factoryBrowse) {
             throw new BizException(403, "无权查看该需求");
         }
-        return new DemandDetailView(d, processes(id), fileService.listByBiz("DEMAND", id));
+        List<Quotation> locked = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
+                .eq(Quotation::getDemandId, id)
+                .in(Quotation::getStatus, "LOCKED", "WIN"));
+        return new DemandDetailView(d, processes(id), fileService.listByBiz("DEMAND", id),
+                QuoteEstimate.of(d, locked));
     }
 
     private boolean factoryBidOn(Long demandId) {
@@ -211,7 +226,7 @@ public class DemandService {
         }
         List<Quotation> qs = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
                 .eq(Quotation::getDemandId, demandId)
-                .in(Quotation::getStatus, "INTENTION", "LOCKED", "WIN"));
+                .in(Quotation::getStatus, "INTENTION", "LOCKED", "WIN", "LOSE", "INVALID"));
         Map<Long, List<Quotation>> byFactory = qs.stream()
                 .filter(q -> q.getTenantId() != null)
                 .collect(Collectors.groupingBy(Quotation::getTenantId, java.util.LinkedHashMap::new, Collectors.toList()));
@@ -224,8 +239,20 @@ public class DemandService {
                     .distinct()
                     .toList();
             row.put("processNos", processNos);
+            boolean cancelled = e.getValue().stream().allMatch(q ->
+                    "LOSE".equals(q.getStatus()) || "INVALID".equals(q.getStatus()));
             boolean committed = e.getValue().stream().anyMatch(q -> "LOCKED".equals(q.getStatus()) || "WIN".equals(q.getStatus()));
-            row.put("bidStage", committed ? "QUOTED" : "INTENTION");
+            String bidStage;
+            if (cancelled) {
+                bidStage = "CANCELLED";
+            } else if (committed) {
+                bidStage = "QUOTED";
+            } else if ("FACTORY_THINKING".equals(d.getStatus())) {
+                bidStage = "THINKING";
+            } else {
+                bidStage = "INTENTION";
+            }
+            row.put("bidStage", bidStage);
             Integer minQty = e.getValue().stream().map(Quotation::getMinQty).filter(n -> n != null)
                     .min(Integer::compareTo).orElse(null);
             Integer maxQty = e.getValue().stream().map(Quotation::getMaxQty).filter(n -> n != null)
