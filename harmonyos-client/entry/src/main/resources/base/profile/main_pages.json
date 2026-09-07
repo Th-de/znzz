@@ -1,0 +1,9 @@
+{
+  "src": [
+    "pages/Login",
+    "pages/BuyerMain",
+    "pages/FactoryMain",
+    "pages/OrderDetailPage",
+    "pages/DemandMessagesPage"
+  ]
+}

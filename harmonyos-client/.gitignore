@@ -1,0 +1,13 @@
+# DevEco / HarmonyOS build artifacts
+/node_modules
+/oh_modules
+/.hvigor
+/.idea
+/.cxx
+/build
+/entry/build
+/.preview
+/.test
+*.har
+*.hsp
+local.properties

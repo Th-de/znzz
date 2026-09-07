@@ -1,0 +1,6 @@
+{
+  "modelVersion": "5.0.0",
+  "description": "外协供应链 HarmonyOS NEXT 手机客户端（复用 SpringBoot 后端接口）",
+  "dependencies": {},
+  "devDependencies": {}
+}

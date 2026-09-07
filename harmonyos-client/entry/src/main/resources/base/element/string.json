@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "智造云平台手机端（登录/订单/工厂投标）"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "智造云平台手机端"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "智造云平台"
+    }
+  ]
+}

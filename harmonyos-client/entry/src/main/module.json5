@@ -1,0 +1,53 @@
+{
+  "module": {
+    "name": "entry",
+    "type": "entry",
+    "description": "$string:module_desc",
+    "mainElement": "EntryAbility",
+    "deviceTypes": [
+      "phone",
+      "tablet",
+      "2in1"
+    ],
+    "deliveryWithInstall": true,
+    "installationFree": false,
+    "pages": "$profile:main_pages",
+    "abilities": [
+      {
+        "name": "EntryAbility",
+        "srcEntry": "./ets/entryability/EntryAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:icon",
+        "label": "$string:EntryAbility_label",
+        "startWindowIcon": "$media:startIcon",
+        "startWindowBackground": "$color:start_window_background",
+        "exported": true,
+        "skills": [
+          {
+            "entities": [
+              "entity.system.home"
+            ],
+            "actions": [
+              "action.system.home"
+            ]
+          }
+        ]
+      }
+    ],
+    // ===== 权限配置 =====
+    // 访问局域网后端需要 INTERNET 权限（system_grant，声明即可，无需用户授权）
+    "requestPermissions": [
+      {
+        "name": "ohos.permission.INTERNET"
+      }
+    ],
+    // ===== 允许明文 HTTP 访问局域网后端（http://192.168.x.x:8080）=====
+    // 若后端改为 https 可删除本 metadata 与 network_config.json
+    "metadata": [
+      {
+        "name": "ohos.net.network_security_config",
+        "resource": "$profile:network_config"
+      }
+    ]
+  }
+}
