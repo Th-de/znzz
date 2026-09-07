@@ -11,7 +11,6 @@ import com.dsh.platform.domain.quote.QuoteEstimate;
 import com.dsh.platform.domain.status.DemandStateMachine;
 import com.dsh.platform.domain.status.DemandStatus;
 import com.dsh.platform.entity.Demand;
-import com.dsh.platform.domain.quote.QuoteEstimate;
 import com.dsh.platform.entity.Enterprise;
 import com.dsh.platform.entity.Quotation;
 import com.dsh.platform.mapper.DemandMapper;
@@ -87,20 +86,19 @@ public class FlowService {
                         : coverageService.unsatisfiedText(view)));
         notifyFactories(demandId, "工厂思考期开始",
                 "需求「" + d.getTitle() + "」进入工厂思考期（" + factoryThinkingHours
-                        + " 小时）。参加请填报实施方案、单件报价和分期交付内容，并冻结总报价 5% 保证金；"
-                        + "不参加可退出并退回意向金。逾期未填报将扣除意向金并记失信。");
+                        + " 小时）。参加请填报实施方案、单件报价，并冻结总报价 5% 保证金；"
+                        + "不参加可退出并退回意向金。逾期未报价将自动取消报名并退回意向金。");
         auditService.record("结束意向期", "DEMAND", demandId, "进入工厂思考期");
     }
 
-    /** 工厂思考期结束：填报覆盖则进买家思考期，否则流拍全退。 */
+    /** 工厂思考期结束：未报价厂取消报名并退意向金；无论覆盖率如何都进入买家思考期。 */
     @Transactional
     public void endFactoryThinking(Long demandId) {
         Demand d = get(demandId);
         if (DemandStatus.of(d.getStatus()) != DemandStatus.FACTORY_THINKING) {
             return;
         }
-        deductFactoryThinkingTimeout(d);
-        forfeitSilentFactories(d);
+        cancelUnquotedFactories(d);
         List<Quotation> committed = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
                 .eq(Quotation::getDemandId, d.getId())
                 .eq(Quotation::getStatus, "LOCKED"));
@@ -112,9 +110,10 @@ public class FlowService {
         demandMapper.updateById(d);
         BigDecimal deposit = buyerDepositOf(d);
         siteNotify.send(d.getTenantId(), "请决定是否继续#" + demandId,
-                "需求「" + d.getTitle() + "」工厂填报已完成，进入买家思考期（" + buyerThinkingHours
-                        + " 小时）。AI 预估总价 ¥" + estimate + "，继续需冻结 5% 保证金 ¥" + deposit
-                        + "（履约后抵扣尾款）；取消或超时未操作将结束订单并退回各方资金。");
+                "需求「" + d.getTitle() + "」工厂思考期已结束，进入买家思考期（" + buyerThinkingHours
+                        + " 小时）。请根据报价自行决定是否继续。预估总价 ¥" + estimate
+                        + "，继续需冻结 5% 保证金 ¥" + deposit
+                        + "（履约后抵扣尾款）。是否继续由买家自行决定。");
         auditService.record("结束工厂思考期", "DEMAND", demandId,
                 "进入买家思考期，预估总价 " + estimate);
     }
@@ -158,18 +157,6 @@ public class FlowService {
         throw new BizException("非法操作");
     }
 
-    /** 买家思考期超时未交保证金：自动流单，全退。 */
-    @Transactional
-    public void timeoutBuyerThinking(Long demandId) {
-        Demand d = get(demandId);
-        if (DemandStatus.of(d.getStatus()) != DemandStatus.BUYER_THINKING) {
-            return;
-        }
-        creditScoring.onBuyerThinkingCancel(d.getTenantId(), d.getId(), "买家思考期超时自动取消");
-        failBuyerThinking(d, DemandStatus.FLOW_FAILED, "买家思考期超时未交保证金，自动流单并扣守信分",
-                "买家超时未交保证金，订单已流单，意向金/保证金已退回。");
-    }
-
     private void failBuyerThinking(Demand d, DemandStatus target, String reason, String factoryMsg) {
         stateMachine.transit(d, target);
         d.setCancelReason(reason);
@@ -182,31 +169,21 @@ public class FlowService {
         fundLedger.unfreezeDepositsOfDemand(d.getId());
     }
 
-    /** 工厂思考期截止仍未填报：按退出同等扣守信分 5 分（按厂去重）。 */
-    private void deductFactoryThinkingTimeout(Demand d) {
+    /** 思考期结束仍未报价：按取消报名处理，退回意向金，不罚没、不记失信。 */
+    private void cancelUnquotedFactories(Demand d) {
         List<Quotation> silent = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
                 .eq(Quotation::getDemandId, d.getId())
                 .eq(Quotation::getStatus, "INTENTION"));
         Set<Long> done = new HashSet<>();
         for (Quotation q : silent) {
+            fundLedger.unfreezeIntention(q);
             if (!done.add(q.getTenantId())) {
                 continue;
             }
-            creditScoring.onFactoryThinkingExit(q.getTenantId(), d.getId(), "工厂思考期超时未填报");
-            siteNotify.send(q.getTenantId(), "思考期超时扣分#" + d.getId(),
-                    "需求「" + d.getTitle() + "」工厂思考期已截止，你未填报也未退出，守信分 −5。");
-        }
-    }
-
-    /** 逾期既不填报也不退出的厂：扣意向金（守信分已在到期时记过）。 */
-    private void forfeitSilentFactories(Demand d) {
-        Set<Long> done = new HashSet<>();
-        for (Quotation q : fundLedger.forfeitUnlockedIntentions(d.getId())) {
-            if (!done.add(q.getTenantId())) {
-                continue;
-            }
-            siteNotify.send(q.getTenantId(), "未填报扣除意向金#" + d.getId(),
-                    "需求「" + d.getTitle() + "」工厂思考期已结束，你未填报方案也未退出，意向金已扣除并扣守信分。");
+            siteNotify.send(q.getTenantId(), "已取消报名#" + d.getId(),
+                    "需求「" + d.getTitle() + "」工厂思考期已结束，你未提交报价，报名已自动取消，意向金已退回。");
+            siteNotify.send(d.getTenantId(), "工厂取消报名#" + d.getId(),
+                    "需求「" + d.getTitle() + "」有工厂因思考期未报价被取消报名，意向金已退回该厂。");
         }
     }
 
@@ -325,8 +302,9 @@ public class FlowService {
         throw new BizException("非法操作");
     }
 
+    /** 思考期到期：自动进入保证金期。 */
     @Transactional
-    public void timeoutThinking(Long demandId) {
+    public void endThinking(Long demandId) {
         Demand d = get(demandId);
         if (DemandStatus.of(d.getStatus()) != DemandStatus.THINKING) {
             return;
@@ -347,8 +325,9 @@ public class FlowService {
         rejectCancel(d);
     }
 
+    /** 审核期到期：视为驳回取消，进入保证金期。 */
     @Transactional
-    public void timeoutReview(Long demandId) {
+    public void endReview(Long demandId) {
         Demand d = get(demandId);
         if (DemandStatus.of(d.getStatus()) != DemandStatus.REVIEWING) {
             return;

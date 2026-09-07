@@ -1,7 +1,7 @@
 <template>
   <div style="max-width:860px">
       <el-alert type="info" :closable="false"
-        title="不填完不能参与意向报名。设备请在「我的设备」维护（至少一台）；此处填写材料、工艺、合格率和企业介绍，工序产能由设备自动推导。"
+        title="不填完不能参与意向报名。设备请在「我的设备」维护（至少一台）；此处填写材料、工艺和企业介绍，工序产能由设备自动推导。"
         style="margin-bottom:16px" />
 
       <el-form label-width="120px">
@@ -23,10 +23,6 @@
         </el-form-item>
         <el-form-item label="检测手段">
           <el-input v-model="form.inspectDevices" placeholder="如 二次元 / 三坐标" />
-        </el-form-item>
-        <el-form-item label="历史合格率">
-          <el-input-number v-model="form.yieldRate" :min="0" :max="1" :step="0.01" />
-          <span class="hint">档案自报（0~1，如 0.98 表示 98%）。买家看到的「质检合格率」由平台按质检单另算，请到「我的主页」查看。</span>
         </el-form-item>
 
         <h4>企业介绍（买家可见）</h4>
@@ -68,7 +64,6 @@ const form = reactive({
   processes: [],
   certs: [],
   inspectDevices: '',
-  yieldRate: 0.97,
 })
 const deviceCapacity = ref([])
 const introduction = ref('')
@@ -83,7 +78,6 @@ async function load() {
   if (c.processes) form.processes = c.processes
   if (c.certs) form.certs = c.certs
   if (c.inspectDevices) form.inspectDevices = c.inspectDevices
-  if (c.yieldRate != null) form.yieldRate = c.yieldRate
   deviceCapacity.value = data.deviceCapacity || []
   try {
     const mine = await api.get('/enterprise/mine')

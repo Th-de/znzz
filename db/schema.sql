@@ -134,12 +134,11 @@ CREATE TABLE IF NOT EXISTS process (
   demand_id    BIGINT UNSIGNED NOT NULL,
   process_no   INT NOT NULL,
   process_name VARCHAR(64) NOT NULL,
-  quantity     INT NOT NULL,
   requirement  VARCHAR(512) DEFAULT NULL,
   created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_demand (demand_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='工序表：需求拆分的加工工序及数量要求';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='工序表：工艺路线描述，件数以 demand.quantity 为准';
 
 CREATE TABLE IF NOT EXISTS attachment (
   id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -159,7 +158,7 @@ CREATE TABLE IF NOT EXISTS quotation (
   id               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   tenant_id        BIGINT UNSIGNED NOT NULL COMMENT '工厂企业id',
   demand_id        BIGINT UNSIGNED NOT NULL,
-  process_no       INT NOT NULL,
+  process_no       INT NOT NULL DEFAULT 1 COMMENT '整单标记，固定为1；按厂报价不再按工序拆行',
   intention_price  DECIMAL(18,2) DEFAULT NULL COMMENT '意向报价(非绑定)',
   unit_price       DECIMAL(12,2) DEFAULT NULL COMMENT '单件报价（工厂思考期填）',
   price            DECIMAL(18,2) DEFAULT NULL COMMENT '总报价=单价×承接量(绑定)',

@@ -182,7 +182,7 @@ const factoryQuoteList = computed(() => {
   return out
 })
 const topHint = computed(() => {
-  if (demandStatus.value === 'SOLUTION_CONFIRMED') return '方案已确认，等待运营派单。确认后不可再改分配。'
+  if (demandStatus.value === 'SOLUTION_CONFIRMED') return '方案已确认，请到需求详情上传并签署合同。'
   return '上方是各厂报价。AI 推荐仅供参考且不可改；可在自选方案里按零件件数把整单分给工厂后确认。'
 })
 
@@ -322,7 +322,7 @@ async function load() {
 async function select(s) {
   await ElMessageBox.confirm('将按该推荐方案提交给运营派单，此后不可再改。', '确认方案', { type: 'warning' })
   await selectSolution(demandId, s.id)
-  ElMessage.success('已确认，等待运营派单')
+  ElMessage.success('已确认，请到需求详情签署合同')
   router.push('/buyer/demand/' + demandId)
 }
 
@@ -355,7 +355,7 @@ async function confirmCustom() {
   try {
     const s = await saveCustom(demandId, items)
     await selectSolution(demandId, s.id)
-    ElMessage.success('已确认，等待运营派单')
+    ElMessage.success('已确认，请到需求详情签署合同')
     router.push('/buyer/demand/' + demandId)
   } finally {
     savingCustom.value = false

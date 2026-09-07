@@ -85,4 +85,12 @@ public class SolutionController {
         solutionService.publishToBuyer(solutionId);
         return R.ok();
     }
+
+    /** 一次下发多套推荐方案，避免买家端陆续出现不同步。 */
+    @PostMapping("/{demandId}/publish-batch")
+    @PreAuthorize("hasAnyRole('OPERATOR','SUPER_ADMIN')")
+    public R<Void> publishBatch(@PathVariable Long demandId, @RequestBody List<Long> solutionIds) {
+        solutionService.publishBatchToBuyer(demandId, solutionIds);
+        return R.ok();
+    }
 }

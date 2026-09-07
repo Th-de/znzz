@@ -122,6 +122,28 @@ public class EnterprisePublicService {
         return out;
     }
 
+    /** 需求发布方（买家）信息：工厂可见公开字段，运营可见联系方式。 */
+    public Map<String, Object> buyerProfile(Long enterpriseId, boolean staff) {
+        Enterprise e = enterpriseMapper.selectById(enterpriseId);
+        if (e == null) {
+            throw new BizException("企业不存在");
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("id", e.getId());
+        out.put("type", e.getType());
+        out.put("name", e.getName());
+        out.put("creditScore", e.getCreditScore());
+        out.put("authStatus", e.getAuthStatus());
+        out.put("address", e.getAddress());
+        out.put("introduction", e.getIntroduction());
+        out.put("contactName", e.getContactName());
+        if (staff) {
+            out.put("creditCode", e.getCreditCode());
+            out.put("contactPhone", e.getContactPhone());
+        }
+        return out;
+    }
+
     /** 工厂自己更新企业介绍。 */
     @Transactional
     public void updateIntroduction(String introduction) {

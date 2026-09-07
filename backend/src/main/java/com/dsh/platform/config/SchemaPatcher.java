@@ -67,7 +67,23 @@ public class SchemaPatcher {
                 "ALTER TABLE `order` ADD COLUMN contract_issue_end_at DATETIME NULL COMMENT '合同发布截止'");
         patchColumn("order", "contract_sign_end_at",
                 "ALTER TABLE `order` ADD COLUMN contract_sign_end_at DATETIME NULL COMMENT '合同签署截止'");
+        dropColumn("process", "quantity");
         backfillDeliveredQty();
+    }
+
+    private void dropColumn(String table, String column) {
+        try {
+            Integer n = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?",
+                    Integer.class, table, column);
+            if (n == null || n == 0) {
+                return;
+            }
+            jdbcTemplate.execute("ALTER TABLE `" + table + "` DROP COLUMN `" + column + "`");
+            log.info("已删除 {}.{}", table, column);
+        } catch (Exception e) {
+            log.warn("删列 {}.{} 失败: {}", table, column, e.getMessage());
+        }
     }
 
     private void backfillDeliveredQty() {

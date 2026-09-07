@@ -13,7 +13,6 @@ import com.dsh.platform.entity.Attachment;
 import com.dsh.platform.entity.Contract;
 import com.dsh.platform.entity.Demand;
 import com.dsh.platform.entity.Order;
-import com.dsh.platform.entity.Process;
 import com.dsh.platform.entity.Quotation;
 import com.dsh.platform.entity.Enterprise;
 import com.dsh.platform.mapper.AttachmentMapper;
@@ -21,7 +20,6 @@ import com.dsh.platform.mapper.EnterpriseMapper;
 import com.dsh.platform.mapper.ContractMapper;
 import com.dsh.platform.mapper.DemandMapper;
 import com.dsh.platform.mapper.OrderMapper;
-import com.dsh.platform.mapper.ProcessMapper;
 import com.dsh.platform.mapper.QuotationMapper;
 import com.dsh.platform.security.UserContext;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -43,7 +41,6 @@ public class BiddingService {
 
     private final QuotationMapper quotationMapper;
     private final DemandMapper demandMapper;
-    private final ProcessMapper processMapper;
     private final CapabilityService capabilityService;
     private final ObjectMapper objectMapper;
     private final FundLedger fundLedger;
@@ -78,50 +75,35 @@ public class BiddingService {
         if (credit < needCredit) {
             throw new BizException("信用分 " + credit + " 未达到该需求最低要求 " + needCredit + "，无法报名");
         }
-        List<IntentionItem> items = normalizeItems(req);
+        IntentionItem item = normalizeItem(req);
         JsonNode capJson = capabilityService.requireComplete(UserContext.tenantId());
-
-        Quotation first = null;
-        for (IntentionItem item : items) {
-            Process proc = processMapper.selectOne(new LambdaQueryWrapper<Process>()
-                    .eq(Process::getDemandId, d.getId())
-                    .eq(Process::getProcessNo, item.processNo())
-                    .last("limit 1"));
-            if (proc == null) {
-                throw new BizException("工序 " + item.processNo() + " 不存在");
-            }
-            int cap = d.getQuantity() == null ? Integer.MAX_VALUE : d.getQuantity();
-            if (item.maxQty() > cap) {
-                throw new BizException("工序 " + item.processNo() + " 最大承接量不能超过需求数量 " + cap);
-            }
-            Quotation existing = quotationMapper.selectOne(new LambdaQueryWrapper<Quotation>()
-                    .eq(Quotation::getDemandId, req.demandId())
-                    .eq(Quotation::getProcessNo, item.processNo())
-                    .eq(Quotation::getTenantId, UserContext.tenantId())
-                    .in(Quotation::getStatus, "INTENTION", "LOCKED")
-                    .last("limit 1"));
-            if (existing != null) {
-                throw new BizException("该需求已报名，如需改承接量请先取消报名再重新填报");
-            }
-            Quotation q = new Quotation();
-            q.setTenantId(UserContext.tenantId());
-            q.setDemandId(req.demandId());
-            q.setProcessNo(item.processNo());
-            q.setIntentionPrice(null);
-            q.setMinQty(item.minQty());
-            q.setMaxQty(item.maxQty());
-            q.setValidDays(null);
-            q.setExtraJson(snapshot(capJson, item.processNo()));
-            q.setDeviceIdsJson(deviceService.writeIds(item.deviceIds() == null ? List.of() : item.deviceIds()));
-            q.setIntentionStatus(first == null ? "PENDING_PAY" : "COVERED");
-            q.setDepositStatus("NONE");
-            q.setStatus("INTENTION");
-            q.setVersion(1);
-            quotationMapper.insert(q);
-            if (first == null) {
-                first = q;
-            }
+        int cap = d.getQuantity() == null ? Integer.MAX_VALUE : d.getQuantity();
+        if (item.maxQty() > cap) {
+            throw new BizException("最大承接量不能超过需求零件数 " + cap);
         }
+        Quotation existing = quotationMapper.selectOne(new LambdaQueryWrapper<Quotation>()
+                .eq(Quotation::getDemandId, req.demandId())
+                .eq(Quotation::getTenantId, UserContext.tenantId())
+                .in(Quotation::getStatus, "INTENTION", "LOCKED")
+                .last("limit 1"));
+        if (existing != null) {
+            throw new BizException("该需求已报名，如需改承接量请先取消报名再重新填报");
+        }
+        Quotation first = new Quotation();
+        first.setTenantId(UserContext.tenantId());
+        first.setDemandId(req.demandId());
+        first.setProcessNo(1);
+        first.setIntentionPrice(null);
+        first.setMinQty(item.minQty());
+        first.setMaxQty(item.maxQty());
+        first.setValidDays(null);
+        first.setExtraJson(snapshot(capJson, 1));
+        first.setDeviceIdsJson(deviceService.writeIds(item.deviceIds() == null ? List.of() : item.deviceIds()));
+        first.setIntentionStatus("PENDING_PAY");
+        first.setDepositStatus("NONE");
+        first.setStatus("INTENTION");
+        first.setVersion(1);
+        quotationMapper.insert(first);
         // 已有同单其他工序在缴费/已缴：本次全部并入，不再重复收意向金
         Quotation paid = quotationMapper.selectOne(new LambdaQueryWrapper<Quotation>()
                 .eq(Quotation::getDemandId, req.demandId())
@@ -151,26 +133,17 @@ public class BiddingService {
         return (int) Math.max(days, 1);
     }
 
-    private List<IntentionItem> normalizeItems(IntentionRequest req) {
-        List<IntentionItem> items = req.items() != null && !req.items().isEmpty()
-                ? req.items()
-                : (req.processNo() == null ? List.of()
-                : List.of(new IntentionItem(req.processNo(), req.minQty(), req.maxQty(), req.deviceIds())));
-        if (items.isEmpty()) {
-            throw new BizException("请选择工序");
+    private IntentionItem normalizeItem(IntentionRequest req) {
+        IntentionItem item = req.items() != null && !req.items().isEmpty()
+                ? req.items().get(0)
+                : new IntentionItem(1, req.minQty(), req.maxQty(), req.deviceIds());
+        if (item.minQty() == null || item.maxQty() == null || item.minQty() <= 0 || item.maxQty() <= 0) {
+            throw new BizException("请填写有效的承接零件数区间");
         }
-        for (IntentionItem item : items) {
-            if (item.processNo() == null) {
-                throw new BizException("请选择工序");
-            }
-            if (item.minQty() == null || item.maxQty() == null || item.minQty() <= 0 || item.maxQty() <= 0) {
-                throw new BizException("工序 " + item.processNo() + " 请填写有效的承接量区间");
-            }
-            if (item.minQty() > item.maxQty()) {
-                throw new BizException("工序 " + item.processNo() + " 最小承接量不能大于最大承接量");
-            }
+        if (item.minQty() > item.maxQty()) {
+            throw new BizException("最小承接量不能大于最大承接量");
         }
-        return items;
+        return item;
     }
 
     /** 工厂思考期填报：实施方案+单价，按意向承接区间最高值×单价冻结 5% 保证金。意向期只能报名，不能报价。 */
@@ -198,7 +171,7 @@ public class BiddingService {
         CommitItem priced = req.items().stream()
                 .filter(it -> it.unitPrice() != null && it.unitPrice().compareTo(BigDecimal.ZERO) > 0)
                 .findFirst()
-                .orElseThrow(() -> new BizException("请填写该品全部工序的单价"));
+                .orElseThrow(() -> new BizException("请填写该品单价"));
         boolean depositFrozen = false;
         Integer promisedDays = promisedDaysOf(d);
         BigDecimal yieldRate = d.getMinYield();
@@ -361,7 +334,6 @@ public class BiddingService {
         }
         Quotation q = quotationMapper.selectOne(new LambdaQueryWrapper<Quotation>()
                 .eq(Quotation::getDemandId, req.demandId())
-                .eq(Quotation::getProcessNo, req.processNo())
                 .eq(Quotation::getTenantId, UserContext.tenantId())
                 .eq(Quotation::getStatus, "INTENTION")
                 .eq(Quotation::getIntentionStatus, "FROZEN")
@@ -468,18 +440,19 @@ public class BiddingService {
             return "NONE";
         }
         if ("BUYER_THINKING".equals(st)) {
+            if ("INVALID".equals(q.getStatus()) || "LOSE".equals(q.getStatus())) {
+                return "LOSE";
+            }
             return "WAIT_BUYER";
         }
         if ("SOLUTION_GENERATED".equals(st)) {
             return "WAIT_SOLUTION";
         }
-        if ("SOLUTION_CONFIRMED".equals(st)) {
-            return "WAIT_DISPATCH";
-        }
         if ("FLOW_FAILED".equals(st) || "CANCELLED".equals(st)) {
             return "NONE";
         }
-        if ("SOLUTION_SELECTED".equals(st) || "CONTRACTED".equals(st) || "IN_PRODUCTION".equals(st)
+        if ("SOLUTION_CONFIRMED".equals(st) || "SOLUTION_SELECTED".equals(st)
+                || "CONTRACTED".equals(st) || "IN_PRODUCTION".equals(st)
                 || "COMPLETED".equals(st)) {
             if ("LOSE".equals(q.getStatus()) || "INVALID".equals(q.getStatus())) {
                 return "LOSE";
@@ -495,7 +468,7 @@ public class BiddingService {
             }
             boolean factorySigned = c.getFactorySign() != null && !c.getFactorySign().isBlank();
             if (factorySigned) {
-                return "PENDING_REVIEW";
+                return "WAIT_BUYER_CONFIRM";
             }
             return "SIGN";
         }

@@ -147,9 +147,9 @@ public class DemoDataSeeder implements CommandLineRunner {
         d.setIntentionEndAt(LocalDateTime.now().plusDays(5));
         demandMapper.insert(d);
 
-        insertProcess(d.getId(), 1, "粗车", 1000, "留磨量 0.3mm，同轴度 0.05");
-        insertProcess(d.getId(), 2, "热处理", 1000, "渗碳层 0.8-1.2mm，硬度 58-62HRC");
-        insertProcess(d.getId(), 3, "精磨", 1000, "φ32h6，Ra1.6，圆度 0.008");
+        insertProcess(d.getId(), 1, "粗车", "留磨量 0.3mm，同轴度 0.05");
+        insertProcess(d.getId(), 2, "热处理", "渗碳层 0.8-1.2mm，硬度 58-62HRC");
+        insertProcess(d.getId(), 3, "精磨", "φ32h6，Ra1.6，圆度 0.008");
         attachMd(buyer, d.getId(), "GEAR-SHAFT-001-工程说明.md", """
                 # 齿轮轴工程说明 GEAR-SHAFT-001 / A
 
@@ -196,7 +196,7 @@ public class DemoDataSeeder implements CommandLineRunner {
         d.setExtraJson("{\"roughness\":\"Ra1.6\",\"annualQty\":3000}");
         d.setStatus("PENDING_AUDIT");
         demandMapper.insert(d);
-        insertProcess(d.getId(), 1, "精铣", 500, "外形轮廓与安装面一次装夹完成，去毛刺");
+        insertProcess(d.getId(), 1, "精铣", "外形轮廓与安装面一次装夹完成，去毛刺");
     }
 
     private Demand baseDemand(Long tenantId) {
@@ -235,12 +235,11 @@ public class DemoDataSeeder implements CommandLineRunner {
         attachmentMapper.insert(a);
     }
 
-    private void insertProcess(Long demandId, int no, String name, int qty, String req) {
+    private void insertProcess(Long demandId, int no, String name, String req) {
         Process p = new Process();
         p.setDemandId(demandId);
         p.setProcessNo(no);
         p.setProcessName(name);
-        p.setQuantity(qty);
         p.setRequirement(req);
         processMapper.insert(p);
     }

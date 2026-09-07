@@ -61,14 +61,6 @@ public class FlowController {
         return R.ok();
     }
 
-    /** 运营手动结束买家思考期（视为超时流单） */
-    @PostMapping("/{demandId}/end-buyer-thinking")
-    @PreAuthorize("hasAnyRole('OPERATOR','SUPER_ADMIN')")
-    public R<Void> endBuyerThinking(@PathVariable Long demandId) {
-        flowService.timeoutBuyerThinking(demandId);
-        return R.ok();
-    }
-
     /** 买家思考期决定：CONTINUE 交保证金 / CANCEL 取消全退 */
     @PostMapping("/{demandId}/buyer-decide")
     @PreAuthorize("hasRole('BUYER')")

@@ -43,7 +43,7 @@ public class OrderController {
     }
 
     @PostMapping("/dispatch/{demandId}")
-    @PreAuthorize("hasAnyRole('OPERATOR','SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('BUYER','OPERATOR','SUPER_ADMIN')")
     public R<Long> dispatch(@PathVariable Long demandId) {
         return R.ok(orderService.dispatch(demandId));
     }
@@ -101,10 +101,10 @@ public class OrderController {
         return R.ok();
     }
 
-    @PostMapping("/{orderId}/contract/approve")
-    @PreAuthorize("hasAnyRole('OPERATOR','SUPER_ADMIN')")
-    public R<Void> approveContract(@PathVariable Long orderId, @RequestParam Long factoryTenantId) {
-        contractService.approve(orderId, factoryTenantId);
+    @PostMapping("/{orderId}/contract/confirm-dispatch")
+    @PreAuthorize("hasRole('BUYER')")
+    public R<Void> confirmDispatch(@PathVariable Long orderId) {
+        contractService.buyerConfirmAllSigned(orderId);
         return R.ok();
     }
 

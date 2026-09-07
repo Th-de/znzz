@@ -201,8 +201,17 @@ public class DemandService {
         List<Quotation> locked = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
                 .eq(Quotation::getDemandId, id)
                 .in(Quotation::getStatus, "LOCKED", "WIN"));
+        boolean staffBuyer = "OPERATOR".equals(role) || "SUPER_ADMIN".equals(role);
+        Map<String, Object> buyer = Map.of();
+        if (d.getTenantId() != null) {
+            try {
+                buyer = enterprisePublicService.buyerProfile(d.getTenantId(), staffBuyer);
+            } catch (Exception ignored) {
+                buyer = Map.of();
+            }
+        }
         return new DemandDetailView(d, processes(id), fileService.listByBiz("DEMAND", id),
-                QuoteEstimate.of(d, locked));
+                QuoteEstimate.of(d, locked), buyer);
     }
 
     private boolean factoryBidOn(Long demandId) {
@@ -262,28 +271,21 @@ public class DemandService {
             boolean showQuote = List.of("SOLUTION_GENERATED", "SOLUTION_CONFIRMED", "SOLUTION_SELECTED",
                     "CONTRACTED", "IN_PRODUCTION", "COMPLETED").contains(d.getStatus());
             if (showQuote) {
-                Map<Integer, String> processNames = processMapper.selectList(new LambdaQueryWrapper<Process>()
-                                .eq(Process::getDemandId, demandId))
-                        .stream()
-                        .collect(Collectors.toMap(p -> p.getProcessNo() == null ? 1 : p.getProcessNo(),
-                                p -> p.getProcessName() == null ? "" : p.getProcessName(), (a, b) -> a));
-                List<Map<String, Object>> quotes = new java.util.ArrayList<>();
-                for (Quotation q : e.getValue()) {
-                    if (!"LOCKED".equals(q.getStatus()) && !"WIN".equals(q.getStatus())) {
-                        continue;
-                    }
-                    Integer pno = q.getProcessNo() == null ? 1 : q.getProcessNo();
+                Quotation priced = e.getValue().stream()
+                        .filter(q -> "LOCKED".equals(q.getStatus()) || "WIN".equals(q.getStatus()))
+                        .findFirst()
+                        .orElse(null);
+                if (priced != null) {
                     Map<String, Object> quote = new java.util.LinkedHashMap<>();
-                    quote.put("processNo", pno);
-                    quote.put("processName", processNames.getOrDefault(pno, "工序" + pno));
-                    quote.put("unitPrice", q.getUnitPrice());
-                    quote.put("price", q.getPrice());
-                    quote.put("minQty", q.getMinQty());
-                    quote.put("maxQty", q.getMaxQty());
-                    quote.put("promisedDays", q.getPromisedDays());
-                    quotes.add(quote);
+                    quote.put("processNo", 1);
+                    quote.put("processName", "零件单价");
+                    quote.put("unitPrice", priced.getUnitPrice());
+                    quote.put("price", priced.getPrice());
+                    quote.put("minQty", priced.getMinQty());
+                    quote.put("maxQty", priced.getMaxQty());
+                    quote.put("promisedDays", priced.getPromisedDays());
+                    row.put("quotes", List.of(quote));
                 }
-                row.put("quotes", quotes);
             }
             out.add(row);
         }
@@ -431,7 +433,6 @@ public class DemandService {
                 p.setDemandId(d.getId());
                 p.setProcessNo(item.processNo() == null ? i : item.processNo());
                 p.setProcessName(item.processName().trim());
-                p.setQuantity(d.getQuantity());
                 p.setRequirement(item.requirement());
                 processMapper.insert(p);
                 i++;
@@ -442,7 +443,6 @@ public class DemandService {
         p.setDemandId(d.getId());
         p.setProcessNo(1);
         p.setProcessName("整单");
-        p.setQuantity(d.getQuantity());
         p.setRequirement("");
         processMapper.insert(p);
     }

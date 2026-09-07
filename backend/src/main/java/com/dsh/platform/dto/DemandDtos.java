@@ -10,6 +10,7 @@ import java.util.List;
 
 public class DemandDtos {
 
+    /** quantity 已废弃，件数以需求 quantity 为准；字段保留仅为兼容旧请求体。 */
     public record ProcessItem(Integer processNo, String processName, Integer quantity, String requirement) {}
 
     public record DeliveryPeriod(Integer percent, Integer qty, String text, String startAt, String endAt) {}
@@ -30,7 +31,8 @@ public class DemandDtos {
     public record ReturnRequest(String reason) {}
 
     public record DemandDetailView(Demand demand, List<Process> processes, List<Attachment> attachments,
-                                   java.util.Map<String, Object> quoteStats) {}
+                                   java.util.Map<String, Object> quoteStats,
+                                   java.util.Map<String, Object> buyer) {}
 
     public record AuditRequest(String result, String reason) {}
 

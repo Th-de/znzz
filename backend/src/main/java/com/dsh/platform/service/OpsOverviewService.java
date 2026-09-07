@@ -39,9 +39,9 @@ public class OpsOverviewService {
         m.put("factoryThinking", countByStatus("FACTORY_THINKING"));
         m.put("buyerThinking", countByStatus("BUYER_THINKING"));
         m.put("solutionGenerated", countByStatus("SOLUTION_GENERATED"));
-        m.put("solutionConfirmed", countByStatus("SOLUTION_CONFIRMED"));
+        m.put("solutionSelected", countByStatus("SOLUTION_SELECTED"));
         m.put("inProduction", demandMapper.selectCount(new LambdaQueryWrapper<Demand>()
-                .in(Demand::getStatus, "SOLUTION_SELECTED", "CONTRACTED", "IN_PRODUCTION")));
+                .in(Demand::getStatus, "CONTRACTED", "IN_PRODUCTION")));
         m.put("completed", countByStatus("COMPLETED"));
 
         m.put("aiPendingReview", solutionMapper.selectCount(new LambdaQueryWrapper<Solution>()
@@ -63,7 +63,7 @@ public class OpsOverviewService {
     private List<Map<String, Object>> attentionList() {
         List<Demand> list = demandMapper.selectList(new LambdaQueryWrapper<Demand>()
                 .in(Demand::getStatus, "PENDING_AUDIT", "PUBLISHED", "FACTORY_THINKING",
-                        "BUYER_THINKING", "SOLUTION_GENERATED", "SOLUTION_CONFIRMED")
+                        "BUYER_THINKING", "SOLUTION_GENERATED")
                 .orderByDesc(Demand::getCreatedAt)
                 .orderByDesc(Demand::getId));
         List<Map<String, Object>> out = new ArrayList<>();
@@ -89,15 +89,29 @@ public class OpsOverviewService {
                 case "BUYER_THINKING" -> d.getBuyerThinkingEndAt();
                 default -> null;
             });
-            row.put("action", switch (d.getStatus()) {
+            boolean aiPending = false;
+            boolean aiIssued = false;
+            if ("SOLUTION_GENERATED".equals(d.getStatus())) {
+                Long pending = solutionMapper.selectCount(new LambdaQueryWrapper<Solution>()
+                        .eq(Solution::getDemandId, d.getId())
+                        .eq(Solution::getStatus, "PENDING_REVIEW"));
+                Long active = solutionMapper.selectCount(new LambdaQueryWrapper<Solution>()
+                        .eq(Solution::getDemandId, d.getId())
+                        .eq(Solution::getStatus, "ACTIVE"));
+                aiPending = pending != null && pending > 0;
+                aiIssued = active != null && active > 0;
+            }
+            String action = switch (d.getStatus()) {
                 case "PENDING_AUDIT" -> "待审核发布";
-                case "PUBLISHED" -> "意向期进行中，可到期结束";
+                case "PUBLISHED" -> "意向期进行中";
                 case "FACTORY_THINKING" -> "工厂思考期，等待填报";
                 case "BUYER_THINKING" -> "买家思考期，等待交保证金";
-                case "SOLUTION_GENERATED" -> "AI 方案待审核下发";
-                case "SOLUTION_CONFIRMED" -> "买家已确认，待派单";
+                case "SOLUTION_GENERATED" -> (aiIssued && !aiPending) ? "已下发，等待买家选定方案" : "AI 方案待审核下发";
                 default -> "";
-            });
+            };
+            row.put("action", action);
+            row.put("needHandle", "PENDING_AUDIT".equals(d.getStatus())
+                    || ("SOLUTION_GENERATED".equals(d.getStatus()) && (!aiIssued || aiPending)));
             out.add(row);
         }
         return out;

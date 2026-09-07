@@ -31,12 +31,17 @@ public class RuleSolutionGenerator implements SolutionGenerator {
     public List<Map<String, Object>> alternatives(Demand demand, Integer processNo, int need) {
         List<Quotation> candidates = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
                         .eq(Quotation::getDemandId, demand.getId())
-                        .eq(Quotation::getStatus, "LOCKED")
-                        .eq(Quotation::getProcessNo, processNo))
+                        .eq(Quotation::getStatus, "LOCKED"))
                 .stream()
                 .filter(q -> q.getMaxQty() != null && q.getMaxQty() >= need)
                 .toList();
-        return candidates.stream()
+        java.util.Map<Long, Quotation> uniq = new LinkedHashMap<>();
+        for (Quotation q : candidates) {
+            if (q.getTenantId() != null) {
+                uniq.putIfAbsent(q.getTenantId(), q);
+            }
+        }
+        return uniq.values().stream()
                 .map(q -> {
                     Enterprise e = enterpriseMapper.selectById(q.getTenantId());
                     List<Device> devices = deviceService.byIds(deviceService.parseIds(q.getDeviceIdsJson()));

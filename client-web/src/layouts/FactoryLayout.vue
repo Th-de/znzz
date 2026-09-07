@@ -2,14 +2,16 @@
   <el-container class="wrap">
     <el-aside width="200px" class="aside">
       <div class="logo">工厂端</div>
-      <el-menu :default-active="active" router background-color="#304156" text-color="#bfcbd9" active-text-color="#409EFF">
+      <el-menu :default-active="active" :default-openeds="mineOpeneds" router background-color="#304156" text-color="#bfcbd9" active-text-color="#409EFF">
         <el-menu-item index="/factory/home">工作台</el-menu-item>
-        <el-menu-item index="/factory/mine">我的主页</el-menu-item>
-        <el-menu-item index="/factory/devices">我的设备</el-menu-item>
-        <el-menu-item index="/factory/profile">能力档案</el-menu-item>
+        <el-sub-menu index="factory-mine">
+          <template #title>我的主页</template>
+          <el-menu-item index="/factory/mine">信息</el-menu-item>
+          <el-menu-item index="/factory/devices">设备</el-menu-item>
+          <el-menu-item index="/factory/profile">能力档案</el-menu-item>
+        </el-sub-menu>
         <el-menu-item index="/factory/demands">浏览需求</el-menu-item>
         <el-menu-item index="/factory/quotations">我的报名</el-menu-item>
-        <el-menu-item index="/factory/stages">我的工单</el-menu-item>
         <el-menu-item index="/factory/notifies">通知</el-menu-item>
       </el-menu>
     </el-aside>
@@ -40,10 +42,10 @@ const active = computed(() => {
   if (route.path.startsWith('/factory/profile')) return '/factory/profile'
   if (route.path.startsWith('/factory/demands')) return '/factory/demands'
   if (route.path.startsWith('/factory/quotations')) return '/factory/quotations'
-  if (route.path.startsWith('/factory/stages')) return '/factory/stages'
   if (route.path.startsWith('/factory/notifies')) return '/factory/notifies'
   return '/factory/home'
 })
+const mineOpeneds = ['factory-mine']
 const title = computed(() => route.meta.title || '工厂工作台')
 const backTo = computed(() => route.meta.backTo || '')
 function goBack() {

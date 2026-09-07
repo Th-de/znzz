@@ -29,6 +29,10 @@ export function factorySign(orderId, read, sign) {
   return api.post(`/order/${orderId}/contract/factory-sign`, { read, sign })
 }
 
+export function confirmDispatch(orderId) {
+  return api.post(`/order/${orderId}/contract/confirm-dispatch`)
+}
+
 export function stages(orderId) {
   return api.get(`/order/${orderId}/stages`)
 }

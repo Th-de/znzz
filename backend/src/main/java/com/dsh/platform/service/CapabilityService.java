@@ -69,7 +69,7 @@ public class CapabilityService {
             String json = objectMapper.writeValueAsString(body);
             JsonNode node = objectMapper.readTree(json);
             if (!isComplete(node)) {
-                throw new BizException("请补全材料、工艺、合格率和至少一条工序产能");
+                throw new BizException("请补全材料、工艺和至少一条工序产能");
             }
             if (deviceService.countMine() <= 0) {
                 throw new BizException("请先在「我的设备」中至少添加一台设备");
@@ -103,7 +103,6 @@ public class CapabilityService {
         if (node == null || node.isNull()) return false;
         if (!hasItems(node.get("materials"))) return false;
         if (!hasItems(node.get("processes"))) return false;
-        if (node.get("yieldRate") == null || node.get("yieldRate").isNull()) return false;
         JsonNode caps = node.get("capacityByProcess");
         if (!hasItems(caps)) return false;
         for (JsonNode c : caps) {

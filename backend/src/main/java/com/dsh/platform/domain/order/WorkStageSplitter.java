@@ -50,7 +50,7 @@ public class WorkStageSplitter {
                 .filter(item -> factoryId.equals(asLong(item.get("factoryId"))))
                 .toList();
         if (mine.isEmpty()) {
-            throw new BizException("方案中没有该厂的工序");
+            throw new BizException("方案中没有该厂的分配");
         }
         int quantity = 0;
         BigDecimal unitPrice = null;

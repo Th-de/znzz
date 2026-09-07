@@ -15,7 +15,6 @@ public class Process {
     private Long demandId;
     private Integer processNo;
     private String processName;
-    private Integer quantity;
     private String requirement;
     private LocalDateTime createdAt;
 }

@@ -17,7 +17,7 @@ export function selectSolution(demandId, solutionId) {
 }
 
 export function generateAi(demandId) {
-  return api.post(`/solution/${demandId}/generate-ai`, null, { timeout: 90000 })
+  return api.post(`/solution/${demandId}/generate-ai`, null, { timeout: 180000 })
 }
 
 export function allocationCandidates(solutionId, processNo) {

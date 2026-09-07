@@ -59,7 +59,7 @@
             <el-tooltip v-else-if="row.status==='SOLUTION_GENERATED'" content="运营审核通过后即可在详情页参考推荐并自行分配工厂" placement="top">
               <el-button size="small" disabled>等待运营审核推荐方案</el-button>
             </el-tooltip>
-            <el-button v-if="row.status==='SOLUTION_CONFIRMED'" size="small" disabled>等待运营派单</el-button>
+            <el-button v-if="row.status==='SOLUTION_CONFIRMED' || row.status==='SOLUTION_SELECTED'" size="small" type="primary" @click="$router.push('/buyer/demand/' + row.id)">去签合同</el-button>
             <el-button v-if="row.status==='SOLUTION_GENERATED' || row.status==='SOLUTION_CONFIRMED'" size="small" type="danger" @click="closeOrder(row)">关闭订单</el-button>
           </template>
         </el-table-column>

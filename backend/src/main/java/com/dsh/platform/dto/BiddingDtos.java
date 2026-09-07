@@ -5,11 +5,11 @@ import java.util.List;
 
 public class BiddingDtos {
 
-    /** 单工序报名项：承接量区间 + 匹配该工序的设备 */
+    /** 报名项：承接零件数区间（processNo 兼容旧请求，忽略） */
     public record IntentionItem(Integer processNo, Integer minQty, Integer maxQty,
                                 List<Long> deviceIds) {}
 
-    /** 意向报名：支持一次多工序（items），意向金按单收一次；兼容旧的单工序字段 */
+    /** 意向报名：一厂一需求一行，对比 demand.quantity */
     public record IntentionRequest(Long demandId, Integer processNo,
                                    Integer minQty, Integer maxQty,
                                    List<Long> deviceIds,

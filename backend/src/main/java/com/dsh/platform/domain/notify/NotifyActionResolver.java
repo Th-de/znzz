@@ -52,18 +52,34 @@ public class NotifyActionResolver {
         }
         boolean factory = "FACTORY".equals(role);
         Long hashId = trailingId(title);
-        if (title.startsWith("请按厂上传合同#") || title.startsWith("请上传合同#") || title.startsWith("合同已审过#")) {
+        if (title.startsWith("请按厂上传合同#") || title.startsWith("请上传合同#")
+                || title.startsWith("已确认签署并派单#") || title.startsWith("合同已审过#")) {
             Long orderId = firstId(hashId);
             v.setLink(buyerDemandByOrder(orderId));
             v.setAction(title.contains("上传") ? "去上传合同" : "查看需求");
             if (factory) {
-                v.setLink("/factory/stages");
-                v.setAction("去工单");
+                v.setLink(factoryBidLink(v.getDemandId()));
+                v.setAction(title.startsWith("已确认签署并派单#") || title.startsWith("买家已确认合同#") ? "去生产" : "查看报名");
             }
             return;
         }
+        if (title.startsWith("工厂已签署合同#")) {
+            v.setLink(hashId != null ? "/buyer/demand/" + hashId : "/buyer/home");
+            v.setAction("去确认");
+            return;
+        }
+        if (title.startsWith("待下发合同#")) {
+            v.setLink(factoryBidLink(v.getDemandId()));
+            v.setAction("查看报名");
+            return;
+        }
+        if (title.startsWith("买家已确认合同#")) {
+            v.setLink(factoryBidLink(v.getDemandId()));
+            v.setAction("去生产");
+            return;
+        }
         if (title.startsWith("请签合同#")) {
-            v.setLink("/factory/quotations");
+            v.setLink(factoryBidLink(v.getDemandId()));
             v.setAction("去签署");
             return;
         }
@@ -74,7 +90,7 @@ public class NotifyActionResolver {
         }
         if (title.startsWith("阶段不合格#") || title.startsWith("阶段问卷#")) {
             if (factory) {
-                v.setLink("/factory/stages");
+                v.setLink(factoryBidLink(v.getDemandId()));
                 v.setAction("去填问卷");
             } else {
                 v.setLink(buyerOrderByStage(hashId));
@@ -88,14 +104,14 @@ public class NotifyActionResolver {
             return;
         }
         if (title.startsWith("订单已结算#")) {
-            v.setLink("/factory/stages");
-            v.setAction("查看工单");
+            v.setLink(factoryBidLink(v.getDemandId()));
+            v.setAction("查看生产");
             return;
         }
         if (title.startsWith("工单逾期#")) {
             if (factory) {
-                v.setLink("/factory/stages");
-                v.setAction("去工单");
+                v.setLink(factoryBidLink(v.getDemandId()));
+                v.setAction("去生产");
             } else {
                 v.setLink(buyerOrderByStage(hashId));
                 v.setAction("查看订单");
@@ -119,7 +135,7 @@ public class NotifyActionResolver {
             return;
         }
         if (title.startsWith("未锁价扣除意向金#")) {
-            v.setLink("/factory/quotations");
+            v.setLink(factoryBidLink(v.getDemandId()));
             v.setAction("查看报名");
             return;
         }
@@ -131,7 +147,7 @@ public class NotifyActionResolver {
                 || title.startsWith("思考期超时扣分#") || title.startsWith("订单已结束#")
                 || title.startsWith("需求流拍#")) {
             if (factory) {
-                v.setLink("/factory/quotations");
+                v.setLink(factoryBidLink(v.getDemandId()));
                 v.setAction(title.startsWith("工厂思考期开始") ? "去填报报价" : "查看报名");
             } else {
                 v.setLink(hashId != null ? "/buyer/demand/" + hashId : "/buyer/home");
@@ -184,6 +200,7 @@ public class NotifyActionResolver {
                 || "去支付".equals(action)
                 || "去填问卷".equals(action)
                 || "去看需求".equals(action)
+                || "去确认".equals(action)
                 || "去办理".equals(action);
     }
 
@@ -198,6 +215,7 @@ public class NotifyActionResolver {
             case "去看方案" -> st == DemandStatus.SOLUTION_GENERATED;
             case "去上传合同" -> st == DemandStatus.SOLUTION_SELECTED;
             case "去签署" -> canSign(title, st);
+            case "去确认" -> st == DemandStatus.SOLUTION_SELECTED;
             case "去支付" -> canPay(title);
             case "去填问卷" -> canSurvey(title);
             case "去看需求" -> st == DemandStatus.PUBLISHED;
@@ -299,6 +317,10 @@ public class NotifyActionResolver {
                 || title.startsWith("订单已完成#")
                 || title.startsWith("订单已结算#")
                 || title.startsWith("保证金已退还#");
+    }
+
+    private String factoryBidLink(Long demandId) {
+        return demandId == null ? "/factory/quotations" : "/factory/quotations/" + demandId;
     }
 
     private String buyerOrderByStage(Long stageId) {

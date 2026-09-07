@@ -68,11 +68,24 @@ public class TodoService {
             List<Contract> unsigned = contractMapper.selectList(new LambdaQueryWrapper<Contract>()
                     .in(Contract::getOrderId, orderIds)
                     .ne(Contract::getStatus, "SIGNED"));
-            long needSign = unsigned.stream().filter(c -> c.getAttachmentId() == null
-                    || c.getBuyerSign() == null || c.getBuyerSign().isBlank()).count();
-            if (needSign > 0) {
-                out.add(new TodoItem("SIGN_CONTRACT", "有 " + needSign + " 份合同待你上传或签名",
-                        buyerDemandLink(unsigned.get(0).getOrderId()), (int) needSign));
+            long needIssue = unsigned.stream().filter(c -> c.getAttachmentId() == null).count();
+            long needBuyerSign = unsigned.stream().filter(c -> c.getAttachmentId() != null
+                    && (c.getBuyerSign() == null || c.getBuyerSign().isBlank())).count();
+            long waitFactory = unsigned.stream().filter(c -> c.getAttachmentId() != null
+                    && c.getBuyerSign() != null && !c.getBuyerSign().isBlank()
+                    && (c.getFactorySign() == null || c.getFactorySign().isBlank())).count();
+            long readyDispatch = unsigned.stream().filter(c -> c.getFactorySign() != null
+                    && !c.getFactorySign().isBlank()
+                    && c.getBuyerSign() != null && !c.getBuyerSign().isBlank()).count();
+            if (unsigned.size() > 0 && readyDispatch == unsigned.size()) {
+                out.add(new TodoItem("CONFIRM_DISPATCH", "工厂已全部签署，请确认并开始派单",
+                        buyerDemandLink(unsigned.get(0).getOrderId()), (int) readyDispatch));
+            } else if (needIssue > 0 || needBuyerSign > 0) {
+                out.add(new TodoItem("SIGN_CONTRACT", "有 " + (needIssue + needBuyerSign) + " 份合同待你上传或签名",
+                        buyerDemandLink(unsigned.get(0).getOrderId()), (int) (needIssue + needBuyerSign)));
+            } else if (waitFactory > 0) {
+                out.add(new TodoItem("WAIT_FACTORY_SIGN", "有 " + waitFactory + " 份合同待工厂签字",
+                        buyerDemandLink(unsigned.get(0).getOrderId()), (int) waitFactory));
             }
             for (Order o : orders) {
                 if (!"IN_PRODUCTION".equals(o.getStatus())) {
@@ -154,7 +167,8 @@ public class TodoService {
         List<Contract> contracts = contractMapper.selectList(new LambdaQueryWrapper<Contract>()
                 .eq(Contract::getTenantId, tid)
                 .ne(Contract::getStatus, "SIGNED"));
-        long needSign = contracts.stream().filter(c -> c.getAttachmentId() != null).count();
+        long needSign = contracts.stream().filter(c -> c.getAttachmentId() != null
+                && (c.getFactorySign() == null || c.getFactorySign().isBlank())).count();
         if (needSign > 0) {
             out.add(new TodoItem("SIGN_CONTRACT", "有 " + needSign + " 份合同待你签署",
                     "/factory/quotations", (int) needSign));
@@ -164,12 +178,12 @@ public class TodoService {
         long startCount = stages.stream().filter(s -> "PENDING".equals(s.getStatus())).count();
         if (startCount > 0) {
             out.add(new TodoItem("START_WORK", "有 " + startCount + " 张工单待开工",
-                    "/factory/stages", (int) startCount));
+                    "/factory/quotations", (int) startCount));
         }
         long producing = stages.stream().filter(s -> "IN_PRODUCTION".equals(s.getStatus())).count();
         if (producing > 0) {
             out.add(new TodoItem("REPORT_PROGRESS", "有 " + producing + " 张工单在生产中，请上报进度",
-                    "/factory/stages", (int) producing));
+                    "/factory/quotations", (int) producing));
         }
         return out;
     }

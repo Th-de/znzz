@@ -107,19 +107,25 @@ public class OrderService {
         stateMachine.transit(d, DemandStatus.SOLUTION_CONFIRMED);
         demandMapper.updateById(d);
         siteNotify.send(d.getTenantId(), "方案已确认#" + demandId,
-                "需求「" + d.getTitle() + "」方案已确认，等待运营派单。");
-        siteNotify.notifyOperators("买家已确认方案#" + demandId,
-                "买家已确认需求「" + d.getTitle() + "」的方案，请到需求管理派单。");
+                "需求「" + d.getTitle() + "」方案已确认，请按中标厂上传合同并签署。");
+        dispatch(demandId);
     }
 
     @Transactional
     public Long dispatch(Long demandId) {
-        if (!"OPERATOR".equals(UserContext.role()) && !"SUPER_ADMIN".equals(UserContext.role())) {
-            throw new BizException(403, "仅运营可以派单");
-        }
         Demand d = demandMapper.selectById(demandId);
-        if (d == null || !"SOLUTION_CONFIRMED".equals(d.getStatus())) {
-            throw new BizException("仅买家确认后的方案可以派单");
+        if (d == null) {
+            throw new BizException("需求不存在");
+        }
+        String role = UserContext.role();
+        boolean staff = "OPERATOR".equals(role) || "SUPER_ADMIN".equals(role);
+        boolean owner = "BUYER".equals(role) && UserContext.tenantId() != null
+                && UserContext.tenantId().equals(d.getTenantId());
+        if (!staff && !owner) {
+            throw new BizException(403, "无权进入合同签署");
+        }
+        if (!"SOLUTION_CONFIRMED".equals(d.getStatus())) {
+            throw new BizException("仅买家确认后的方案可以进入合同签署");
         }
         Solution s = solutionMapper.selectOne(new LambdaQueryWrapper<Solution>()
                 .eq(Solution::getDemandId, demandId)
@@ -144,40 +150,38 @@ public class OrderService {
         o.setContractIssueEndAt(LocalDateTime.now().plusHours(Math.max(contractIssueHours, 1)));
         orderMapper.updateById(o);
         contractService.createDrafts(o.getId(), s.getFinalComboJson());
-        // 同工序可多厂分量：按 (厂, 工序) 组合判定 WIN/LOSE，落选逐一退款
-        java.util.Set<String> winPairs = new java.util.HashSet<>();
+        // 中标按厂判定：方案给该厂分配零件即 WIN，落选退保证金
+        java.util.Set<Long> winFactories = new java.util.HashSet<>();
         Map<Long, java.util.List<String>> winProcessNames = new LinkedHashMap<>();
         for (Map<String, Object> c : combo) {
             Long fid = Long.valueOf(c.get("factoryId").toString());
-            Integer pno = Integer.valueOf(c.get("processNo").toString());
-            winPairs.add(fid + "-" + pno);
-            String pname = c.get("processName") == null ? ("工序" + pno) : c.get("processName").toString();
+            winFactories.add(fid);
             Integer qty = c.get("quantity") == null ? null
                     : new BigDecimal(c.get("quantity").toString()).intValue();
             winProcessNames.computeIfAbsent(fid, k -> new java.util.ArrayList<>())
-                    .add(pname + (qty == null ? "" : "×" + qty + "件"));
+                    .add("零件" + (qty == null ? "" : "×" + qty + "件"));
         }
         List<Quotation> allQuotes = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
                 .eq(Quotation::getDemandId, demandId)
                 .in(Quotation::getStatus, "LOCKED", "INTENTION"));
+        java.util.Set<Long> refunded = new java.util.HashSet<>();
         for (Quotation q : allQuotes) {
-            Integer pno = q.getProcessNo() == null ? 1 : q.getProcessNo();
-            boolean win = winPairs.contains(q.getTenantId() + "-" + pno);
+            boolean win = q.getTenantId() != null && winFactories.contains(q.getTenantId());
             q.setStatus(win ? "WIN" : "LOSE");
             quotationMapper.updateById(q);
-            if (!win) {
+            if (!win && q.getTenantId() != null && refunded.add(q.getTenantId())) {
                 fundLedger.refundLoser(q);
             }
         }
         List<Long> winFactoryIds = new java.util.ArrayList<>(winProcessNames.keySet());
         stateMachine.transit(d, DemandStatus.SOLUTION_SELECTED);
         demandMapper.updateById(d);
-        siteNotify.send(d.getTenantId(), "请按厂上传合同#" + o.getId(), "方案已派单。请按中标厂分别上传你们拟定的合同并签名。");
-        // 只把各厂自己承接的那部分发给它，不发整体方案
-        winProcessNames.forEach((fid, names) -> siteNotify.send(fid, "请签合同#" + o.getId(),
+        siteNotify.send(d.getTenantId(), "请按厂上传合同#" + o.getId(),
+                "方案已确认。请按中标厂分别上传合同；下发后不可更换。各厂签完后请确认并开始派单。");
+        winProcessNames.forEach((fid, names) -> siteNotify.send(fid, "待下发合同#" + o.getId(),
                 "你已中标，承接内容：" + String.join("、", names)
-                        + "。买家上传与你的合同后，请阅读并签名。"));
-        auditService.record("派单", "DEMAND", demandId,
+                        + "。买家下发合同后请阅读并签名，签字将提交给买家确认。"));
+        auditService.record("进入合同签署", "DEMAND", demandId,
                 "订单#" + o.getId() + " 总额" + total + " 中标厂" + winFactoryIds);
         return o.getId();
     }
@@ -196,7 +200,7 @@ public class OrderService {
             throw new BizException("只有待启动的工单可以开工");
         }
         if (!contractService.isSigned(ws.getOrderId(), ws.getTenantId())) {
-            throw new BizException("与你的合同未双签或平台未审过，不能开工");
+            throw new BizException("与你的合同尚未由买家确认签署，不能开工");
         }
         if (ws.getPeriodStart() != null && LocalDateTime.now().isBefore(ws.getPeriodStart())) {
             ws.setStatus("WAITING_OPEN");

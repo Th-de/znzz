@@ -86,12 +86,18 @@ public class AiSolutionGenerator {
             Process one = new Process();
             one.setProcessNo(1);
             one.setProcessName("整单");
-            one.setQuantity(demand.getQuantity());
             processes = List.of(one);
         }
         List<Quotation> locked = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
                 .eq(Quotation::getDemandId, demand.getId())
                 .eq(Quotation::getStatus, "LOCKED"));
+        Map<Long, Quotation> uniq = new LinkedHashMap<>();
+        for (Quotation q : locked) {
+            if (q.getTenantId() != null) {
+                uniq.putIfAbsent(q.getTenantId(), q);
+            }
+        }
+        locked = new ArrayList<>(uniq.values());
         if (locked.isEmpty()) {
             throw new BizException("没有锁定报价，无法生成 AI 方案");
         }
@@ -105,15 +111,17 @@ public class AiSolutionGenerator {
 
     private String buildPrompt(Demand demand, List<Process> processes, List<Quotation> locked) {
         StringBuilder sb = new StringBuilder();
-        sb.append("你是制造业订单评审专家。综合产能可行性、历史履约记录、信用状况、质量表现、价格与工期，");
-        sb.append("按零件件数把整单需求分给工厂，产出完整可执行的履约方案。\n");
-        sb.append("一单一品：分给某厂的件数由该厂完成全部工序，不要按工序拆分件数，也不要按工序做小计。\n");
+        sb.append("你是制造业订单评审专家。按零件件数把整单分给候选工厂，产出可执行方案。\n");
+        sb.append("一单一品：某厂分到的件数由该厂完成全部工序，不要按工序拆行。\n");
         sb.append("只能从候选工厂里选，不能发明工厂、价格或承接量。只返回 JSON。\n");
-        sb.append("可把总需求件数拆给多家工厂：各厂 quantity 之和必须等于需求数量，");
-        sb.append("每家分配量不得低于该厂约定的最小承接量 minQty，也不得超过该厂最大承接量 maxQty。");
-        sb.append("若某厂 minQty 大于剩余可分配量，则不要选该厂。单价是该品一件的价格（含全部工序）。\n");
-        sb.append("产能核算：需要的日产出 ≈ 分配数量 ÷ 承诺工期（天）。对比该厂勾选设备的日产能合计，判断是否可行、余量多少。\n");
-        sb.append("生成 1~3 套最优推荐方案（至少 1 套，视候选丰富程度而定），每套给出总费用与分阶段交付节点, 如果只有一个阶段，则不要分阶段写明。\n\n");
+        sb.append("各厂 quantity 之和必须等于需求数量；minQty<=quantity<=maxQty；minQty 大于剩余量则不选该厂。\n");
+        sb.append("产能核算用「分配数量÷承诺工期」对比 dailyCapacitySum，结论写进 capacityCheck。\n");
+        sb.append("生成 1~3 套方案。只有一期交付时 milestones 只写一条，不要硬拆阶段。\n");
+        sb.append("文案必须是最终结论，禁止写入思考过程、逐步推导、自问自答或草稿。\n");
+        sb.append("选厂理由 reason 必须从订单评审专业角度写，依据该厂真实报价、产能、工期、良率、信用与履约记录，");
+        sb.append("从经济（单价/总费用）、效益（良率/一次交检/资金占用）、效率（日产能/工期余量/工序贯通）等维度切实阐述，");
+        sb.append("数字须与候选数据一致，不要空话套话，80～150字，最多150字。\n");
+        sb.append("其他字数：rationale≤40字；capacityCheck≤40字；risks 最多2条且每条≤20字；milestones 每条≤20字。\n\n");
         if (demand.getDeliveryTimes() != null && demand.getDeliveryTimes() > 0) {
             sb.append("买家要求分 ").append(demand.getDeliveryTimes()).append(" 期交付");
             if (demand.getDeliveryPlanJson() != null && !demand.getDeliveryPlanJson().isBlank()) {
@@ -138,7 +146,6 @@ public class AiSolutionGenerator {
         for (Process p : processes) {
             sb.append("- processNo=").append(p.getProcessNo())
                     .append(" name=").append(p.getProcessName())
-                    .append(" qty=").append(p.getQuantity())
                     .append(" req=").append(nvl(p.getRequirement())).append('\n');
         }
         sb.append("候选锁定报价与工厂画像：\n");
@@ -150,7 +157,6 @@ public class AiSolutionGenerator {
                     .append(" factoryName=").append(e == null ? "" : e.getName())
                     .append(" credit=").append(e == null ? "" : e.getCreditScore())
                     .append(" auth=").append(e == null ? "" : e.getAuthStatus())
-                    .append(" processNo=").append(q.getProcessNo())
                     .append(" unitPrice=").append(q.getUnitPrice())
                     .append(" totalPrice=").append(q.getPrice())
                     .append(" days=").append(q.getPromisedDays())
@@ -175,13 +181,12 @@ public class AiSolutionGenerator {
                         .append('\n');
             }
         }
-        sb.append("\n输出格式：{\"schemes\":[{\"type\":\"AI1\",\"rationale\":\"整套方案总述\",\"risks\":[\"风险提示\"],");
-        sb.append("\"milestones\":[\"第1期：完成粗加工600件并交检\",\"第2期：…\"],");
-        sb.append("\"items\":[{\"factoryId\":15,\"quantity\":600,\"reason\":\"选这家承接600件的具体理由\",");
-        sb.append("\"capacityCheck\":\"该厂勾选设备日产能合计300件/天，分配600件需2天+，工期10天余量充足\"}]}]}\n");
-        sb.append("type 依次为 AI1/AI2/AI3/AI4/AI5。每套 items 按工厂写一行，quantity 为该厂承接零件数，合计必须等于需求数量；");
-        sb.append("不要按工序拆行。factoryId 必须来自候选，且 minQty<=quantity<=maxQty（minQty 为空时按 1）。每个 item 必须写 quantity、reason 和 capacityCheck。");
-        sb.append("单价用候选 unitPrice，不要自编。milestones 按买家分期要求给出每阶段任务与交付节点。");
+        sb.append("\n输出格式：{\"schemes\":[{\"type\":\"AI1\",\"rationale\":\"两厂分担，产能与交期均可行\",");
+        sb.append("\"risks\":[\"宏达交期偏紧\"],\"milestones\":[\"第1期交500件\"],");
+        sb.append("\"items\":[{\"factoryId\":15,\"quantity\":600,\"reason\":\"经济上单价处于候选中低位、本批总费用可控；效率上日产能覆盖本批负荷且承诺工期有余量；效益上良率与信用达门槛、质检合格率支撑一次交检，可降低返工与资金占用。\",");
+        sb.append("\"capacityCheck\":\"日产300件，600件约2天，工期10天余量足\"}]}]}\n");
+        sb.append("type 依次为 AI1/AI2/AI3。每套 items 按工厂一行；factoryId 必须来自候选。");
+        sb.append("单价用候选 unitPrice。数字必须与候选报价、minQty/maxQty、需求数量一致。");
         return sb.toString();
     }
 
@@ -249,14 +254,17 @@ public class AiSolutionGenerator {
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("model", model);
             body.put("messages", List.of(
-                    Map.of("role", "system", "content", "你只输出合法 JSON，不要 markdown。"),
+                    Map.of("role", "system", "content",
+                            "只输出合法 JSON 对象，不要 markdown，不要解释，不要思考过程或推导步骤。"),
                     Map.of("role", "user", "content", prompt)
             ));
             body.put("response_format", Map.of("type", "json_object"));
+            body.put("max_tokens", 2400);
+            body.put("temperature", 0.2);
             String json = objectMapper.writeValueAsString(body);
             String url = baseUrl.endsWith("/") ? baseUrl + "v1/chat/completions" : baseUrl + "/v1/chat/completions";
             HttpRequest req = HttpRequest.newBuilder(URI.create(url))
-                    .timeout(Duration.ofSeconds(75))
+                    .timeout(Duration.ofMinutes(3))
                     .header("Authorization", "Bearer " + resolveKey())
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(json))
@@ -339,7 +347,10 @@ public class AiSolutionGenerator {
             Integer held = qtyByFactory.get(factoryId);
             if (held == null) {
                 qtyByFactory.put(factoryId, qty);
-                meta.put(factoryId, new String[]{it.path("reason").asText(""), it.path("capacityCheck").asText("")});
+                meta.put(factoryId, new String[]{
+                        clip(it.path("reason").asText(""), 150),
+                        clip(it.path("capacityCheck").asText(""), 40)
+                });
             } else if (qty > held) {
                 qtyByFactory.put(factoryId, qty);
             }
@@ -348,27 +359,32 @@ public class AiSolutionGenerator {
         if (qtyByFactory.isEmpty() || sum != demandQty) {
             return List.of();
         }
+        String route = processes.stream()
+                .map(Process::getProcessName)
+                .filter(n -> n != null && !n.isBlank())
+                .collect(java.util.stream.Collectors.joining("+"));
+        if (route.isBlank()) {
+            route = "全部工序";
+        }
         List<Map<String, Object>> items = new ArrayList<>();
         for (Map.Entry<Long, Integer> e : qtyByFactory.entrySet()) {
             Long factoryId = e.getKey();
             int qty = e.getValue();
             String[] m = meta.get(factoryId);
-            for (Process p : processes) {
-                Quotation q = findLocked(locked, factoryId, p.getProcessNo(), qty);
-                if (q == null) {
-                    return List.of();
-                }
-                items.add(hydrate(p, q, qty, m[0], m[1]));
+            Quotation q = findLocked(locked, factoryId, qty);
+            if (q == null) {
+                return List.of();
             }
+            items.add(hydrate(route, q, qty, m[0], m[1]));
         }
         return items;
     }
 
-    private Map<String, Object> hydrate(Process p, Quotation q, int quantity, String reason, String capacityCheck) {
+    private Map<String, Object> hydrate(String processName, Quotation q, int quantity, String reason, String capacityCheck) {
         Enterprise e = enterpriseMapper.selectById(q.getTenantId());
         Map<String, Object> item = new LinkedHashMap<>();
-        item.put("processNo", p.getProcessNo());
-        item.put("processName", p.getProcessName() == null ? "" : p.getProcessName());
+        item.put("processNo", 1);
+        item.put("processName", processName == null ? "" : processName);
         item.put("factoryId", q.getTenantId());
         item.put("factoryName", e == null ? ("厂" + q.getTenantId()) : e.getName());
         item.put("creditScore", e == null || e.getCreditScore() == null ? 60 : e.getCreditScore());
@@ -410,12 +426,12 @@ public class AiSolutionGenerator {
     private String packRationale(JsonNode scheme) {
         try {
             Map<String, Object> m = new LinkedHashMap<>();
-            m.put("rationale", scheme.path("rationale").asText(""));
+            m.put("rationale", clip(scheme.path("rationale").asText(""), 40));
             List<String> risks = new ArrayList<>();
             if (scheme.path("risks").isArray()) {
                 scheme.path("risks").forEach(n -> {
-                    if (n != null && !n.asText("").isBlank()) {
-                        risks.add(n.asText());
+                    if (n != null && !n.asText("").isBlank() && risks.size() < 2) {
+                        risks.add(clip(n.asText(), 20));
                     }
                 });
             }
@@ -423,8 +439,8 @@ public class AiSolutionGenerator {
             List<String> milestones = new ArrayList<>();
             if (scheme.path("milestones").isArray()) {
                 scheme.path("milestones").forEach(n -> {
-                    if (n != null && !n.asText("").isBlank()) {
-                        milestones.add(n.asText());
+                    if (n != null && !n.asText("").isBlank() && milestones.size() < 4) {
+                        milestones.add(clip(n.asText(), 20));
                     }
                 });
             }
@@ -435,10 +451,9 @@ public class AiSolutionGenerator {
         }
     }
 
-    private Quotation findLocked(List<Quotation> locked, Long factoryId, Integer processNo, int need) {
+    private Quotation findLocked(List<Quotation> locked, Long factoryId, int need) {
         return locked.stream()
                 .filter(q -> factoryId != null && factoryId.equals(q.getTenantId()))
-                .filter(q -> processNo != null && processNo.equals(q.getProcessNo() == null ? 1 : q.getProcessNo()))
                 .filter(q -> q.getMaxQty() == null || q.getMaxQty() >= need)
                 .filter(q -> q.getMinQty() == null || need >= q.getMinQty())
                 .findFirst()
@@ -464,6 +479,17 @@ public class AiSolutionGenerator {
             }
         }
         return t;
+    }
+
+    private static String clip(String s, int maxChars) {
+        if (s == null) {
+            return "";
+        }
+        String t = s.replaceAll("\\s+", " ").trim();
+        if (t.length() <= maxChars) {
+            return t;
+        }
+        return t.substring(0, maxChars) + "…";
     }
 
     private static String nvl(Object v) {

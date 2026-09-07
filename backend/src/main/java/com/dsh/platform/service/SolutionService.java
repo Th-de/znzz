@@ -2,7 +2,6 @@ package com.dsh.platform.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.dsh.platform.common.BizException;
-import com.dsh.platform.domain.coverage.ProcessCoverageService;
 import com.dsh.platform.domain.fund.FundLedger;
 import com.dsh.platform.domain.notify.SiteNotify;
 import com.dsh.platform.domain.solution.SolutionCombo;
@@ -61,7 +60,6 @@ public class SolutionService {
     private final EnterpriseMapper enterpriseMapper;
     private final DeviceService deviceService;
     private final AuditService auditService;
-    private final ProcessCoverageService coverageService;
 
     @Transactional
     public List<Solution> generate(Long demandId) {
@@ -76,17 +74,6 @@ public class SolutionService {
         if (st != DemandStatus.LOCKING) {
             throw new BizException("仅保证金期可以生成方案");
         }
-        if (!coverageService.committedPiecesCovered(d.getId())) {
-            stateMachine.transit(d, DemandStatus.FLOW_FAILED);
-            demandMapper.updateById(d);
-            siteNotify.send(d.getTenantId(), "需求流拍#" + demandId,
-                    "需求「" + d.getTitle() + "」各工序没有足够的锁定报价，已流拍并退回意向金/保证金。");
-            notifyActiveFactories(d, "需求流拍#" + demandId,
-                    "需求「" + d.getTitle() + "」已流拍，意向金/保证金已退回。");
-            fundLedger.unfreezeIntentionsOfDemand(demandId);
-            fundLedger.unfreezeDepositsOfDemand(demandId);
-            return List.of();
-        }
         for (Quotation q : fundLedger.forfeitUnlockedIntentions(demandId)) {
             siteNotify.send(q.getTenantId(), "未锁价扣除意向金#" + demandId,
                     "需求「" + d.getTitle() + "」保证金期已结束，你未锁定报价，意向金已扣除。");
@@ -95,21 +82,6 @@ public class SolutionService {
         demandMapper.updateById(d);
         tryInsertAi(d);
         return listByDemand(demandId);
-    }
-
-    private void notifyActiveFactories(Demand d, String title, String content) {
-        List<Quotation> qs = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
-                .eq(Quotation::getDemandId, d.getId())
-                .in(Quotation::getStatus, "INTENTION", "LOCKED", "WIN"));
-        Set<Long> factories = new HashSet<>();
-        for (Quotation q : qs) {
-            if (q.getTenantId() != null) {
-                factories.add(q.getTenantId());
-            }
-        }
-        for (Long factoryId : factories) {
-            siteNotify.send(factoryId, title, content);
-        }
     }
 
     /** 新流程入口：买家交保证金后异步生成 AI 方案（失败通知运营重试）。 */
@@ -195,16 +167,7 @@ public class SolutionService {
         if (items == null || items.isEmpty()) {
             throw new BizException("请至少选择一家工厂并填写分量");
         }
-        List<Process> processes = processMapper.selectList(new LambdaQueryWrapper<Process>()
-                .eq(Process::getDemandId, demandId)
-                .orderByAsc(Process::getProcessNo));
-        if (processes.isEmpty()) {
-            Process one = new Process();
-            one.setProcessNo(1);
-            one.setProcessName("整单");
-            one.setQuantity(d.getQuantity());
-            processes = List.of(one);
-        }
+        String processName = processRoute(demandId);
         int need = d.getQuantity() == null ? 0 : d.getQuantity();
         Map<Long, Integer> byFactory = new LinkedHashMap<>();
         for (Map<String, Object> it : items) {
@@ -219,7 +182,7 @@ public class SolutionService {
         }
         int sum = byFactory.values().stream().mapToInt(Integer::intValue).sum();
         if (sum != need) {
-            throw new BizException("各厂分配件数合计 " + sum + "，必须等于需求量 " + need);
+            throw new BizException("各厂分配件数合计 " + sum + "，必须等于需求零件数 " + need);
         }
         List<Map<String, Object>> combo = new ArrayList<>();
         for (Map.Entry<Long, Integer> alloc : byFactory.entrySet()) {
@@ -228,22 +191,9 @@ public class SolutionService {
             Enterprise e = enterpriseMapper.selectById(fid);
             String factoryName = e == null || e.getName() == null || e.getName().isBlank()
                     ? ("工厂" + fid) : e.getName();
-            Quotation priced = null;
-            for (Process p : processes) {
-                Integer pno = p.getProcessNo() == null ? 1 : p.getProcessNo();
-                Quotation q = quotationMapper.selectOne(new LambdaQueryWrapper<Quotation>()
-                        .eq(Quotation::getDemandId, demandId)
-                        .eq(Quotation::getTenantId, fid)
-                        .eq(Quotation::getProcessNo, pno)
-                        .in(Quotation::getStatus, "LOCKED", "WIN")
-                        .last("limit 1"));
-                if (q == null) {
-                    throw new BizException("「" + factoryName + "」没有工序「"
-                            + (p.getProcessName() == null ? pno : p.getProcessName()) + "」的有效报价");
-                }
-                if (priced == null) {
-                    priced = q;
-                }
+            Quotation priced = factoryQuote(demandId, fid, "LOCKED", "WIN");
+            if (priced == null) {
+                throw new BizException("「" + factoryName + "」没有该需求的有效报价");
             }
             if (priced.getMinQty() != null && qty < priced.getMinQty()) {
                 throw new BizException("「" + factoryName + "」分配量低于其最小承接量 " + priced.getMinQty());
@@ -256,23 +206,20 @@ public class SolutionService {
                     ? priced.getPrice().divide(BigDecimal.valueOf(priced.getMaxQty()), 2, java.math.RoundingMode.HALF_UP)
                     : BigDecimal.ZERO);
             BigDecimal subtotal = unit.multiply(BigDecimal.valueOf(qty)).setScale(2, java.math.RoundingMode.HALF_UP);
-            for (Process p : processes) {
-                Integer pno = p.getProcessNo() == null ? 1 : p.getProcessNo();
-                Map<String, Object> item = new LinkedHashMap<>();
-                item.put("processNo", pno);
-                item.put("processName", p.getProcessName() == null ? "" : p.getProcessName());
-                item.put("factoryId", fid);
-                item.put("factoryName", factoryName);
-                item.put("creditScore", e == null || e.getCreditScore() == null ? 60 : e.getCreditScore());
-                item.put("unitPrice", unit);
-                item.put("price", subtotal);
-                item.put("yieldRate", priced.getYieldRate() == null ? BigDecimal.ZERO : priced.getYieldRate());
-                item.put("days", priced.getPromisedDays() == null ? 0 : priced.getPromisedDays());
-                item.put("quantity", qty);
-                item.put("minQty", priced.getMinQty());
-                item.put("maxQty", priced.getMaxQty());
-                combo.add(item);
-            }
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("processNo", 1);
+            item.put("processName", processName);
+            item.put("factoryId", fid);
+            item.put("factoryName", factoryName);
+            item.put("creditScore", e == null || e.getCreditScore() == null ? 60 : e.getCreditScore());
+            item.put("unitPrice", unit);
+            item.put("price", subtotal);
+            item.put("yieldRate", priced.getYieldRate() == null ? BigDecimal.ZERO : priced.getYieldRate());
+            item.put("days", priced.getPromisedDays() == null ? 0 : priced.getPromisedDays());
+            item.put("quantity", qty);
+            item.put("minQty", priced.getMinQty());
+            item.put("maxQty", priced.getMaxQty());
+            combo.add(item);
         }
         Solution s = solutionMapper.selectOne(new LambdaQueryWrapper<Solution>()
                 .eq(Solution::getDemandId, demandId)
@@ -356,17 +303,16 @@ public class SolutionService {
         if (itemsObj instanceof List<?> rawItems && !rawItems.isEmpty()) {
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> items = (List<Map<String, Object>>) (List<?>) rawItems;
-            Map<Integer, List<Map<String, Object>>> byProcess = new LinkedHashMap<>();
+            List<Map<String, Object>> alloc = new ArrayList<>();
             for (Map<String, Object> it : items) {
-                Integer pno = asInt(it.get("processNo"));
                 Integer qty = asInt(it.get("quantity"));
-                if (pno == null || qty == null || qty <= 0) {
+                if (asLong(it.get("factoryId")) == null || qty == null || qty <= 0) {
                     continue;
                 }
-                byProcess.computeIfAbsent(pno, k -> new ArrayList<>()).add(it);
+                alloc.add(it);
             }
-            for (Map.Entry<Integer, List<Map<String, Object>>> e : byProcess.entrySet()) {
-                reallocate(solutionId, e.getKey(), e.getValue());
+            if (!alloc.isEmpty()) {
+                reallocate(solutionId, 1, alloc);
             }
             s = solutionMapper.selectById(solutionId);
         }
@@ -392,31 +338,80 @@ public class SolutionService {
 
     @Transactional
     public void publishToBuyer(Long solutionId) {
-        if (!"OPERATOR".equals(UserContext.role()) && !"SUPER_ADMIN".equals(UserContext.role())) {
-            throw new BizException(403, "仅运营可以下发方案");
-        }
         Solution s = solutionMapper.selectById(solutionId);
         if (s == null) {
             throw new BizException("方案不存在");
         }
-        Demand d = demandMapper.selectById(s.getDemandId());
+        publishBatchToBuyer(s.getDemandId(), List.of(solutionId));
+    }
+
+    /** 勾选的方案一起 ACTIVE，同需求未勾选的待审方案标记 REJECTED，只通知买家一次。 */
+    @Transactional
+    public void publishBatchToBuyer(Long demandId, List<Long> solutionIds) {
+        if (!"OPERATOR".equals(UserContext.role()) && !"SUPER_ADMIN".equals(UserContext.role())) {
+            throw new BizException(403, "仅运营可以下发方案");
+        }
+        if (solutionIds == null || solutionIds.isEmpty()) {
+            throw new BizException("请选择要下发的方案");
+        }
+        Demand d = demandMapper.selectById(demandId);
         if (d == null || !"SOLUTION_GENERATED".equals(d.getStatus())) {
             throw new BizException("当前状态不能下发");
         }
-        if ("ACTIVE".equals(s.getStatus())) {
-            return;
+        Set<Long> picked = new HashSet<>(solutionIds);
+        List<Solution> all = solutionMapper.selectList(new LambdaQueryWrapper<Solution>()
+                .eq(Solution::getDemandId, demandId));
+        List<Solution> activate = new ArrayList<>();
+        for (Solution s : all) {
+            if (s.getType() != null && "CUSTOM".equals(s.getType())) {
+                continue;
+            }
+            if (picked.contains(s.getId())) {
+                if ("REJECTED".equals(s.getStatus()) || "PENDING_REVIEW".equals(s.getStatus())
+                        || s.getStatus() == null || s.getStatus().isBlank()) {
+                    activate.add(s);
+                } else if (!"ACTIVE".equals(s.getStatus())) {
+                    throw new BizException("方案 " + s.getType() + " 当前不能下发");
+                }
+            }
         }
-        s.setStatus("ACTIVE");
-        s.setEditedBy(UserContext.userId());
-        s.setEditedAt(LocalDateTime.now());
-        solutionMapper.updateById(s);
-        String title = (s.getType() != null && s.getType().startsWith("AI"))
-                ? "推荐方案已审核#" + d.getId()
-                : "方案已生成#" + d.getId();
-        siteNotify.send(d.getTenantId(), title,
-                "需求「" + d.getTitle() + "」的推荐方案 " + s.getType() + " 已审核通过。请参考推荐，按各厂承接件数区间自行分配后确认。");
-        auditService.record("下发方案", "SOLUTION", solutionId,
-                "需求#" + d.getId() + " 方案 " + s.getType());
+        if (activate.isEmpty()) {
+            boolean already = all.stream().anyMatch(s -> picked.contains(s.getId()) && "ACTIVE".equals(s.getStatus()));
+            if (already) {
+                throw new BizException("所选方案已经下发给买家");
+            }
+            throw new BizException("没有可下发的方案，请确认勾选的是待审方案");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        Long editor = UserContext.userId();
+        List<String> types = new ArrayList<>();
+        for (Solution s : activate) {
+            s.setStatus("ACTIVE");
+            s.setEditedBy(editor);
+            s.setEditedAt(now);
+            solutionMapper.updateById(s);
+            types.add(s.getType() == null ? ("#" + s.getId()) : s.getType());
+        }
+        for (Solution s : all) {
+            if (s.getType() != null && "CUSTOM".equals(s.getType())) {
+                continue;
+            }
+            if (picked.contains(s.getId()) || "ACTIVE".equals(s.getStatus())) {
+                continue;
+            }
+            if ("PENDING_REVIEW".equals(s.getStatus()) || s.getStatus() == null || s.getStatus().isBlank()) {
+                s.setStatus("REJECTED");
+                s.setEditedBy(editor);
+                s.setEditedAt(now);
+                solutionMapper.updateById(s);
+            }
+        }
+        String typeText = String.join("、", types);
+        siteNotify.send(d.getTenantId(), "推荐方案已审核#" + d.getId(),
+                "需求「" + d.getTitle() + "」的推荐方案 " + typeText
+                        + " 已一并审核下发。请参考推荐，按各厂承接件数区间自行分配后确认。");
+        auditService.record("下发方案", "DEMAND", demandId,
+                "一次下发 " + typeText + " 共" + activate.size() + "套");
     }
 
     public List<Map<String, Object>> alternatives(Long solutionId, Integer processNo) {
@@ -465,15 +460,10 @@ public class SolutionService {
         boolean allowed = ruleSolutionGenerator.alternatives(d, processNo, need).stream()
                 .anyMatch(a -> factoryId.equals(asLong(a.get("factoryId"))));
         if (!allowed) {
-            throw new BizException("该厂未锁定该工序或产能不足");
+            throw new BizException("该厂未锁定报价或产能不足");
         }
         Long from = asLong(item.get("factoryId"));
-        Quotation q = quotationMapper.selectOne(new LambdaQueryWrapper<Quotation>()
-                .eq(Quotation::getDemandId, d.getId())
-                .eq(Quotation::getTenantId, factoryId)
-                .eq(Quotation::getProcessNo, processNo)
-                .eq(Quotation::getStatus, "LOCKED")
-                .last("limit 1"));
+        Quotation q = factoryQuote(d.getId(), factoryId, "LOCKED");
         Enterprise e = enterpriseMapper.selectById(factoryId);
         item.put("factoryId", factoryId);
         item.put("factoryName", e == null ? ("厂" + factoryId) : e.getName());
@@ -506,8 +496,8 @@ public class SolutionService {
     }
 
     /**
-     * 买家/运营编辑方案：重新分配某道工序在各厂之间的承接量。
-     * 校验：各厂必须有该工序的已填报报价，分配量 ≤ 该厂承接量，合计 = 工序需求量。
+     * 买家/运营编辑方案：按厂重新分配零件件数。
+     * 校验：各厂必须有有效报价，分配量落在承接区间内，合计 = 需求零件数。
      */
     @Transactional
     public void reallocate(Long solutionId, Integer processNo, List<Map<String, Object>> allocations) {
@@ -527,16 +517,11 @@ public class SolutionService {
         if (!operator && !"ACTIVE".equals(s.getStatus())) {
             throw new BizException("该方案尚未下发");
         }
-        if (processNo == null || allocations == null || allocations.isEmpty()) {
-            throw new BizException("请给出该工序的分配明细");
+        if (allocations == null || allocations.isEmpty()) {
+            throw new BizException("请给出各厂分配明细");
         }
-        Process proc = processMapper.selectOne(new LambdaQueryWrapper<Process>()
-                .eq(Process::getDemandId, d.getId())
-                .eq(Process::getProcessNo, processNo)
-                .last("limit 1"));
-        int need = proc != null && proc.getQuantity() != null ? proc.getQuantity()
-                : (d.getQuantity() == null ? 0 : d.getQuantity());
-        String processName = proc == null ? "" : proc.getProcessName();
+        int need = d.getQuantity() == null ? 0 : d.getQuantity();
+        String processName = processRoute(d.getId());
 
         int sum = 0;
         List<Map<String, Object>> newItems = new ArrayList<>();
@@ -546,17 +531,12 @@ public class SolutionService {
             if (fid == null || qty == null || qty <= 0) {
                 throw new BizException("分配明细须包含工厂和大于 0 的数量");
             }
-            Quotation q = quotationMapper.selectOne(new LambdaQueryWrapper<Quotation>()
-                    .eq(Quotation::getDemandId, d.getId())
-                    .eq(Quotation::getTenantId, fid)
-                    .eq(Quotation::getProcessNo, processNo)
-                    .in(Quotation::getStatus, "LOCKED", "WIN")
-                    .last("limit 1"));
+            Quotation q = factoryQuote(d.getId(), fid, "LOCKED", "WIN");
             Enterprise e = enterpriseMapper.selectById(fid);
             String factoryName = e == null || e.getName() == null || e.getName().isBlank()
                     ? ("工厂" + fid) : e.getName();
             if (q == null) {
-                throw new BizException("「" + factoryName + "」没有该工序的有效填报，不能分配");
+                throw new BizException("「" + factoryName + "」没有该需求的有效报价，不能分配");
             }
             if (q.getMinQty() != null && qty < q.getMinQty()) {
                 throw new BizException("「" + factoryName + "」分配量低于其最小承接量 " + q.getMinQty());
@@ -566,7 +546,7 @@ public class SolutionService {
             }
             sum += qty;
             Map<String, Object> item = new LinkedHashMap<>();
-            item.put("processNo", processNo);
+            item.put("processNo", 1);
             item.put("processName", processName);
             item.put("factoryId", fid);
             item.put("factoryName", e == null ? ("厂" + fid) : e.getName());
@@ -585,22 +565,14 @@ public class SolutionService {
             newItems.add(item);
         }
         if (sum != need) {
-            throw new BizException("该工序分配量合计 " + sum + "，必须等于需求量 " + need);
+            throw new BizException("各厂分配件数合计 " + sum + "，必须等于需求零件数 " + need);
         }
-        List<Map<String, Object>> combo = enrichCombo(d.getId(), s.getFinalComboJson());
-        combo.removeIf(m -> processNo.equals(asInt(m.get("processNo"))));
-        combo.addAll(newItems);
-        combo.sort((a, b) -> {
-            int pa = asInt(a.get("processNo")) == null ? 0 : asInt(a.get("processNo"));
-            int pb = asInt(b.get("processNo")) == null ? 0 : asInt(b.get("processNo"));
-            return Integer.compare(pa, pb);
-        });
         List<Map<String, Object>> edits = readEdits(s.getEditedFieldsJson());
         Map<String, Object> edit = new LinkedHashMap<>();
         edit.put("processNo", processNo);
         edit.put("reallocate", allocations);
         edits.add(edit);
-        s.setFinalComboJson(writeJson(combo));
+        s.setFinalComboJson(writeJson(newItems));
         s.setEditedFieldsJson(writeJson(edits));
         s.setSource("EDITED");
         s.setEditedBy(UserContext.userId());
@@ -608,7 +580,7 @@ public class SolutionService {
         solutionMapper.updateById(s);
     }
 
-    /** 某工序可供分配的候选：该工序全部已填报厂及其承接量、单价。 */
+    /** 可供分配的候选工厂：该需求已填报报价的厂及其承接区间、单价。 */
     public List<Map<String, Object>> allocationCandidates(Long solutionId, Integer processNo) {
         Solution s = solutionMapper.selectById(solutionId);
         if (s == null) {
@@ -616,10 +588,15 @@ public class SolutionService {
         }
         List<Quotation> qs = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
                 .eq(Quotation::getDemandId, s.getDemandId())
-                .eq(Quotation::getProcessNo, processNo)
                 .in(Quotation::getStatus, "LOCKED", "WIN"));
-        List<Map<String, Object>> out = new ArrayList<>();
+        Map<Long, Quotation> byFactory = new LinkedHashMap<>();
         for (Quotation q : qs) {
+            if (q.getTenantId() != null) {
+                byFactory.putIfAbsent(q.getTenantId(), q);
+            }
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Quotation q : byFactory.values()) {
             Enterprise e = enterpriseMapper.selectById(q.getTenantId());
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("factoryId", q.getTenantId());
@@ -665,10 +642,8 @@ public class SolutionService {
                 item.put("authStatus", e.getAuthStatus());
                 item.put("certs", certsOf(e));
             }
-            Integer pno = asInt(item.get("processNo"));
             Quotation q = quotes.stream()
                     .filter(x -> fid.equals(x.getTenantId()))
-                    .filter(x -> pno == null || pno.equals(x.getProcessNo() == null ? 1 : x.getProcessNo()))
                     .min((a, b) -> Integer.compare(quoteRank(a.getStatus()), quoteRank(b.getStatus())))
                     .orElse(null);
             if (q != null) {
@@ -728,6 +703,34 @@ public class SolutionService {
         } catch (Exception e) {
             return new ArrayList<>();
         }
+    }
+
+    private Quotation factoryQuote(Long demandId, Long factoryId, String... statuses) {
+        if (demandId == null || factoryId == null || statuses == null || statuses.length == 0) {
+            return null;
+        }
+        return quotationMapper.selectOne(new LambdaQueryWrapper<Quotation>()
+                .eq(Quotation::getDemandId, demandId)
+                .eq(Quotation::getTenantId, factoryId)
+                .in(Quotation::getStatus, statuses)
+                .orderByDesc(Quotation::getId)
+                .last("limit 1"));
+    }
+
+    private String processRoute(Long demandId) {
+        List<Process> processes = processMapper.selectList(new LambdaQueryWrapper<Process>()
+                .eq(Process::getDemandId, demandId)
+                .orderByAsc(Process::getProcessNo));
+        if (processes.isEmpty()) {
+            return "全部工序";
+        }
+        List<String> names = new ArrayList<>();
+        for (Process p : processes) {
+            if (p.getProcessName() != null && !p.getProcessName().isBlank()) {
+                names.add(p.getProcessName().trim());
+            }
+        }
+        return names.isEmpty() ? "全部工序" : String.join("+", names);
     }
 
     private static Long asLong(Object v) {

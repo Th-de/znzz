@@ -420,7 +420,7 @@ public class OrderQueryService {
             if (contracts.stream().allMatch(c -> "SIGNED".equals(c.getStatus()))) {
                 contractLabel = "合同（已确认）";
             } else if (contracts.stream().anyMatch(c -> "PENDING_REVIEW".equals(c.getStatus()))) {
-                contractLabel = "合同（待审）";
+                contractLabel = "合同（待买家确认）";
             } else if (contracts.stream().anyMatch(c -> c.getAttachmentId() != null)) {
                 contractLabel = "合同（待签）";
             }
@@ -488,6 +488,9 @@ public class OrderQueryService {
             Enterprise e = ws.getTenantId() == null ? null : enterpriseMapper.selectById(ws.getTenantId());
             ws.setFactoryName(e == null ? ("厂" + ws.getTenantId()) : e.getName());
             Order o = orderMapper.selectById(ws.getOrderId());
+            if (o != null) {
+                ws.setDemandId(o.getDemandId());
+            }
             Integer[] range = bidRange(o == null ? null : o.getDemandId(), ws.getTenantId());
             ws.setMinQty(range[0]);
             ws.setMaxQty(range[1]);

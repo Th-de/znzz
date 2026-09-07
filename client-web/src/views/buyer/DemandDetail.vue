@@ -268,7 +268,7 @@
         <el-button type="danger" @click="closeOrder">关闭订单</el-button>
       </div>
       <el-alert v-if="demand.status === 'SOLUTION_GENERATED' && !hasActiveSolution" type="info" :closable="false" title="等待平台确认推荐方案。" />
-      <el-alert v-else-if="demand.status === 'SOLUTION_CONFIRMED'" type="success" :closable="false" title="方案已确认，等待运营派单。" />
+      <el-alert v-else-if="demand.status === 'SOLUTION_CONFIRMED'" type="success" :closable="false" title="方案已确认，正在进入合同签署。" />
       <template v-if="demand.status === 'SOLUTION_GENERATED' && hasActiveSolution">
         <el-alert type="info" :closable="false" title="上方是各厂报价。AI 推荐仅供参考且不可改；可在自选方案里按零件件数把整单分给工厂后确认。" style="margin-bottom:12px" />
         <el-card v-if="factoryQuoteList.length" shadow="never" style="margin-bottom:12px">
@@ -393,23 +393,24 @@
             <el-button v-else size="small" link type="primary" @click="openContractFile(row.attachmentId)">{{ row.fileName || ('附件 #' + row.attachmentId) }}</el-button>
           </template>
         </el-table-column>
-        <el-table-column label="签署" min-width="200">
+        <el-table-column label="签署" min-width="220">
           <template #default="{ row }">
             <div>{{ contractStatusText(row.status) }}</div>
             <div class="hint">{{ row.signHint || '' }}</div>
+            <img v-if="isSignImg(row.factorySign)" class="sign-img" :src="row.factorySign" alt="工厂签字" />
           </template>
         </el-table-column>
         <el-table-column label="操作" width="140">
           <template #default="{ row }">
-            <el-button v-if="row.status!=='SIGNED'" size="small" type="primary" @click="openUpload(row)">
-              {{ row.attachmentId ? '更换合同' : '上传合同' }}
-            </el-button>
+            <el-button v-if="row.status!=='SIGNED' && !row.attachmentId" size="small" type="primary" @click="openUpload(row)">上传合同</el-button>
+            <span v-else-if="row.attachmentId && row.status!=='SIGNED'" class="hint">已下发</span>
           </template>
         </el-table-column>
       </el-table>
       <el-button type="success" style="margin-top:12px" :disabled="!canUnifySign" @click="openUnifySign">签名</el-button>
-      <span v-if="!allContractsUploaded" class="hint" style="margin-left:10px">请先为每个工厂分别上传合同</span>
-      <span v-else-if="buyerAllSigned" class="hint" style="margin-left:10px">买家已统一签名，等待各厂签署</span>
+      <span v-if="!allContractsUploaded" class="hint" style="margin-left:10px">请先为每个工厂分别上传合同，下发后不可更换</span>
+      <span v-else-if="buyerAllSigned && !canConfirmDispatch" class="hint" style="margin-left:10px">买家已签名，等待各厂签署；工厂签字将显示在本页</span>
+      <el-button v-if="canConfirmDispatch" type="primary" style="margin-top:12px;margin-left:8px" @click="confirmAllSigned">确认全部签署并开始派单</el-button>
       <div v-if="order.canBuyerCancel" class="phase-actions">
         <el-button type="danger" @click="cancelFulfillment">取消订单</el-button>
       </div>
@@ -593,7 +594,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { getDetail, getCoverage, getCancelStats, decide as decideDemand, buyerDecide as buyerDecideApi, closeSolution, listBidFactories, republish, cancelDemand } from '../../api/demand'
-import { listOrders, getOrder, listContracts, uploadContract, buyerSign, stages as listStages, payStage, payInspectFee, accept, submitSurvey, uploadFile, downloadAttachment, progressLog, inspectionOf, decideInspect, cancelByBuyer } from '../../api/order'
+import { listOrders, getOrder, listContracts, uploadContract, buyerSign, stages as listStages, payStage, payInspectFee, accept, submitSurvey, uploadFile, downloadAttachment, progressLog, inspectionOf, decideInspect, cancelByBuyer, confirmDispatch } from '../../api/order'
 import { listByDemand, selectSolution, saveCustom } from '../../api/solution'
 import { fetchAttachment, saveBlob } from '../../api/file'
 import api from '../../api'
@@ -756,16 +757,22 @@ const buyerAllSigned = computed(() => {
   const list = (contractList.value || []).filter(c => c.status !== 'SIGNED')
   return list.length > 0 && list.every(c => c.buyerSign && String(c.buyerSign).trim())
 })
-const canUnifySign = computed(() => allContractsUploaded.value && (contractList.value || []).some(c => c.status !== 'SIGNED'))
+const canUnifySign = computed(() => allContractsUploaded.value && (contractList.value || []).some(c => c.status !== 'SIGNED' && !(c.buyerSign && String(c.buyerSign).trim())))
+const canConfirmDispatch = computed(() => {
+  const list = contractList.value || []
+  return list.length > 0 && list.every(c => c.status === 'SIGNED' || (c.buyerSign && c.factorySign))
+    && list.some(c => c.status !== 'SIGNED')
+})
 const fulfillHint = computed(() => {
   if (!showFulfillment.value) return ''
   const list = contractList.value || []
   const needFile = list.filter(c => c.status !== 'SIGNED' && !c.attachmentId).length
-  if (needFile) return '请先为每个工厂分别上传合同，再统一签名'
+  if (needFile) return '请先为每个工厂分别上传合同（下发后不可更换），再统一签名'
   const needSign = list.filter(c => c.status !== 'SIGNED' && !(c.buyerSign && String(c.buyerSign).trim())).length
-  if (needSign) return '各厂合同已上传，请点「签名」一次签完'
+  if (needSign) return '各厂合同已下发，请点「签名」一次签完'
+  if (canConfirmDispatch.value) return '各厂已签字提交到本页，请确认全部签署后开始派单'
   const need = list.filter(c => c.status !== 'SIGNED').length
-  if (need) return '有 ' + need + ' 份合同待工厂签署或运营确认'
+  if (need) return '有 ' + need + ' 份合同待工厂签署，签完后将提交到本页'
   const pay = (stageList.value || []).filter(s => s.status === 'PASS' && (s.escrowStatus === 'NONE' || s.escrowStatus === 'PENDING_PAY'))
   if (pay.length) return '有 ' + pay.length + ' 笔阶段款待支付托管'
   const wait = (stageList.value || []).filter(s => s.status === 'FAIL')
@@ -775,7 +782,10 @@ const fulfillHint = computed(() => {
   return ''
 })
 function contractStatusText(s) {
-  return ({ DRAFT: '待上传/签署', PENDING_REVIEW: '待平台确认', SIGNED: '已确认' })[s] || s || '-'
+  return ({ DRAFT: '待上传/签署', PENDING_REVIEW: '待你确认派单', SIGNED: '已确认派单' })[s] || s || '-'
+}
+function isSignImg(v) {
+  return typeof v === 'string' && v.startsWith('data:image')
 }
 function overdueDays(row) {
   if (!row?.promisedDate) return 0
@@ -1214,9 +1224,9 @@ async function closeOrder() {
   load()
 }
 async function selectAi(s) {
-  await ElMessageBox.confirm('将按该推荐方案提交给运营派单，此后不可再改。', '确认方案', { type: 'warning' })
+  await ElMessageBox.confirm('将按该推荐方案进入合同签署，此后不可再改。', '确认方案', { type: 'warning' })
   await selectSolution(demand.value.id, s.id)
-  ElMessage.success('已确认，等待运营派单')
+  ElMessage.success('已确认，请按厂上传并签署合同')
   load()
 }
 async function confirmCustom() {
@@ -1234,12 +1244,12 @@ async function confirmCustom() {
     if (q?.maxQty != null && qty > q.maxQty) { ElMessage.warning(`「${q.factoryName}」分配超过最大承接量 ${q.maxQty}`); return }
     items.push({ factoryId: l.factoryId, quantity: qty })
   }
-  await ElMessageBox.confirm('确认后将按自选分配提交给运营派单，此后不可再改。', '确认自选方案', { type: 'warning' })
+  await ElMessageBox.confirm('确认后将按自选分配进入合同签署，此后不可再改。', '确认自选方案', { type: 'warning' })
   savingCustom.value = true
   try {
     const s = await saveCustom(demand.value.id, items)
     await selectSolution(demand.value.id, s.id)
-    ElMessage.success('已确认，等待运营派单')
+    ElMessage.success('已确认，请按厂上传并签署合同')
     load()
   } finally { savingCustom.value = false }
 }
@@ -1314,6 +1324,12 @@ async function doUpload() {
   upOpen.value = false
   await load()
 }
+async function confirmAllSigned() {
+  await ElMessageBox.confirm('确认各厂均已完成合同签署后开始派单生产。此操作不可撤销。', '确认签署并派单', { type: 'warning' })
+  await confirmDispatch(order.value.id)
+  ElMessage.success('已确认签署，开始派单生产')
+  load()
+}
 async function doSign() {
   await buyerSign(order.value.id, true, signData.value)
   ElMessage.success('已成功签名')
@@ -1380,6 +1396,14 @@ async function load() {
     quoteStats.value = view.quoteStats || {}
     processes.value = view.processes || []
     attachments.value = view.attachments || []
+    if (demand.value.status === 'SOLUTION_CONFIRMED') {
+      await api.post(`/order/dispatch/${route.params.id}`)
+      const again = await getDetail(route.params.id)
+      demand.value = again.demand || {}
+      quoteStats.value = again.quoteStats || {}
+      processes.value = again.processes || []
+      attachments.value = again.attachments || []
+    }
     if (demand.value.status === 'RETURNED') fillEditForm(view)
     if (showCoverage.value) {
       const cov = await getCoverage(route.params.id)
@@ -1441,7 +1465,7 @@ watch(() => route.params.id, load, { immediate: true })
 </script>
 
 <style scoped>
-.flow-steps { margin-bottom: 16px; }
+.sign-img { display: block; max-height: 48px; margin-top: 6px; border: 1px solid #ebeef5; background: #fff; }
 .spec-tabs { margin-bottom: 16px; }
 .phase { margin-top: 16px; }
 .phase-actions { margin-top: 12px; }

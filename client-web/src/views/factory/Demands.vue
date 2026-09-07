@@ -68,6 +68,8 @@
           <el-descriptions-item label="分期交付">{{ detail.demand.deliveryTimes || 1 }} 期</el-descriptions-item>
           <el-descriptions-item label="备注" :span="2">{{ detail.demand.remark || '-' }}</el-descriptions-item>
         </el-descriptions>
+        <h4 style="margin:14px 0 6px">买家信息</h4>
+        <BuyerInfoBlock :buyer="detail.buyer" />
         <h4 style="margin:14px 0 6px">每期交付要求</h4>
         <div v-if="deliveryPlanOf(detail.demand).length">
           <div v-for="(t, i) in deliveryPlanOf(detail.demand)" :key="i" class="tip">第{{ i + 1 }}期：{{ t }}</div>
@@ -152,6 +154,7 @@ import { getCoverage } from '../../api/demand'
 import { downloadAttachment } from '../../api/file'
 import CoverageBars from '../../components/CoverageBars.vue'
 import IntentionCountdown from '../../components/IntentionCountdown.vue'
+import BuyerInfoBlock from '../../components/BuyerInfoBlock.vue'
 import PagedBox from '../../components/PagedBox.vue'
 import InspectDeliveryRules from '../../components/InspectDeliveryRules.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -280,8 +283,7 @@ async function submitIntention() {
   if (wholeQty.minQty > wholeQty.maxQty) return ElMessage.warning('最小量不能大于最大量')
   const cap = current.value.quantity
   if (cap && wholeQty.maxQty > cap) return ElMessage.warning('最大承接量不能超过需求数量 ' + cap)
-  const items = (selectedProcessNos.value.length ? selectedProcessNos.value : processes.value.map(p => p.processNo))
-    .map(pno => ({ processNo: pno, minQty: wholeQty.minQty, maxQty: wholeQty.maxQty }))
+  const items = [{ processNo: 1, minQty: wholeQty.minQty, maxQty: wholeQty.maxQty }]
   if (!items.length) return ElMessage.warning('没有可报工序')
   const data = await intention({ demandId: current.value.id, items })
   if (data?.payUrl) {

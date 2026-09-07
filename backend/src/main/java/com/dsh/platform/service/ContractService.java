@@ -149,7 +149,10 @@ public class ContractService {
         }
         Contract c = requireContract(orderId, factoryTenantId);
         if ("SIGNED".equals(c.getStatus())) {
-            throw new BizException("该厂合同已审过，不能再改");
+            throw new BizException("该厂合同已生效，不能再改");
+        }
+        if (c.getAttachmentId() != null) {
+            throw new BizException("合同已下发给该厂，不能更换");
         }
         if (attachmentId == null) {
             throw new BizException("请先上传你们拟定的合同文件");
@@ -185,8 +188,8 @@ public class ContractService {
                     "各厂合同已上传，请于 24 小时内完成签署。逾期未签的工厂将扣除保证金赔偿你。");
         }
         for (Contract x : all) {
-            siteNotify.send(x.getTenantId(), "请在24小时内签署合同#" + o.getId(),
-                    "买家已上传合同，请在 24 小时内签署。未签或取消将扣除保证金赔偿买家。");
+            siteNotify.send(x.getTenantId(), "请签合同#" + o.getId(),
+                    "买家已下发合同，请在 24 小时内签署。签字将提交给买家确认。");
         }
     }
 
@@ -275,7 +278,7 @@ public class ContractService {
             throw new BizException("买家尚未上传与你的合同");
         }
         if ("SIGNED".equals(c.getStatus())) {
-            throw new BizException("合同已审过");
+            throw new BizException("合同已生效");
         }
         c.setFactoryRead(1);
         c.setFactorySign(sign);
@@ -284,6 +287,54 @@ public class ContractService {
         Order o = orderMapper.selectById(orderId);
         if (o != null) {
             touchFactoryQuotes(o.getDemandId(), UserContext.tenantId());
+            Demand d = demandMapper.selectById(o.getDemandId());
+            Enterprise fac = enterpriseMapper.selectById(UserContext.tenantId());
+            String fname = fac == null || fac.getName() == null ? "工厂" : fac.getName();
+            if (d != null) {
+                siteNotify.send(d.getTenantId(), "工厂已签署合同#" + d.getId(),
+                        fname + " 已完成合同签字，请在需求详情确认。全部工厂签完后可确认并开始派单。");
+            }
+        }
+    }
+
+    @Transactional
+    public void buyerConfirmAllSigned(Long orderId) {
+        Order o = requireOrder(orderId);
+        assertBuyer(o);
+        if ("COMPLETED".equals(o.getStatus()) || "CANCELLED".equals(o.getStatus())) {
+            throw new BizException("订单已结束");
+        }
+        List<Contract> list = contractMapper.selectList(new LambdaQueryWrapper<Contract>()
+                .eq(Contract::getOrderId, orderId)
+                .orderByAsc(Contract::getTenantId));
+        if (list.stream().allMatch(c -> "SIGNED".equals(c.getStatus()))) {
+            throw new BizException("合同已确认并派单");
+        }
+        for (Contract c : list) {
+            if ("SIGNED".equals(c.getStatus())) {
+                continue;
+            }
+            if (c.getAttachmentId() == null
+                    || c.getBuyerSign() == null || c.getBuyerSign().isBlank()
+                    || c.getFactorySign() == null || c.getFactorySign().isBlank()) {
+                Enterprise e = enterpriseMapper.selectById(c.getTenantId());
+                String name = e == null || e.getName() == null ? ("工厂" + c.getTenantId()) : e.getName();
+                throw new BizException("「" + name + "」尚未完成双方签署");
+            }
+        }
+        for (Contract c : list) {
+            if (!"SIGNED".equals(c.getStatus())) {
+                activateSigned(o, c);
+            }
+        }
+        Demand d = demandMapper.selectById(o.getDemandId());
+        if (d != null) {
+            siteNotify.send(d.getTenantId(), "已确认签署并派单#" + orderId,
+                    "全部工厂合同已确认，已开始派单生产。");
+            for (Contract c : list) {
+                siteNotify.send(c.getTenantId(), "买家已确认合同#" + orderId, "买家已确认全部签署，请按工单交付。");
+            }
+            auditService.record("买家确认签署并派单", "ORDER", orderId, "需求#" + d.getId());
         }
     }
 
@@ -301,12 +352,16 @@ public class ContractService {
                 || c.getFactorySign() == null || c.getFactorySign().isBlank()) {
             throw new BizException("该厂合同双方尚未完成阅读和签名");
         }
+        activateSigned(o, c);
+    }
+
+    private void activateSigned(Order o, Contract c) {
         Solution s = solutionMapper.selectById(o.getSolutionId());
-        workStageSplitter.splitForFactory(o, s, factoryTenantId);
+        workStageSplitter.splitForFactory(o, s, c.getTenantId());
         c.setStatus("SIGNED");
         c.setSignedAt(LocalDateTime.now());
         contractMapper.updateById(c);
-        touchFactoryQuotes(o.getDemandId(), factoryTenantId);
+        touchFactoryQuotes(o.getDemandId(), c.getTenantId());
         if ("CREATED".equals(o.getStatus())) {
             o.setStatus("IN_PRODUCTION");
             orderMapper.updateById(o);
@@ -322,11 +377,6 @@ public class ContractService {
             stateMachine.transit(d, DemandStatus.IN_PRODUCTION);
             demandMapper.updateById(d);
         }
-        siteNotify.send(d.getTenantId(), "合同已审过#" + orderId + "-" + factoryTenantId,
-                "与该厂的合同已确认签署，该厂可以交付。");
-        siteNotify.send(factoryTenantId, "合同已审过#" + orderId, "平台已确认你这份合同已签署，请按工单交付。");
-        auditService.record("合同审核通过", "CONTRACT", c.getId(),
-                "订单#" + orderId + " 工厂#" + factoryTenantId);
     }
 
     public boolean isSigned(Long orderId, Long factoryTenantId) {
@@ -419,9 +469,9 @@ public class ContractService {
         parts.add(c.getBuyerSign() != null && !c.getBuyerSign().isBlank() ? "买家已签" : "买家未签");
         parts.add(c.getFactorySign() != null && !c.getFactorySign().isBlank() ? "工厂已签" : "工厂未签");
         if ("SIGNED".equals(c.getStatus())) {
-            parts.add("运营已确认");
+            parts.add("已生效");
         } else if ("PENDING_REVIEW".equals(c.getStatus())) {
-            parts.add("待运营确认");
+            parts.add("待买家确认派单");
         }
         return String.join(" · ", parts);
     }
