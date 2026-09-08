@@ -272,11 +272,12 @@ public class DemandService {
                     .max(Integer::compareTo).orElse(null);
             row.put("minQty", minQty);
             row.put("maxQty", maxQty);
-            boolean showQuote = List.of("SOLUTION_GENERATED", "SOLUTION_CONFIRMED", "SOLUTION_SELECTED",
+            boolean showQuote = staff || List.of("SOLUTION_GENERATED", "SOLUTION_CONFIRMED", "SOLUTION_SELECTED",
                     "CONTRACTED", "IN_PRODUCTION", "COMPLETED").contains(d.getStatus());
             if (showQuote) {
                 Quotation priced = e.getValue().stream()
                         .filter(q -> "LOCKED".equals(q.getStatus()) || "WIN".equals(q.getStatus()))
+                        .filter(q -> q.getUnitPrice() != null)
                         .findFirst()
                         .orElse(null);
                 if (priced != null) {
@@ -289,6 +290,7 @@ public class DemandService {
                     quote.put("maxQty", priced.getMaxQty());
                     quote.put("promisedDays", priced.getPromisedDays());
                     row.put("quotes", List.of(quote));
+                    row.put("unitPrice", priced.getUnitPrice());
                 }
             }
             out.add(row);

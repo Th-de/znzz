@@ -27,4 +27,9 @@ public class FileController {
     public ResponseEntity<Resource> download(@PathVariable Long id) {
         return fileService.download(id);
     }
+
+    @GetMapping("/{id}/preview")
+    public ResponseEntity<Resource> preview(@PathVariable Long id) {
+        return fileService.preview(id);
+    }
 }

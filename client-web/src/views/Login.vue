@@ -1,13 +1,16 @@
 <template>
   <div class="login-wrap">
     <el-card class="login-card">
-      <h2 class="site-title">智能制造云平台</h2>
+      <div class="brand-login">
+        <img src="/logo.png" alt="" />
+        <h2 class="site-title">智能制造云平台</h2>
+      </div>
       <p class="site-sub">需求方 / 工厂 服务门户</p>
       <el-tabs v-model="tab">
         <el-tab-pane label="登录" name="login">
           <el-form ref="loginRef" :model="loginForm" :rules="loginRules" label-width="80px">
             <el-form-item label="账号" prop="phone">
-              <el-input v-model="loginForm.phone" placeholder="手机号 / admin" />
+              <el-input v-model="loginForm.phone" placeholder="手机号" />
             </el-form-item>
             <el-form-item label="密码" prop="password">
               <el-input v-model="loginForm.password" type="password" show-password />
@@ -81,6 +84,7 @@ async function doLogin() {
   sessionStorage.setItem('role', data.role)
   sessionStorage.setItem('tenantId', data.tenantId)
   sessionStorage.setItem('name', data.name)
+  sessionStorage.setItem('avatarId', data.avatarId == null ? '' : String(data.avatarId))
   ElMessage.success('登录成功')
   if (data.role === 'BUYER') router.push('/buyer/home')
   else if (data.role === 'FACTORY') router.push('/factory/home')
@@ -101,8 +105,10 @@ function onRegPhone(v) {
 </script>
 
 <style scoped>
-.login-wrap { height: 100vh; display: flex; align-items: center; justify-content: center; }
-.login-card { width: 420px; }
-.site-title { text-align: center; margin: 4px 0 2px; }
+.login-wrap { height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(180deg, #C1E8FF 0%, #7DA0CA 42%, #052659 100%); }
+.login-card { width: 420px; border-radius: 20px; }
+.brand-login { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.brand-login img { width: 48px; height: 48px; border-radius: 14px; }
+.site-title { text-align: center; margin: 4px 0 2px; font-family: "ZCOOL XiaoWei", "Noto Serif SC", "KaiTi", serif; color: #052659; letter-spacing: 2px; }
 .site-sub { text-align: center; color: #909399; margin: 0 0 12px; font-size: 13px; }
 </style>

@@ -70,6 +70,6 @@ onMounted(load)
 </script>
 
 <style scoped>
-.todos { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.todos { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; justify-content: center; }
 .todo { width: 260px; }
 </style>

@@ -225,11 +225,11 @@
         继续需冻结 5% 保证金 <b>￥{{ money(buyerDeposit) }}</b>（尾款抵扣）。思考期取消将全额退回各方意向金与保证金。
       </div>
       <div v-if="demand.status==='BUYER_THINKING'" class="phase-actions">
-        <el-button type="success" @click="buyerContinue">继续并交保证金</el-button>
-        <el-button type="danger" @click="buyerCancel">取消需求（全退）</el-button>
+        <el-button type="success" @click="buyerContinue">继续并提交保证金</el-button>
+        <el-button type="danger" @click="buyerCancel">取消需求</el-button>
       </div>
       <div v-if="demand.status==='THINKING'" class="phase-actions">
-        <el-button type="success" @click="decide('CONTINUE')">继续竞标</el-button>
+        <el-button type="success" @click="decide('CONTINUE')">继续</el-button>
         <el-button type="danger" @click="decide('CANCEL')">取消需求</el-button>
       </div>
       <h4>报名工厂</h4>
@@ -270,7 +270,7 @@
       <el-alert v-if="demand.status === 'SOLUTION_GENERATED' && !hasActiveSolution" type="info" :closable="false" title="等待平台确认推荐方案。" />
       <el-alert v-else-if="demand.status === 'SOLUTION_CONFIRMED'" type="success" :closable="false" title="方案已确认，正在进入合同签署。" />
       <template v-if="demand.status === 'SOLUTION_GENERATED' && hasActiveSolution">
-        <el-alert type="info" :closable="false" title="上方是各厂报价。AI 推荐仅供参考且不可改；可在自选方案里按零件件数把整单分给工厂后确认。" style="margin-bottom:12px" />
+        <el-alert type="info" :closable="false" title="上方是各厂报价。AI 推荐仅供参考；可在自选方案里填写并修改。" style="margin-bottom:12px" />
         <el-card v-if="factoryQuoteList.length" shadow="never" style="margin-bottom:12px">
           <template #header>各工厂报价</template>
           <el-table :data="factoryQuoteList" size="small" border>
@@ -287,7 +287,7 @@
         </el-card>
         <el-row :gutter="16">
           <el-col :span="12" v-for="s in aiSolutions" :key="s.id">
-            <el-card :header="'推荐方案 ' + (s.type || '') + '（仅供参考，不可改）'">
+            <el-card :header="'推荐方案 ' + (s.type || '') + '（仅供参考）'">
               <p class="meta">生成时间 {{ fmtTime(s.createdAt) }}</p>
               <p class="meta">{{ parseRationale(s.rationaleJson).rationale }}</p>
               <el-alert v-for="(r, i) in parseRationale(s.rationaleJson).risks" :key="i" type="warning" :closable="false" :title="r" style="margin-bottom:8px" />
@@ -409,7 +409,7 @@
       </el-table>
       <el-button type="success" style="margin-top:12px" :disabled="!canUnifySign" @click="openUnifySign">签名</el-button>
       <span v-if="!allContractsUploaded" class="hint" style="margin-left:10px">请先为每个工厂分别上传合同，下发后不可更换</span>
-      <span v-else-if="buyerAllSigned && !canConfirmDispatch" class="hint" style="margin-left:10px">买家已签名，等待各厂签署；工厂签字将显示在本页</span>
+      <span v-else-if="buyerAllSigned && !canConfirmDispatch" class="hint" style="margin-left:10px">买家已签名，等待各厂签署</span>
       <el-button v-if="canConfirmDispatch" type="primary" style="margin-top:12px;margin-left:8px" @click="confirmAllSigned">确认全部签署并开始派单</el-button>
       <div v-if="order.canBuyerCancel" class="phase-actions">
         <el-button type="danger" @click="cancelFulfillment">取消订单</el-button>
@@ -599,8 +599,8 @@
       </el-descriptions>
     </el-dialog>
     <el-dialog v-model="decideOpen" title="处理质检结果" width="560px" :close-on-click-modal="false">
-      <p>分支 {{ decideStage?.branchCode || '-' }}。让步：B 不齐但抽检/全检过关（托管已交工费 + 本阶段工费 5%）；C1 齐但轻微不良（托管全款。抽检再赔本阶段工费 5%；全检赔工费×(最低良率−实际良率)）。C2/D/E 不能让步。</p>
-      <p class="hint">关闭将取消该厂后续期，并按「本期+后续工费」5% 从工厂保证金赔你；保证金不足则无法关闭。返工全程一次，期限由你填写（12～72 小时），与原分期截止无关。</p>
+      <p>分支 {{ decideStage?.branchCode || '-' }}。让步：B 数量不齐但抽检/全检过关（托管已交工费 + 本阶段工费 5%）；C1 数量齐但轻微不良（托管全款。抽检再赔本阶段工费 5%；全检赔工费×(最低良率−实际良率)）。C2/D/E 不能让步。</p>
+      <p class="hint">关闭将取消该厂后续工期，并按「本期+后续工费」5% 从工厂保证金中赔付；保证金不足则无法关闭。返工全程一次，期限由买家填写，与原分期截止无关。</p>
       <el-form label-width="120px" style="margin-top:12px">
         <el-form-item label="返工期限(小时)">
           <el-input-number v-model="reworkHours" :min="12" :max="72" :disabled="!decideStage?.canRework" />

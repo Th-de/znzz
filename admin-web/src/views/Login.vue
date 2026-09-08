@@ -1,8 +1,11 @@
 <template>
   <div class="login-wrap">
     <el-card class="login-card">
-      <h2 style="text-align:center;margin-bottom:4px">智能制造云平台</h2>
-      <p style="text-align:center;color:#909399;margin:0 0 16px">运营 / 质检 管理端</p>
+      <div class="brand-login">
+        <img src="/logo.png" alt="" />
+        <h2 class="site-title">智能制造云平台</h2>
+      </div>
+      <p class="site-sub">运营 / 质检 管理端</p>
       <el-form :model="form" label-width="60px">
         <el-form-item label="账号"><el-input v-model="form.phone" placeholder="admin" /></el-form-item>
         <el-form-item label="密码"><el-input v-model="form.password" type="password" show-password /></el-form-item>
@@ -31,6 +34,10 @@ async function login() {
 </script>
 
 <style scoped>
-.login-wrap { height: 100vh; display: flex; align-items: center; justify-content: center; }
-.login-card { width: 380px; }
+.login-wrap { height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(180deg, #C1E8FF 0%, #7DA0CA 42%, #052659 100%); }
+.login-card { width: 380px; border-radius: 20px; }
+.brand-login { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.brand-login img { width: 48px; height: 48px; border-radius: 14px; }
+.site-title { text-align: center; margin: 4px 0 2px; font-family: "ZCOOL XiaoWei", "Noto Serif SC", "KaiTi", serif; color: #052659; letter-spacing: 2px; }
+.site-sub { text-align: center; color: #909399; margin: 0 0 16px; font-size: 13px; }
 </style>

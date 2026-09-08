@@ -1,36 +1,34 @@
 <template>
-  <el-container class="wrap">
-    <el-aside width="200px" class="aside">
-      <div class="logo">买家端</div>
-      <el-menu :default-active="active" router background-color="#304156" text-color="#bfcbd9" active-text-color="#409EFF">
-        <el-menu-item index="/buyer/home">工作台</el-menu-item>
-        <el-menu-item index="/buyer/demands">我的需求</el-menu-item>
-        <el-menu-item index="/buyer/mine">我的主页</el-menu-item>
-        <el-menu-item index="/buyer/publish">发布需求</el-menu-item>
-        <el-menu-item index="/buyer/notifies">通知</el-menu-item>
-      </el-menu>
-    </el-aside>
-    <el-container>
-      <el-header class="top">
-        <div class="top-left">
-          <el-button v-if="backTo" link type="primary" @click="goBack">← 返回</el-button>
-          <span>{{ title }}</span>
+  <div class="shell">
+    <AppHeader :items="menus" :active="active" role-label="买家端" @logout="logout" />
+    <div class="app-body">
+      <div class="page-shell">
+        <div class="page-bar">
+          <div style="display:flex;align-items:center;gap:8px">
+            <el-button v-if="backTo" link type="primary" @click="goBack">← 返回</el-button>
+            <h2>{{ title }}</h2>
+          </div>
         </div>
-        <el-button @click="logout">退出</el-button>
-      </el-header>
-      <el-main class="main">
         <router-view />
-      </el-main>
-    </el-container>
-  </el-container>
+      </div>
+    </div>
+  </div>
 </template>
 
 <script setup>
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import AppHeader from '../components/AppHeader.vue'
 
 const route = useRoute()
 const router = useRouter()
+const menus = [
+  { index: '/buyer/home', label: '工作台' },
+  { index: '/buyer/demands', label: '我的需求' },
+  { index: '/buyer/mine', label: '我的主页' },
+  { index: '/buyer/publish', label: '发布需求' },
+  { index: '/buyer/notifies', label: '通知' },
+]
 const active = computed(() => {
   if (route.path.startsWith('/buyer/demands')) return '/buyer/demands'
   if (route.path.startsWith('/buyer/order') || route.path.startsWith('/buyer/demand') || route.path.startsWith('/buyer/solutions')) return '/buyer/demands'
@@ -50,12 +48,3 @@ function logout() {
   router.push('/login')
 }
 </script>
-
-<style scoped>
-.wrap { height: 100vh; }
-.aside { background: #304156; }
-.logo { color: #fff; text-align: center; padding: 16px 0; font-weight: bold; }
-.top { display: flex; align-items: center; justify-content: space-between; background: #fff; border-bottom: 1px solid #eee; }
-.top-left { display: flex; align-items: center; gap: 8px; }
-.main { background: #f5f7fa; }
-</style>

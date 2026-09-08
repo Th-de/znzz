@@ -1,41 +1,42 @@
 <template>
-  <el-container class="wrap">
-    <el-aside width="200px" class="aside">
-      <div class="logo">工厂端</div>
-      <el-menu :default-active="active" :default-openeds="mineOpeneds" router background-color="#304156" text-color="#bfcbd9" active-text-color="#409EFF">
-        <el-menu-item index="/factory/home">工作台</el-menu-item>
-        <el-sub-menu index="factory-mine">
-          <template #title>我的主页</template>
-          <el-menu-item index="/factory/mine">信息</el-menu-item>
-          <el-menu-item index="/factory/devices">设备</el-menu-item>
-          <el-menu-item index="/factory/profile">能力档案</el-menu-item>
-        </el-sub-menu>
-        <el-menu-item index="/factory/demands">浏览需求</el-menu-item>
-        <el-menu-item index="/factory/quotations">我的报名</el-menu-item>
-        <el-menu-item index="/factory/notifies">通知</el-menu-item>
-      </el-menu>
-    </el-aside>
-    <el-container>
-      <el-header class="top">
-        <div class="top-left">
-          <el-button v-if="backTo" link type="primary" @click="goBack">← 返回</el-button>
-          <span>{{ title }}</span>
+  <div class="shell">
+    <AppHeader :items="menus" :active="active" role-label="工厂端" @logout="logout" />
+    <div class="app-body">
+      <div class="page-shell">
+        <div class="page-bar">
+          <div style="display:flex;align-items:center;gap:8px">
+            <el-button v-if="backTo" link type="primary" @click="goBack">← 返回</el-button>
+            <h2>{{ title }}</h2>
+          </div>
         </div>
-        <el-button @click="logout">退出</el-button>
-      </el-header>
-      <el-main class="main">
         <router-view />
-      </el-main>
-    </el-container>
-  </el-container>
+      </div>
+    </div>
+  </div>
 </template>
 
 <script setup>
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import AppHeader from '../components/AppHeader.vue'
 
 const route = useRoute()
 const router = useRouter()
+const menus = [
+  { index: '/factory/home', label: '工作台' },
+  {
+    index: 'factory-mine',
+    label: '我的主页',
+    children: [
+      { index: '/factory/mine', label: '信息' },
+      { index: '/factory/devices', label: '设备' },
+      { index: '/factory/profile', label: '能力档案' },
+    ],
+  },
+  { index: '/factory/demands', label: '浏览需求' },
+  { index: '/factory/quotations', label: '我的报名' },
+  { index: '/factory/notifies', label: '通知' },
+]
 const active = computed(() => {
   if (route.path.startsWith('/factory/mine')) return '/factory/mine'
   if (route.path.startsWith('/factory/devices')) return '/factory/devices'
@@ -45,7 +46,6 @@ const active = computed(() => {
   if (route.path.startsWith('/factory/notifies')) return '/factory/notifies'
   return '/factory/home'
 })
-const mineOpeneds = ['factory-mine']
 const title = computed(() => route.meta.title || '工厂工作台')
 const backTo = computed(() => route.meta.backTo || '')
 function goBack() {
@@ -57,12 +57,3 @@ function logout() {
   router.push('/login')
 }
 </script>
-
-<style scoped>
-.wrap { height: 100vh; }
-.aside { background: #304156; }
-.logo { color: #fff; text-align: center; padding: 16px 0; font-weight: bold; }
-.top { display: flex; align-items: center; justify-content: space-between; background: #fff; border-bottom: 1px solid #eee; }
-.top-left { display: flex; align-items: center; gap: 8px; }
-.main { background: #f5f7fa; }
-</style>

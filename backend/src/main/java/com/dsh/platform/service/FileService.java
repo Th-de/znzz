@@ -66,6 +66,11 @@ public class FileService {
             throw new BizException("不支持的文件类型");
         }
         String type = (bizType == null || bizType.isBlank()) ? "TEMP" : bizType;
+        if ("AVATAR".equals(type)) {
+            if (!Set.of("png", "jpg", "jpeg").contains(ext)) {
+                throw new BizException("头像仅支持 png/jpg");
+            }
+        }
         try {
             Path dir = Path.of(uploadDir).toAbsolutePath();
             Files.createDirectories(dir);
@@ -131,6 +136,24 @@ public class FileService {
                 .body(new FileSystemResource(path));
     }
 
+    public ResponseEntity<Resource> preview(Long id) {
+        Attachment a = requireReadable(id);
+        Path path = Path.of(a.getFilePath());
+        if (!Files.exists(path)) {
+            throw new BizException("文件已丢失");
+        }
+        String ext = a.getFileType() == null ? "" : a.getFileType().toLowerCase();
+        MediaType mt = switch (ext) {
+            case "png" -> MediaType.IMAGE_PNG;
+            case "jpg", "jpeg" -> MediaType.IMAGE_JPEG;
+            default -> MediaType.APPLICATION_OCTET_STREAM;
+        };
+        return ResponseEntity.ok()
+                .contentType(mt)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline")
+                .body(new FileSystemResource(path));
+    }
+
     private Attachment requireReadable(Long id) {
         Attachment a = attachmentMapper.selectById(id);
         if (a == null) {
@@ -182,6 +205,15 @@ public class FileService {
                     return a;
                 }
             }
+        }
+        if ("AVATAR".equals(a.getBizType())) {
+            if (UserContext.userId() != null && UserContext.userId().equals(a.getUploaderId())) {
+                return a;
+            }
+            if (UserContext.userId() != null && a.getBizId() != null && UserContext.userId().equals(a.getBizId())) {
+                return a;
+            }
+            throw new BizException(403, "无权查看该文件");
         }
         if (UserContext.userId() != null && UserContext.userId().equals(a.getUploaderId())) {
             return a;

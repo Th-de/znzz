@@ -23,6 +23,8 @@ public class SchemaPatcher {
     public void patch() {
         patchColumn("sys_user", "password_plain",
                 "ALTER TABLE sys_user ADD COLUMN password_plain VARCHAR(64) NULL COMMENT '运营端可见登录密码' AFTER password");
+        patchColumn("sys_user", "avatar_id",
+                "ALTER TABLE sys_user ADD COLUMN avatar_id BIGINT UNSIGNED NULL COMMENT '头像附件id' AFTER real_name");
         patchColumn("work_stage", "rework_count",
                 "ALTER TABLE work_stage ADD COLUMN rework_count INT DEFAULT 0 COMMENT '返工次数'");
         patchColumn("work_stage", "rework_deadline_at",
@@ -69,6 +71,8 @@ public class SchemaPatcher {
                 "ALTER TABLE `order` ADD COLUMN contract_sign_end_at DATETIME NULL COMMENT '合同签署截止'");
         dropColumn("process", "quantity");
         backfillDeliveredQty();
+        patchUniqueIndex("sys_user", "uk_phone",
+                "ALTER TABLE sys_user ADD UNIQUE KEY uk_phone (phone)");
     }
 
     private void dropColumn(String table, String column) {
@@ -104,6 +108,24 @@ public class SchemaPatcher {
             }
         } catch (Exception e) {
             log.warn("回填实交件数失败: {}", e.getMessage());
+        }
+    }
+
+    private void patchUniqueIndex(String table, String index, String sql) {
+        try {
+            Integer n = jdbcTemplate.queryForObject(
+                    """
+                    SELECT COUNT(*) FROM information_schema.STATISTICS
+                    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ?
+                    """,
+                    Integer.class, table, index);
+            if (n != null && n > 0) {
+                return;
+            }
+            jdbcTemplate.execute(sql);
+            log.info("已为 {}.{} 补唯一索引", table, index);
+        } catch (Exception e) {
+            log.warn("补唯一索引 {}.{} 失败: {}", table, index, e.getMessage());
         }
     }
 

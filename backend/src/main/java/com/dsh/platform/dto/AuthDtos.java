@@ -12,7 +12,9 @@ public class AuthDtos {
 
     public record ChangePasswordRequest(String oldPassword, String newPassword) {}
 
-    public record LoginResponse(String token, String role, Long tenantId, String name) {}
+    public record LoginResponse(String token, String role, Long tenantId, String name, Long avatarId) {}
+
+    public record MeResponse(String role, Long tenantId, String name, Long avatarId) {}
 
     public record UpdateEnterpriseRequest(String name, String creditCode, String contactName,
                                           String address, Integer creditScore, String authStatus) {}

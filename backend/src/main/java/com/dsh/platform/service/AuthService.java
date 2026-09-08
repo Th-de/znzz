@@ -11,7 +11,9 @@ import com.dsh.platform.security.JwtUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Map;
@@ -26,7 +28,9 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
     private final AccountService accountService;
+    private final FileService fileService;
 
+    @Transactional
     public void register(RegisterRequest req) {
         if (req == null) {
             throw new BizException("请填写注册信息");
@@ -52,10 +56,7 @@ public class AuthService {
         if (!"BUYER".equals(req.type()) && !"FACTORY".equals(req.type())) {
             throw new BizException("请选择企业类型");
         }
-        if (userMapper.selectCount(new LambdaQueryWrapper<SysUser>()
-                .eq(SysUser::getPhone, req.phone().trim())) > 0) {
-            throw new BizException("该手机号已注册");
-        }
+        assertPhoneFree(req.phone().trim());
         if (enterpriseMapper.selectCount(new LambdaQueryWrapper<Enterprise>()
                 .eq(Enterprise::getCreditCode, req.creditCode().trim())) > 0) {
             throw new BizException("该企业已注册");
@@ -97,7 +98,35 @@ public class AuthService {
         }
         Enterprise e = enterpriseMapper.selectById(u.getTenantId());
         String token = jwtUtil.generate(u.getId(), u.getTenantId(), u.getRole());
-        return new LoginResponse(token, u.getRole(), u.getTenantId(), e == null ? "" : e.getName());
+        return new LoginResponse(token, u.getRole(), u.getTenantId(), e == null ? "" : e.getName(), u.getAvatarId());
+    }
+
+    public MeResponse me() {
+        Long uid = com.dsh.platform.security.UserContext.userId();
+        if (uid == null) {
+            throw new BizException(401, "请重新登录");
+        }
+        SysUser u = userMapper.selectById(uid);
+        if (u == null) {
+            throw new BizException(401, "请重新登录");
+        }
+        Enterprise e = enterpriseMapper.selectById(u.getTenantId());
+        return new MeResponse(u.getRole(), u.getTenantId(), e == null ? "" : e.getName(), u.getAvatarId());
+    }
+
+    public MeResponse updateAvatar(MultipartFile file) {
+        Map<String, Object> up = fileService.upload(file, "AVATAR");
+        Object idObj = up.get("id");
+        Long attId = idObj instanceof Number n ? n.longValue() : null;
+        if (attId == null) {
+            throw new BizException("头像保存失败");
+        }
+        Long uid = com.dsh.platform.security.UserContext.userId();
+        fileService.bind(attId, "AVATAR", uid);
+        SysUser u = userMapper.selectById(uid);
+        u.setAvatarId(attId);
+        userMapper.updateById(u);
+        return me();
     }
 
     public void createUser(CreateUserRequest req) {
@@ -116,10 +145,7 @@ public class AuthService {
         if (!"OPERATOR".equals(req.role()) && !"INSPECTION".equals(req.role())) {
             throw new BizException("角色只能是运营或质检");
         }
-        if (userMapper.selectCount(new LambdaQueryWrapper<SysUser>()
-                .eq(SysUser::getPhone, req.phone().trim())) > 0) {
-            throw new BizException("该手机号已存在");
-        }
+        assertPhoneFree(req.phone().trim());
         // 质检账号必须挂在独立的质检机构企业上，否则不会出现在用户管理的质检方列表
         Long tenantId;
         if ("INSPECTION".equals(req.role())) {
@@ -254,6 +280,13 @@ public class AuthService {
         u.setStatus("ENABLED");
         userMapper.insert(u);
         accountService.ensure(e.getId());
+    }
+
+    private void assertPhoneFree(String phone) {
+        if (userMapper.selectCount(new LambdaQueryWrapper<SysUser>()
+                .eq(SysUser::getPhone, phone)) > 0) {
+            throw new BizException("该手机号已注册");
+        }
     }
 
     private static boolean validPhone(String phone) {

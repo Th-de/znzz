@@ -1,28 +1,18 @@
 <template>
-  <el-container style="height:100vh">
-    <el-aside width="200px" class="aside">
-      <div class="logo">智能制造云平台</div>
-      <div class="sub-logo">{{ isInspector ? '质检工作台' : '运营指挥中心' }}</div>
-      <div style="padding:0 16px 12px;display:flex;gap:6px">
-        <el-button size="small" @click="logout">退出</el-button>
-        <el-button size="small" @click="pwdOpen=true">改密码</el-button>
-      </div>
-      <el-menu :default-active="active" @select="active=$event" background-color="#304156" text-color="#bfcbd9" active-text-color="#409EFF">
-        <template v-if="!isInspector">
-          <el-menu-item index="overview">🧭 工作台</el-menu-item>
-          <el-menu-item index="all">📁 全部需求</el-menu-item>
-        </template>
-        <el-menu-item v-if="isInspector" index="inspect">🔍 工单质检</el-menu-item>
-        <template v-if="!isInspector">
-          <el-menu-item index="funds">💰 资金流水</el-menu-item>
-          <el-menu-item index="enterprises">👥 用户信息管理</el-menu-item>
-          <el-menu-item index="audit">📜 操作日志</el-menu-item>
-          <el-menu-item index="users" v-if="isSuper">👤 账号管理</el-menu-item>
-        </template>
-      </el-menu>
-    </el-aside>
-
-    <el-main>
+  <div class="shell">
+    <AppHeader
+      :items="menuItems"
+      :active="active"
+      :router-mode="false"
+      :role-label="isInspector ? '质检端' : '运营端'"
+      show-password
+      upload-avatar
+      @select="active = $event"
+      @logout="logout"
+      @password="pwdOpen = true"
+    />
+    <div class="app-body">
+      <div class="page-shell">
       <!-- 工作台：原需求管理分阶段处理 -->
       <div v-if="active==='overview'">
         <div class="toolbar">
@@ -281,6 +271,9 @@
           <el-empty v-if="!(detail.factories || []).length" description="暂无工厂报名" :image-size="56" />
           <el-table v-else :data="detail.factories" border size="small">
             <el-table-column prop="name" label="工厂" min-width="160" />
+            <el-table-column label="报价" width="130">
+              <template #default="{ row }">{{ factoryQuoteLabel(row) }}</template>
+            </el-table-column>
             <el-table-column label="承接区间" width="160">
               <template #default="{ row }">{{ (row.minQty ?? '-') }} ~ {{ (row.maxQty ?? '-') }} 件</template>
             </el-table-column>
@@ -920,12 +913,13 @@
         </el-table>
         </PagedBox>
       </el-dialog>
-    </el-main>
-  </el-container>
+      </div>
+    </div>
+  </div>
 </template>
 
 <script setup>
-import { ref, onMounted, reactive, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, reactive, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api'
 import { listAll, getDetail, getCoverage, listBidFactories, returnToBuyer, audit as auditDemand } from '../api/demand'
@@ -937,12 +931,26 @@ import IntentionCountdown from '../components/IntentionCountdown.vue'
 import PagedBox from '../components/PagedBox.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { View, Hide } from '@element-plus/icons-vue'
+import AppHeader from '../components/AppHeader.vue'
 import { DEMAND_STATUS, FUND_TYPE, FUND_DIR, STAGE_STATUS, DEVICE_STATUS, ESCROW_STATUS, label, fmtTime, fmtDateLine, fmtTimeLine, deviceStatusType, formatInspectMode, stageProgressLabel, nestReworkPeriods, canShowInspectReport, factoryWorkSpan } from '../utils/labels'
 import { getRole, clearAuth } from '../utils/auth'
 
 const router = useRouter()
 const role = getRole()
 const isInspector = role === 'INSPECTION'
+const isSuper = role === 'SUPER_ADMIN'
+const menuItems = computed(() => {
+  if (isInspector) return [{ index: 'inspect', label: '工单质检' }]
+  const items = [
+    { index: 'overview', label: '工作台' },
+    { index: 'all', label: '全部需求' },
+    { index: 'funds', label: '资金流水' },
+    { index: 'enterprises', label: '用户信息管理' },
+    { index: 'audit', label: '操作日志' },
+  ]
+  if (isSuper) items.push({ index: 'users', label: '账号管理' })
+  return items
+})
 const active = ref(isInspector ? 'inspect' : 'overview')
 const demandTab = ref('audit')
 const DEMAND_GROUPS = {
@@ -1092,7 +1100,6 @@ const repOpen = ref(false)
 const alts = ref([])
 const currentSol = ref(null)
 const currentProcess = ref(null)
-const isSuper = role === 'SUPER_ADMIN'
 
 const overview = ref({})
 const overviewKpis = [
@@ -1383,6 +1390,13 @@ function money(v) {
   if (!Number.isFinite(n)) return '0.00'
   return n.toFixed(2)
 }
+function factoryQuoteLabel(row) {
+  const u = row.unitPrice ?? (row.quotes || []).find(q => q.unitPrice != null)?.unitPrice
+  if (u == null || u === '') {
+    return row.bidStage === 'QUOTED' ? '-' : '未报价'
+  }
+  return money(u) + ' 元/件'
+}
 function lineAmount(line) {
   const p = Number(line?.price)
   if (Number.isFinite(p)) return p
@@ -1584,6 +1598,26 @@ async function openDetail(row) {
   syncDetailExpand()
   detailOpen.value = true
 }
+
+let factoryPoll = null
+async function refreshBidFactories() {
+  const id = detail.demand?.id
+  if (!id || !detailOpen.value) return
+  try {
+    const view = await getDetail(id)
+    detail.quoteStats = view.quoteStats || {}
+    detail.factories = (await listBidFactories(id)) || []
+  } catch { /* 轮询失败不打断详情 */ }
+}
+watch(detailOpen, (open) => {
+  if (factoryPoll) {
+    clearInterval(factoryPoll)
+    factoryPoll = null
+  }
+  if (open && !isInspector) {
+    factoryPoll = setInterval(refreshBidFactories, 4000)
+  }
+})
 function openReturn(row) {
   returnTarget.value = row
   returnReason.value = ''
@@ -1986,6 +2020,12 @@ onMounted(() => {
     loadFundViews().catch(ignore)
     loadEnterprises().catch(ignore)
     loadAudit().catch(ignore)
+  }
+})
+onUnmounted(() => {
+  if (factoryPoll) {
+    clearInterval(factoryPoll)
+    factoryPoll = null
   }
 })
 </script>

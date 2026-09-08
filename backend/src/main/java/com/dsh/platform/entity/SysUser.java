@@ -19,6 +19,7 @@ public class SysUser {
     private String passwordPlain;
     private String role;
     private String realName;
+    private Long avatarId;
     private String status;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

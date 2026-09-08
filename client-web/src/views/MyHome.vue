@@ -1,6 +1,21 @@
 <template>
-  <div style="max-width:720px">
-    <el-descriptions title="企业信息" :column="1" border>
+  <div style="max-width:720px;margin:0 auto">
+    <el-card shadow="never" class="avatar-card">
+      <div class="avatar-row">
+        <el-upload
+          :show-file-list="false"
+          accept="image/png,image/jpeg"
+          :http-request="uploadAvatar"
+        >
+          <el-avatar :size="88" :src="avatarUrl">{{ (info.name || '企').slice(0, 1) }}</el-avatar>
+        </el-upload>
+        <div>
+          <div class="avatar-tip">点击头像上传（png/jpg）</div>
+          <div class="avatar-name">{{ info.name || '企业' }}</div>
+        </div>
+      </div>
+    </el-card>
+    <el-descriptions title="企业信息" :column="1" border style="margin-top:16px">
       <el-descriptions-item label="企业名称">{{ info.name }}</el-descriptions-item>
       <el-descriptions-item label="企业类型">{{ info.type === 'FACTORY' ? '工厂' : '买家' }}</el-descriptions-item>
       <el-descriptions-item label="统一社会信用代码">{{ info.creditCode || '-' }}</el-descriptions-item>
@@ -8,7 +23,7 @@
       <el-descriptions-item label="地址">{{ info.address || '-' }}</el-descriptions-item>
       <el-descriptions-item label="信用分">{{ info.creditScore ?? '-' }}</el-descriptions-item>
     </el-descriptions>
-    <el-descriptions v-if="info.type === 'FACTORY'" title="平台履约数据（买家可见，不可手改）" :column="1" border style="margin-top:16px">
+    <el-descriptions v-if="info.type === 'FACTORY'" title="平台履约数据" :column="1" border style="margin-top:16px">
       <el-descriptions-item label="质检合格率">
         {{ profile.inspectionPassRate != null ? profile.inspectionPassRate + '%（已结算且已出结论 ' + profile.inspectionCount + ' 单）' : '暂无已结算质检' }}
       </el-descriptions-item>
@@ -35,12 +50,14 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import api from '../api'
+import { fetchAttachment } from '../api/file'
 import { ElMessage } from 'element-plus'
 
 const info = ref({})
 const profile = ref({})
+const avatarUrl = ref('')
 const pwd = reactive({ oldPassword: '', newPassword: '', confirm: '' })
 function money(v) {
   if (v == null) return '0.00'
@@ -54,10 +71,48 @@ async function changePwd() {
   ElMessage.success('密码已修改，下次登录请用新密码')
   pwd.oldPassword = pwd.newPassword = pwd.confirm = ''
 }
+async function loadAvatar(id) {
+  if (avatarUrl.value) {
+    URL.revokeObjectURL(avatarUrl.value)
+    avatarUrl.value = ''
+  }
+  if (!id) return
+  try {
+    const { blob } = await fetchAttachment(id, true)
+    avatarUrl.value = URL.createObjectURL(blob)
+  } catch { /* ignore */ }
+}
+
+async function uploadAvatar({ file }) {
+  const fd = new FormData()
+  fd.append('file', file)
+  const me = await api.post('/me/avatar', fd)
+  sessionStorage.setItem('name', me.name || '')
+  sessionStorage.setItem('avatarId', me.avatarId ? String(me.avatarId) : '')
+  window.dispatchEvent(new Event('profile-changed'))
+  ElMessage.success('头像已更新')
+  await loadAvatar(me.avatarId)
+}
+
 onMounted(async () => {
   info.value = await api.get('/enterprise/mine')
   if (info.value?.type === 'FACTORY' && info.value.id) {
     profile.value = await api.get(`/enterprise/${info.value.id}/public-profile`)
   }
+  try {
+    const me = await api.get('/me')
+    await loadAvatar(me.avatarId)
+  } catch { /* ignore */ }
+})
+onUnmounted(() => {
+  if (avatarUrl.value) URL.revokeObjectURL(avatarUrl.value)
 })
 </script>
+
+<style scoped>
+.avatar-card { border-radius: 16px; }
+.avatar-row { display: flex; align-items: center; gap: 16px; }
+.avatar-tip { color: #5483B3; font-size: 13px; }
+.avatar-name { margin-top: 6px; font-size: 16px; color: #052659; font-weight: 600; }
+</style>
+

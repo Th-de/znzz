@@ -14,7 +14,7 @@
         :title="'近 90 天取消 ' + cancelStats.last90Days + ' 次'"
         style="margin-bottom:12px"
       />
-      <h3>我的需求</h3>
+
       <PagedBox :data="demands" v-slot="{ rows }">
       <el-table :data="rows" border>
         <el-table-column prop="id" label="ID" width="70" />

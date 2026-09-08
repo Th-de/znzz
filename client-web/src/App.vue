@@ -6,5 +6,5 @@
 </script>
 
 <style>
-body { margin: 0; background: #f5f7fa; }
+@import './styles/theme.css';
 </style>
