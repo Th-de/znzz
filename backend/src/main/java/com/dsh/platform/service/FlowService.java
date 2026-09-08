@@ -138,6 +138,7 @@ public class FlowService {
                     "已冻结保证金 ¥" + deposit + "（履约后抵扣尾款）。各厂报价已可见，AI 正在生成推荐方案，经运营审核后作为参考下发。");
             notifyFactories(demandId, "买家已确认继续#" + demandId,
                     "买家已确认继续需求「" + d.getTitle() + "」，正在生成推荐方案。");
+            auditService.record("买家思考期继续", "DEMAND", demandId, "「" + d.getTitle() + "」保证金已冻结，生成方案");
             Long id = d.getId();
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
@@ -152,6 +153,8 @@ public class FlowService {
             failBuyerThinking(d, DemandStatus.CANCELLED,
                     reason == null || reason.isBlank() ? "买家思考期取消" : reason.trim(),
                     "买家已取消，意向金/保证金已退回。");
+            auditService.record("买家思考期取消", "DEMAND", demandId,
+                    "「" + d.getTitle() + "」" + (reason == null || reason.isBlank() ? "买家思考期取消" : reason.trim()));
             return;
         }
         throw new BizException("非法操作");

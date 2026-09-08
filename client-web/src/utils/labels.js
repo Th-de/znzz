@@ -98,6 +98,23 @@ export const FUND_DIR = {
   OUT: '支出',
 }
 
+export const CREDIT_TYPE = {
+  STAGE_PASS: '工单质检通过',
+  QUALITY_PASS: '质检合格',
+  QUALITY_FAIL: '质检不合格',
+  PUNCTUAL_ON: '按时交付',
+  PUNCTUAL_LATE: '逾期交付',
+  HONESTY_FACTORY_EXIT: '工厂思考期退出',
+  HONESTY_OVERDUE: '逾期未交付',
+  HONESTY_INSPECT_FAIL: '质检失信',
+  HONESTY_CLEAN_ORDER: '整单无失信完工',
+  BUYER_THINKING_CANCEL: '买家思考期取消',
+  PAY_ON_TIME: '按时付款',
+  PAY_LATE: '逾期付款',
+  INTENTION_NO_LOCK: '报名未锁价',
+  ORDER_COMPLETE: '订单完成',
+}
+
 export function label(map, key) {
   return map[key] || key || '-'
 }

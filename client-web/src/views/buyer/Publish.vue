@@ -466,14 +466,14 @@ async function fillFrom(id, mode) {
   if (mode === 'edit') {
     if (d.status !== 'RETURNED') {
       ElMessage.warning('只有退回修改的需求可以改内容后提交审核')
-      router.replace('/buyer/home')
+      router.replace('/buyer/demands')
       return
     }
     editingId.value = d.id
   } else if (mode === 'copy') {
     if (d.status !== 'CANCELLED') {
       ElMessage.warning('只能基于已取消的需求重新发布')
-      router.replace('/buyer/home')
+      router.replace('/buyer/demands')
       return
     }
     copyFromId.value = d.id
@@ -608,7 +608,7 @@ async function submit() {
       ElMessage.success(copyFromId.value ? '新需求已提交申请发布，旧单已留档' : '已提交申请发布，等待运营审核')
     }
     saved.value = true
-    router.push('/buyer/home')
+    router.push('/buyer/demands')
   } catch (e) {
     if (!e?.message) ElMessage.error('提交失败，请检查填写内容或稍后重试')
   } finally {

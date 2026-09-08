@@ -1,7 +1,5 @@
 <template>
   <div>
-      <el-alert v-if="capLoaded && !capComplete" type="warning" :closable="false" style="margin-bottom:12px"
-        title="能力档案未填完，无法意向报名。" />
       <h3>待办</h3>
       <el-empty v-if="!todos.length" description="暂无待办" :image-size="60" />
       <div v-else class="todos">
@@ -61,21 +59,12 @@ import { FUND_TYPE, FUND_DIR, CREDIT_TYPE, label, fmtTime } from '../../utils/la
 
 const funds = ref([])
 const credits = ref([])
-const capComplete = ref(true)
-const capLoaded = ref(false)
 const todos = ref([])
 
 async function load() {
   try { todos.value = await api.get('/common/todos') } catch { todos.value = [] }
-  funds.value = await api.get('/common/funds')
-  credits.value = await api.get('/common/credits')
-  try {
-    const cap = await api.get('/enterprise/capability')
-    capComplete.value = !!cap.complete
-    capLoaded.value = true
-  } catch {
-    capLoaded.value = true
-  }
+  try { funds.value = await api.get('/common/funds') } catch { funds.value = [] }
+  try { credits.value = await api.get('/common/credits') } catch { credits.value = [] }
 }
 onMounted(load)
 </script>

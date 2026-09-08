@@ -28,6 +28,10 @@ export function stages(orderId) {
   return api.get(`/order/${orderId}/stages`)
 }
 
+export function openNextPeriod(orderId, factoryId) {
+  return api.post(`/order/${orderId}/factory/${factoryId}/open-next-period`)
+}
+
 export function progressLog(stageId) {
   return api.get(`/order/stage/${stageId}/progress-log`)
 }

@@ -117,8 +117,8 @@ public class EnterpriseAdminService {
         }
         if (StringUtils.hasText(req.phone())) {
             String phone = req.phone().trim();
-            if (!phone.matches("^1\\d{10}$") && !"admin".equals(phone)) {
-                throw new BizException("请填写11位手机号");
+            if (!phone.matches("^\\d{11}$") && !"admin".equals(phone)) {
+                throw new BizException("手机号必须为11位数字");
             }
             Long cnt = userMapper.selectCount(new LambdaQueryWrapper<SysUser>()
                     .eq(SysUser::getPhone, phone)

@@ -115,6 +115,13 @@ public class OrderController {
         return R.ok();
     }
 
+    @PostMapping("/{orderId}/factory/{factoryId}/open-next-period")
+    @PreAuthorize("hasAnyRole('OPERATOR','SUPER_ADMIN')")
+    public R<Void> openNextPeriod(@PathVariable Long orderId, @PathVariable Long factoryId) {
+        orderService.openNextPeriod(orderId, factoryId);
+        return R.ok();
+    }
+
     @PostMapping("/stage/{stageId}/progress")
     @PreAuthorize("hasRole('FACTORY')")
     public R<Void> reportProgress(@PathVariable Long stageId, @RequestBody ProgressRequest req) {

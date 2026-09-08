@@ -13,7 +13,7 @@ onMounted(async () => {
       return
     }
   } catch { /* 回需求列表 */ }
-  router.replace('/buyer/home')
+  router.replace('/buyer/demands')
 })
 </script>
 

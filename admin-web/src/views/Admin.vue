@@ -139,6 +139,62 @@
             <el-step title="生产与质检" />
             <el-step title="结算" />
           </el-steps>
+          <div v-if="detailReached(3)" style="margin-bottom:16px">
+            <h4>生产与质检 {{ detailProgress }}%</h4>
+            <el-progress :percentage="detailProgress" style="margin-bottom:10px" />
+            <p class="hint">运营仅查看进度，并审核质检员提交的结果。不代替买家付款或评价。测试可用「进入下一阶段」开启该厂下一期提交入口。</p>
+            <el-table :data="detailStageGroups" border size="small" row-key="key">
+              <el-table-column type="expand">
+                <template #default="{ row }">
+                  <el-table :data="row.children" border size="small">
+                    <el-table-column label="期数" width="90">
+                      <template #default="{ row: p }">{{ p.periodLabel || ('第' + (p.periodNo || '-') + '期') }}</template>
+                    </el-table-column>
+                    <el-table-column label="数量" width="90">
+                      <template #default="{ row: p }">{{ p.quantity != null ? p.quantity + ' 件' : '-' }}</template>
+                    </el-table-column>
+                    <el-table-column label="进度" width="150">
+                      <template #default="{ row: p }">
+                        <el-progress :percentage="p.actualProgress || 0" :stroke-width="10" />
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="本段工费" width="100">
+                      <template #default="{ row: p }">{{ p.amount ?? '-' }}</template>
+                    </el-table-column>
+                    <el-table-column label="托管" width="90">
+                      <template #default="{ row: p }">{{ label(ESCROW_STATUS, p.escrowStatus) }}</template>
+                    </el-table-column>
+                    <el-table-column label="状态" width="110">
+                      <template #default="{ row: p }">{{ label(STAGE_STATUS, p.status) }}</template>
+                    </el-table-column>
+                    <el-table-column label="操作" min-width="200">
+                      <template #default="{ row: p }">
+                        <el-button size="small" @click="openProgress(p)">进度记录</el-button>
+                        <el-button v-if="p.status==='PENDING_REVIEW'" size="small" type="warning" @click="openInspect(p)">审核质检</el-button>
+                        <el-button v-else-if="['PASS','FAIL','CLOSED','COMPLETED','PENDING_INSPECTION','PENDING_INSPECT_PAY'].includes(p.status)" size="small" @click="openInspect(p)">质检结果</el-button>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                </template>
+              </el-table-column>
+              <el-table-column prop="factoryName" label="工厂" min-width="160" />
+              <el-table-column label="承接总数" width="110">
+                <template #default="{ row }">{{ row.totalQty }} 件</template>
+              </el-table-column>
+              <el-table-column label="进度" width="150">
+                <template #default="{ row }"><el-progress :percentage="row.progress" :stroke-width="10" /></template>
+              </el-table-column>
+              <el-table-column label="总工费" width="110">
+                <template #default="{ row }">{{ money(row.totalAmount) }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="140" fixed="right">
+                <template #default="{ row }">
+                  <el-button v-if="canOpenNextPeriod(row)" size="small" type="warning" @click="openNextPeriod(row)">进入下一阶段</el-button>
+                  <span v-else class="hint">-</span>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
           <el-descriptions :column="1" border size="small">
             <el-descriptions-item label="状态">{{ label(DEMAND_STATUS, detail.demand?.status) }}</el-descriptions-item>
             <el-descriptions-item label="标题">{{ detail.demand?.title }}</el-descriptions-item>
@@ -267,56 +323,6 @@
               </el-table-column>
             </el-table>
           </div>
-          <div v-if="detailReached(3)" style="margin-top:16px">
-            <h4>生产与质检 {{ detailProgress }}%</h4>
-            <el-progress :percentage="detailProgress" style="margin-bottom:10px" />
-            <p class="hint">运营仅查看进度，并审核质检员提交的结果。不代替买家付款或评价。</p>
-            <el-table :data="detailStageGroups" border size="small" row-key="key">
-              <el-table-column type="expand">
-                <template #default="{ row }">
-                  <el-table :data="row.children" border size="small">
-                    <el-table-column label="期数" width="90">
-                      <template #default="{ row: p }">{{ p.periodLabel || ('第' + (p.periodNo || '-') + '期') }}</template>
-                    </el-table-column>
-                    <el-table-column label="数量" width="90">
-                      <template #default="{ row: p }">{{ p.quantity != null ? p.quantity + ' 件' : '-' }}</template>
-                    </el-table-column>
-                    <el-table-column label="进度" width="150">
-                      <template #default="{ row: p }">
-                        <el-progress :percentage="p.actualProgress || 0" :stroke-width="10" />
-                      </template>
-                    </el-table-column>
-                    <el-table-column label="本段工费" width="100">
-                      <template #default="{ row: p }">{{ p.amount ?? '-' }}</template>
-                    </el-table-column>
-                    <el-table-column label="托管" width="90">
-                      <template #default="{ row: p }">{{ label(ESCROW_STATUS, p.escrowStatus) }}</template>
-                    </el-table-column>
-                    <el-table-column label="状态" width="110">
-                      <template #default="{ row: p }">{{ label(STAGE_STATUS, p.status) }}</template>
-                    </el-table-column>
-                    <el-table-column label="操作" min-width="200">
-                      <template #default="{ row: p }">
-                        <el-button size="small" @click="openProgress(p)">进度记录</el-button>
-                        <el-button v-if="p.status==='PENDING_REVIEW'" size="small" type="warning" @click="openInspect(p)">审核质检</el-button>
-                        <el-button v-else-if="['PASS','FAIL','CLOSED','COMPLETED','PENDING_INSPECTION','PENDING_INSPECT_PAY'].includes(p.status)" size="small" @click="openInspect(p)">质检结果</el-button>
-                      </template>
-                    </el-table-column>
-                  </el-table>
-                </template>
-              </el-table-column>
-              <el-table-column prop="factoryName" label="工厂" min-width="160" />
-              <el-table-column label="承接总数" width="110">
-                <template #default="{ row }">{{ row.totalQty }} 件</template>
-              </el-table-column>
-              <el-table-column label="进度" width="150">
-                <template #default="{ row }"><el-progress :percentage="row.progress" :stroke-width="10" /></template>
-              </el-table-column>
-              <el-table-column label="总工费" width="110">
-                <template #default="{ row }">{{ money(row.totalAmount) }}</template>
-              </el-table-column>
-            </el-table>
-          </div>
           <div v-if="detailReached(4)" style="margin-top:16px">
             <h4>结算</h4>
             <el-alert v-if="detail.demand?.status==='COMPLETED'" type="success" :closable="false" title="订单已完成结算。" />
@@ -345,9 +351,12 @@
       <!-- 操作日志 -->
       <div v-if="active==='audit'">
         <div class="toolbar">
-          <span class="title">关键操作日志</span>
+          <div>
+            <span class="title">操作日志</span>
+            <div class="hint" style="margin:4px 0 0">记录买家、工厂与运营的关键操作。「对象」是这次动作针对的业务单据。</div>
+          </div>
           <div style="display:flex;gap:8px;align-items:center">
-            <el-select v-model="auditAction" clearable placeholder="全部动作" style="width:180px" @change="loadAudit">
+            <el-select v-model="auditAction" clearable placeholder="全部动作" style="width:220px" @change="loadAudit">
               <el-option v-for="a in AUDIT_ACTIONS" :key="a" :label="a" :value="a" />
             </el-select>
             <el-button @click="loadAudit">刷新</el-button>
@@ -359,12 +368,24 @@
           <el-table-column label="时间" width="170">
             <template #default="{row}">{{ fmtTime(row.createdAt) }}</template>
           </el-table-column>
-          <el-table-column prop="actorName" label="操作人" width="120" />
-          <el-table-column prop="action" label="动作" width="150" />
-          <el-table-column label="对象" width="140">
-            <template #default="{row}">{{ row.targetType }} #{{ row.targetId }}</template>
+          <el-table-column prop="actorName" label="操作人" width="160" />
+          <el-table-column prop="action" label="动作" width="170" />
+          <el-table-column width="168">
+            <template #header>
+              <el-tooltip content="这次操作针对的业务单据：需求 / 订单 / 方案 / 工单 / 合同，数字为单据编号" placement="top">
+                <span>对象</span>
+              </el-tooltip>
+            </template>
+            <template #default="{row}">
+              <div class="audit-obj">
+                <el-tag size="small" effect="light" :type="auditTargetTag(row.targetType)">{{ row.targetLabel || auditTargetName(row.targetType) }}</el-tag>
+                <span class="audit-obj-id">#{{ row.targetId }}</span>
+              </div>
+            </template>
           </el-table-column>
-          <el-table-column prop="afterJson" label="详情" min-width="240" show-overflow-tooltip />
+          <el-table-column label="详情" min-width="240" show-overflow-tooltip>
+            <template #default="{row}">{{ auditDetail(row) }}</template>
+          </el-table-column>
         </el-table>
         </PagedBox>
       </div>
@@ -424,8 +445,8 @@
           <p class="hint" style="margin:0 0 8px">{{ inspRuleHint }} 规定抽检数 {{ inspRequiredSample }} 件。</p>
           <el-form label-width="130px">
             <el-form-item label="实交数量">
-              <el-input-number v-model="inspForm.deliveredQty" :min="0" disabled />
-              <span class="hint">约定 {{ inspTarget?.quantity ?? '-' }} 件，由工厂交付写入，质检不可改</span>
+              <el-input-number v-model="inspForm.deliveredQty" :min="0" :disabled="!inspQtyEditable" />
+              <span class="hint">约定 {{ inspTarget?.quantity ?? '-' }} 件，质检员/运营可按现场清点修改</span>
             </el-form-item>
             <el-form-item label="抽检数"><el-input-number v-model="inspForm.sampleCount" :min="inspRequiredSample" :disabled="true" /></el-form-item>
             <el-form-item label="关键公差不合格"><el-input-number v-model="inspForm.criticalFailCount" :min="0" :max="inspForm.sampleCount || 0" :disabled="inspFillReadonly" /></el-form-item>
@@ -442,7 +463,7 @@
               </el-radio-group>
             </el-form-item>
             <el-form-item label="数量是否达标">
-              <el-radio-group v-model="inspForm.quantityOk" disabled>
+              <el-radio-group v-model="inspForm.quantityOk" :disabled="!inspQtyEditable">
                 <el-radio :value="true">达标</el-radio>
                 <el-radio :value="false">不达标</el-radio>
               </el-radio-group>
@@ -472,21 +493,39 @@
 
       <!-- 资金流水 -->
       <div v-if="active==='funds'">
+        <div v-if="!fundEnterprise">
         <div class="toolbar"><span class="title">资金总览</span><el-button @click="loadFundViews">刷新</el-button></div>
+        <el-card shadow="never" class="trend-card">
+          <div class="trend-head">近 30 天资金流水趋势</div>
+          <div class="trend-plot" v-if="fundTrendPoints.line">
+            <div class="trend-y">
+              <span v-for="(t, i) in fundTrendPoints.yTicks.slice().reverse()" :key="i">{{ t }}</span>
+            </div>
+            <div class="trend-plot-main">
+              <svg class="trend-svg" viewBox="0 0 640 180" preserveAspectRatio="none">
+                <line v-for="(y, i) in fundTrendPoints.gridYs" :key="'g'+i" x1="0" :y1="y" x2="640" :y2="y" stroke="#ebeef5" stroke-width="1" />
+                <polyline :points="fundTrendPoints.line" fill="none" stroke="#2B6BFF" stroke-width="2.5" stroke-linejoin="round" />
+              </svg>
+              <div class="trend-axis">
+                <span v-for="(t, i) in fundTrendAxis" :key="i">{{ t }}</span>
+              </div>
+            </div>
+          </div>
+          <p v-if="!fundTrend.length" class="hint">暂无近 30 天流水</p>
+        </el-card>
         <el-row :gutter="12" style="margin-bottom:16px">
-          <el-col :span="4"><el-card shadow="never"><div class="kpi">意向冻结</div><div class="kpi-v">¥ {{ fundOverview.intentionFrozenNet || 0 }}</div></el-card></el-col>
-          <el-col :span="4"><el-card shadow="never"><div class="kpi">保证金冻结</div><div class="kpi-v">¥ {{ fundOverview.depositFrozenNet || 0 }}</div></el-card></el-col>
-          <el-col :span="4"><el-card shadow="never"><div class="kpi">托管在途</div><div class="kpi-v">¥ {{ fundOverview.escrowHeld || 0 }}</div></el-card></el-col>
-          <el-col :span="4"><el-card shadow="never"><div class="kpi">平台暂存</div><div class="kpi-v">¥ {{ fundOverview.impoundBalance || 0 }}</div></el-card></el-col>
-          <el-col :span="4"><el-card shadow="never"><div class="kpi">佣金累计</div><div class="kpi-v">¥ {{ fundOverview.commissionTotal || 0 }}</div></el-card></el-col>
+          <el-col :span="5"><el-card shadow="never"><div class="kpi">意向冻结</div><div class="kpi-v">¥ {{ fundOverview.intentionFrozenNet || 0 }}</div></el-card></el-col>
+          <el-col :span="5"><el-card shadow="never"><div class="kpi">保证金冻结</div><div class="kpi-v">¥ {{ fundOverview.depositFrozenNet || 0 }}</div></el-card></el-col>
+          <el-col :span="5"><el-card shadow="never"><div class="kpi">平台托管</div><div class="kpi-v">¥ {{ fundOverview.platformEscrow || 0 }}</div></el-card></el-col>
+          <el-col :span="5"><el-card shadow="never"><div class="kpi">佣金累计</div><div class="kpi-v">¥ {{ fundOverview.commissionTotal || 0 }}</div></el-card></el-col>
           <el-col :span="4"><el-card shadow="never"><div class="kpi">平台余额</div><div class="kpi-v">¥ {{ fundOverview.platformBalance || 0 }}</div></el-card></el-col>
         </el-row>
         <el-tabs v-model="fundTab">
-          <el-tab-pane label="按需求分组" name="byDemand">
+          <el-tab-pane label="需求流水" name="byDemand">
+            <PagedBox v-if="fundByDemand.length" :data="fundByDemand" v-slot="{ rows }">
             <el-collapse>
-              <el-collapse-item v-for="g in fundByDemand" :key="g.demandId" :title="'#' + g.demandId + ' ' + (g.demandTitle || '') + ' · 小计 ¥' + g.subtotal">
-                <PagedBox :data="g.flows" :page-size="8" v-slot="{ rows }">
-                <el-table :data="rows" border size="small">
+              <el-collapse-item v-for="g in rows" :key="g.demandId" :title="'#' + g.demandId + ' ' + (g.demandTitle || '') + ' · 小计 ¥' + g.subtotal">
+                <el-table :data="g.flows" border size="small">
                   <el-table-column label="时间" width="160">
                     <template #default="{row}">{{ fmtTime(row.createdAt) }}</template>
                   </el-table-column>
@@ -495,39 +534,72 @@
                   <el-table-column label="方向" width="90"><template #default="{row}">{{ label(FUND_DIR, row.direction) }}</template></el-table-column>
                   <el-table-column prop="amount" label="金额" width="100" />
                 </el-table>
-                </PagedBox>
               </el-collapse-item>
             </el-collapse>
+            </PagedBox>
+            <el-empty v-else description="暂无需求流水" :image-size="60" />
           </el-tab-pane>
-          <el-tab-pane label="企业账户" name="accounts">
-            <PagedBox :data="fundAccounts" v-slot="{ rows }">
+          <el-tab-pane label="买家流水" name="buyers">
+            <PagedBox :data="fundBuyers" v-slot="{ rows }">
             <el-table :data="rows" border>
               <el-table-column prop="tenantId" label="企业ID" width="80" />
-              <el-table-column prop="enterpriseName" label="企业" min-width="140" />
-              <el-table-column prop="enterpriseType" label="类型" width="90" />
+              <el-table-column prop="enterpriseName" label="企业" min-width="160" />
               <el-table-column prop="balance" label="可用余额" width="120" />
               <el-table-column prop="frozen" label="冻结" width="120" />
+              <el-table-column label="操作" width="120">
+                <template #default="{ row }">
+                  <el-button size="small" type="primary" @click="openFundEnterprise(row)">流水详情</el-button>
+                </template>
+              </el-table-column>
             </el-table>
             </PagedBox>
           </el-tab-pane>
-          <el-tab-pane label="全部流水" name="all">
-            <PagedBox :data="funds" v-slot="{ rows }">
+          <el-tab-pane label="工厂流水" name="factories">
+            <PagedBox :data="fundFactories" v-slot="{ rows }">
             <el-table :data="rows" border>
-              <el-table-column prop="id" label="ID" width="60" />
-              <el-table-column label="时间" width="160">
-                <template #default="{row}">{{ fmtTime(row.createdAt) }}</template>
+              <el-table-column prop="tenantId" label="企业ID" width="80" />
+              <el-table-column prop="enterpriseName" label="企业" min-width="160" />
+              <el-table-column prop="balance" label="可用余额" width="120" />
+              <el-table-column prop="frozen" label="冻结" width="120" />
+              <el-table-column label="操作" width="120">
+                <template #default="{ row }">
+                  <el-button size="small" type="primary" @click="openFundEnterprise(row)">流水详情</el-button>
+                </template>
               </el-table-column>
-              <el-table-column label="需求" min-width="140">
-                <template #default="{row}">{{ row.demandTitle || (row.demandId ? '#' + row.demandId : '-') }}</template>
-              </el-table-column>
-              <el-table-column prop="enterpriseName" label="企业" min-width="140" />
-              <el-table-column label="类型" width="120"><template #default="{row}">{{ label(FUND_TYPE, row.type) }}</template></el-table-column>
-              <el-table-column label="方向" width="100"><template #default="{row}">{{ label(FUND_DIR, row.direction) }}</template></el-table-column>
-              <el-table-column prop="amount" label="金额" width="120" />
             </el-table>
             </PagedBox>
           </el-tab-pane>
         </el-tabs>
+        </div>
+        <div v-else>
+          <div class="toolbar">
+            <span class="title">{{ fundEnterprise.enterpriseName || '企业流水' }}</span>
+            <div style="display:flex;gap:8px">
+              <el-button @click="fundEnterprise=null">返回</el-button>
+            </div>
+          </div>
+          <el-descriptions :column="3" border size="small" style="margin-bottom:12px">
+            <el-descriptions-item label="企业">{{ fundEnterprise.enterpriseName }}</el-descriptions-item>
+            <el-descriptions-item label="类型">{{ fundEnterprise.enterpriseType === 'BUYER' ? '买家' : (fundEnterprise.enterpriseType === 'FACTORY' ? '工厂' : fundEnterprise.enterpriseType) }}</el-descriptions-item>
+            <el-descriptions-item label="可用余额">¥ {{ fundEnterprise.account?.balance ?? 0 }}</el-descriptions-item>
+            <el-descriptions-item label="冻结">¥ {{ fundEnterprise.account?.frozen ?? 0 }}</el-descriptions-item>
+          </el-descriptions>
+          <p class="hint">含意向金、保证金、托管工费、质检费等全部流水。</p>
+          <PagedBox :data="fundEnterprise.flows || []" v-slot="{ rows }">
+          <el-table :data="rows" border>
+            <el-table-column prop="id" label="ID" width="70" />
+            <el-table-column label="时间" width="170">
+              <template #default="{row}">{{ fmtTime(row.createdAt) }}</template>
+            </el-table-column>
+            <el-table-column label="需求" min-width="160">
+              <template #default="{row}">{{ row.demandTitle || (row.demandId ? '#' + row.demandId : '-') }}</template>
+            </el-table-column>
+            <el-table-column label="类型" width="110"><template #default="{row}">{{ label(FUND_TYPE, row.type) }}</template></el-table-column>
+            <el-table-column label="方向" width="90"><template #default="{row}">{{ label(FUND_DIR, row.direction) }}</template></el-table-column>
+            <el-table-column prop="amount" label="金额" width="120" />
+          </el-table>
+          </PagedBox>
+        </div>
       </div>
 
       <!-- 用户信息管理 -->
@@ -606,7 +678,7 @@
           </el-form>
           <h4 style="margin:16px 0 8px">登录账号</h4>
           <el-form label-width="100px">
-            <el-form-item label="手机号"><el-input v-model="entEdit.accountPhone" :disabled="!entEdit.userId" /></el-form-item>
+            <el-form-item label="手机号"><el-input v-model="entEdit.accountPhone" maxlength="11" :disabled="!entEdit.userId" @input="onEntPhone" /></el-form-item>
             <el-form-item label="姓名"><el-input v-model="entEdit.realName" :disabled="!entEdit.userId" /></el-form-item>
             <el-form-item label="状态">
               <el-select v-model="entEdit.userStatus" style="width:100%" :disabled="!entEdit.userId">
@@ -630,7 +702,7 @@
       <div v-if="active==='users' && isSuper">
         <div class="toolbar"><span class="title">创建账号（发放权限）</span></div>
         <el-form ref="userFormRef" :model="userForm" :rules="userRules" label-width="90px" style="max-width:480px">
-          <el-form-item label="手机号" prop="phone"><el-input v-model="userForm.phone" /></el-form-item>
+          <el-form-item label="手机号" prop="phone"><el-input v-model="userForm.phone" maxlength="11" placeholder="11位数字" @input="onUserPhone" /></el-form-item>
           <el-form-item label="密码" prop="password"><el-input v-model="userForm.password" type="password" show-password /></el-form-item>
           <el-form-item label="姓名" prop="realName"><el-input v-model="userForm.realName" /></el-form-item>
           <el-form-item label="角色">
@@ -799,7 +871,7 @@ import { ref, onMounted, reactive, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api'
 import { listAll, getDetail, getCoverage, listBidFactories, returnToBuyer, audit as auditDemand } from '../api/demand'
-import { inspect as inspectStage, approveInspect, inspectionOf, inspectQueue, listOrders, listContracts, stages as listStages, progressLog } from '../api/order'
+import { inspect as inspectStage, approveInspect, inspectionOf, inspectQueue, listOrders, listContracts, stages as listStages, progressLog, openNextPeriod as openNextPeriodApi } from '../api/order'
 import { fetchAttachment, saveBlob } from '../api/file'
 import CoverageBars from '../components/CoverageBars.vue'
 import BuyerInfoBlock from '../components/BuyerInfoBlock.vue'
@@ -842,7 +914,61 @@ const funds = ref([])
 const fundOverview = ref({})
 const fundByDemand = ref([])
 const fundAccounts = ref([])
+const fundTrend = ref([])
 const fundTab = ref('byDemand')
+const fundEnterprise = ref(null)
+const fundBuyers = computed(() => (fundAccounts.value || []).filter(a => a.enterpriseType === 'BUYER'))
+const fundFactories = computed(() => (fundAccounts.value || []).filter(a => a.enterpriseType === 'FACTORY'))
+const fundTrendPoints = computed(() => {
+  const list = fundTrend.value || []
+  if (!list.length) return { line: '', yTicks: [], gridYs: [] }
+  const vals = list.map(d => Number(d.amount) || 0)
+  const max = niceTrendMax(Math.max(...vals, 0))
+  const w = 640
+  const h = 180
+  const padTop = 8
+  const padBot = 8
+  const n = list.length
+  const innerH = h - padTop - padBot
+  const pts = list.map((d, i) => {
+    const x = n === 1 ? w / 2 : (i * w / (n - 1))
+    const y = h - padBot - ((Number(d.amount) || 0) / max) * innerH
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  })
+  const steps = 4
+  const yTicks = []
+  const gridYs = []
+  for (let i = 0; i <= steps; i++) {
+    yTicks.push(formatTrendY((max * i) / steps))
+    gridYs.push((h - padBot - (innerH * i) / steps).toFixed(1))
+  }
+  return { line: pts.join(' '), yTicks, gridYs }
+})
+const fundTrendAxis = computed(() => {
+  const list = fundTrend.value || []
+  if (list.length < 2) return list.map(d => fmtTrendDate(d.date))
+  const pick = [list[0], list[Math.floor(list.length / 3)], list[Math.floor((list.length * 2) / 3)], list[list.length - 1]]
+  return pick.map(d => fmtTrendDate(d?.date))
+})
+function fmtTrendDate(iso) {
+  if (!iso) return ''
+  const p = String(iso).split('-')
+  if (p.length < 3) return iso
+  return Number(p[1]) + '/' + Number(p[2])
+}
+function niceTrendMax(v) {
+  if (v <= 0) return 100
+  const mag = 10 ** Math.floor(Math.log10(v))
+  const n = v / mag
+  const nice = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10
+  return nice * mag
+}
+function formatTrendY(v) {
+  if (v >= 10000) return (v / 10000).toFixed(v % 10000 === 0 ? 0 : 1) + '万'
+  if (v >= 1000) return String(Math.round(v))
+  if (Number.isInteger(v)) return String(v)
+  return v.toFixed(1)
+}
 const enterprises = ref([])
 const entTab = ref('BUYER')
 const entKeyword = ref('')
@@ -858,7 +984,10 @@ const entEdit = reactive({
 const userFormRef = ref()
 const userForm = reactive({ phone: '', password: '123456', realName: '', role: 'OPERATOR', orgName: '' })
 const userRules = {
-  phone: [{ required: true, message: '请填写手机号', trigger: 'blur' }],
+  phone: [
+    { required: true, message: '请填写手机号', trigger: 'blur' },
+    { pattern: /^\d{11}$/, message: '手机号必须为11位数字', trigger: ['blur', 'change'] },
+  ],
   password: [{ required: true, message: '请填写密码', trigger: 'blur' }, { min: 6, message: '至少 6 位', trigger: 'blur' }],
   realName: [{ required: true, message: '请填写姓名', trigger: 'blur' }],
 }
@@ -891,7 +1020,13 @@ const allContracts = ref([])
 const contractStatus = ref('')
 const auditLogs = ref([])
 const auditAction = ref('')
-const AUDIT_ACTIONS = ['需求审核通过', '需求退回', '结束意向期', '结束工厂思考期', '下发方案', '进入合同签署', '买家确认签署并派单', '工单质检']
+const AUDIT_ACTIONS = [
+  '买家申请发布', '买家再次提交审核', '买家取消需求', '买家思考期继续', '买家思考期取消',
+  '买家确认方案', '买家上传合同', '买家确认签署并派单', '买家完工确认', '方案期关闭订单',
+  '工厂报名', '工厂取消报名', '工厂提交报价', '工厂思考期退出', '工厂签署合同', '工厂开工', '工厂交付',
+  '需求审核通过', '需求退回', '结束意向期', '结束工厂思考期', '下发方案', '进入合同签署',
+  '工单质检', '提交质检单', '审核质检单', '开启下一期工单', '支付质检费',
+]
 const factoryProfileOpen = ref(false)
 const factoryProfile = ref({})
 
@@ -924,7 +1059,7 @@ const detailStageGroups = computed(() => {
   for (const p of detail.stages || []) {
     const key = p.tenantId ?? p.factoryName ?? p.id
     if (!map.has(key)) {
-      map.set(key, { key, factoryName: p.factoryName || ('工厂-' + p.tenantId), children: [], totalQty: 0, totalAmount: 0 })
+      map.set(key, { key, tenantId: p.tenantId, factoryName: p.factoryName || ('工厂-' + p.tenantId), children: [], totalQty: 0, totalAmount: 0 })
     }
     const g = map.get(key)
     g.children.push(p)
@@ -943,6 +1078,16 @@ const detailProgress = computed(() => {
   if (!list.length) return 0
   return Math.round(list.reduce((s, p) => s + (Number(p.actualProgress) || 0), 0) / list.length)
 })
+function canOpenNextPeriod(group) {
+  return (group.children || []).some(p => p.status === 'WAITING_OPEN' || p.status === 'PENDING')
+}
+async function openNextPeriod(group) {
+  if (!detail.orderId || !group.tenantId) return ElMessage.warning('缺少订单或工厂信息')
+  await ElMessageBox.confirm('确认开启该厂下一期提交入口？工厂可立即上报进度与交付，不等待分期开始时间。', '进入下一阶段', { type: 'warning' })
+  await openNextPeriodApi(detail.orderId, group.tenantId)
+  ElMessage.success('已开启下一期')
+  try { detail.stages = (await listStages(detail.orderId)) || [] } catch { /* 保持原列表 */ }
+}
 const progOpen = ref(false)
 const progLogs = ref([])
 const progStage = ref(null)
@@ -1043,6 +1188,12 @@ watch(() => [inspForm.criticalFailCount, inspForm.generalFailCount, inspForm.qua
   inspForm.result = (inspForm.quantityOk && inspToleranceOk.value) ? 'PASS' : 'FAIL'
 })
 const inspFillReadonly = computed(() => !isInspector || inspTarget.value?.status !== 'PENDING_INSPECTION')
+const inspQtyEditable = computed(() => {
+  const st = inspTarget.value?.status
+  if (isInspector && st === 'PENDING_INSPECTION') return true
+  if (!isInspector && st === 'PENDING_REVIEW') return true
+  return false
+})
 const inspCanSubmit = computed(() => isInspector && inspTarget.value?.status === 'PENDING_INSPECTION')
 const inspCanApprove = computed(() => !isInspector && inspTarget.value?.status === 'PENDING_REVIEW')
 const inspDialogTitle = computed(() => {
@@ -1179,7 +1330,11 @@ async function loadFundViews() {
   fundOverview.value = await api.get('/fund/overview')
   fundByDemand.value = await api.get('/fund/by-demand')
   fundAccounts.value = await api.get('/fund/accounts')
+  fundTrend.value = await api.get('/fund/trend')
   await loadFunds()
+}
+async function openFundEnterprise(row) {
+  fundEnterprise.value = await api.get(`/fund/tenant/${row.tenantId}`)
 }
 async function loadEnterprises() {
   enterprises.value = await api.get('/enterprise/manage', {
@@ -1205,6 +1360,9 @@ function openEntEdit(row) {
 }
 async function saveEntEdit() {
   if (!entEdit.name?.trim()) return ElMessage.warning('请填写企业名称')
+  if (entEdit.userId && !/^\d{11}$/.test(String(entEdit.accountPhone || '').trim()) && entEdit.accountPhone !== 'admin') {
+    return ElMessage.warning('手机号必须为11位数字')
+  }
   await api.put(`/enterprise/${entEdit.id}`, {
     name: entEdit.name,
     creditCode: entEdit.creditCode,
@@ -1529,6 +1687,24 @@ function goHandle(row) {
 async function loadAudit() {
   auditLogs.value = await api.get('/audit/logs', { params: { action: auditAction.value || undefined, limit: 200 } })
 }
+function auditTargetName(type) {
+  return ({ DEMAND: '需求', ORDER: '订单', SOLUTION: '方案', STAGE: '工单', CONTRACT: '合同' })[type] || type || '—'
+}
+function auditTargetTag(type) {
+  return ({ DEMAND: '', ORDER: 'warning', SOLUTION: 'success', STAGE: 'info', CONTRACT: 'danger' })[type] || 'info'
+}
+function auditDetail(row) {
+  const raw = row?.afterJson
+  if (raw == null || raw === '') return ''
+  const s = String(raw).trim()
+  if (s.startsWith('{')) {
+    try {
+      const obj = JSON.parse(s)
+      if (obj && obj.detail != null && obj.detail !== '') return String(obj.detail)
+    } catch { /* 非 JSON 则原样 */ }
+  }
+  return s
+}
 async function openFactoryProfile(id) {
   factoryProfile.value = await api.get(`/enterprise/${id}/public-profile`)
   factoryProfileOpen.value = true
@@ -1569,7 +1745,7 @@ async function openInspect(row) {
       inspForm.keyDimensions = r.keyDimensions || ''
       inspForm.meetsRequirement = r.meetsRequirement !== false
       inspForm.remark = r.remark || ''
-      inspForm.quantityOk = (Number(inspForm.deliveredQty) || 0) >= agreed
+      inspForm.quantityOk = r.quantityOk != null ? !!r.quantityOk : ((Number(inspForm.deliveredQty) || 0) >= agreed)
     } catch { /* 无报告则用默认 */ }
   }
   inspOpen.value = true
@@ -1597,7 +1773,13 @@ async function submitInspect() {
 }
 async function approveInspectSheet() {
   if (!inspForm.result) return ElMessage.warning('请选择是否合格')
-  await approveInspect(inspTarget.value.id, { result: inspForm.result })
+  if (inspForm.quantityOk == null) return ElMessage.warning('请选择数量是否达标')
+  await approveInspect(inspTarget.value.id, {
+    ...inspForm,
+    failCount: (Number(inspForm.criticalFailCount) || 0) + (Number(inspForm.generalFailCount) || 0),
+    actualYield: inspActualYield.value,
+    meetsRequirement: inspForm.result === 'PASS',
+  })
   ElMessage.success(inspForm.result === 'PASS' ? '已审核可收款并通知买家支付本阶段费用' : '已审核为不合格，等待买家选择让步、返工或关闭')
   inspOpen.value = false
   loadStages().catch(ignore)
@@ -1611,6 +1793,12 @@ async function createUser() {
   await userFormRef.value.validate()
   await api.post('/auth/create-user', { ...userForm })
   ElMessage.success('账号已创建')
+}
+function onUserPhone(v) {
+  userForm.phone = String(v ?? '').replace(/\D/g, '').slice(0, 11)
+}
+function onEntPhone(v) {
+  entEdit.accountPhone = String(v ?? '').replace(/\D/g, '').slice(0, 11)
 }
 
 async function downloadPhoto(id) {
@@ -1637,6 +1825,10 @@ async function changePwd() {
 function logout() { localStorage.clear(); router.push('/login') }
 
 function ignore() { /* 接口错误已由 axios 拦截器提示 */ }
+
+watch(active, (v) => {
+  if (v !== 'funds') fundEnterprise.value = null
+})
 
 onMounted(() => {
   if (isInspector) {
@@ -1687,6 +1879,8 @@ onMounted(() => {
 }
 .toolbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
 .title { font-size:16px; font-weight:bold; }
+.audit-obj { display: inline-flex; align-items: center; gap: 8px; }
+.audit-obj-id { font-variant-numeric: tabular-nums; color: #303133; font-weight: 600; }
 .file-preview { white-space: pre-wrap; word-break: break-word; margin: 0; font-size: 13px; line-height: 1.6; }
 .hint { color: #909399; font-size: 12px; margin: 4px 0 8px; }
 .pwd-cell { display: inline-flex; align-items: center; gap: 6px; }
@@ -1721,4 +1915,21 @@ onMounted(() => {
 .total-bar strong { font-size: 16px; color: #303133; font-variant-numeric: tabular-nums; }
 .kpi { color:#909399; font-size:12px; }
 .kpi-v { font-size:18px; font-weight:600; margin-top:6px; }
+.trend-card { margin-bottom: 16px; }
+.trend-head { font-size: 14px; font-weight: 600; color: #303133; margin-bottom: 8px; }
+.trend-plot { display: flex; align-items: stretch; gap: 8px; }
+.trend-y {
+  width: 48px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  color: #909399;
+  font-size: 12px;
+  padding: 8px 0;
+  font-variant-numeric: tabular-nums;
+}
+.trend-plot-main { flex: 1; min-width: 0; }
+.trend-svg { width: 100%; height: 180px; background: #fafbfc; border-radius: 8px; display: block; }
+.trend-axis { display: flex; justify-content: space-between; color: #909399; font-size: 12px; margin-top: 6px; }
 </style>

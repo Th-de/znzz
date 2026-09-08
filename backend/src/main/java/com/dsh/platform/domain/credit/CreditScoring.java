@@ -103,7 +103,6 @@ public class CreditScoring {
         Long ref = inspectionId != null ? inspectionId : ws.getId();
         if (pass) {
             insert(ws.getTenantId(), QUALITY_PASS, 2, "INSPECTION", ref, "质检 PASS");
-            insert(ws.getTenantId(), STAGE_PASS, 0, "STAGE", ws.getId(), "质检通过，进入付款窗口");
         } else {
             insert(ws.getTenantId(), QUALITY_FAIL, -8, "INSPECTION", ref, "质检 FAIL");
             insert(ws.getTenantId(), HONESTY_INSPECT_FAIL, -3, "INSPECTION", ref, "质检不合格");
@@ -111,13 +110,9 @@ public class CreditScoring {
         refresh(ws.getTenantId());
     }
 
-    /** 让步后工单变为可收款，只开付款窗口，不再记一次 PASS 质量分。 */
+    /** 让步后工单变为可收款，只开付款窗口，不记信用事件。 */
     public void onConcessionPass(WorkStage ws) {
-        if (ws == null || ws.getTenantId() == null) {
-            return;
-        }
-        insert(ws.getTenantId(), STAGE_PASS, 0, "STAGE", ws.getId(), "让步接收，进入付款窗口");
-        refresh(ws.getTenantId());
+        // 付款是否及时改用工单进入可收款的时间（updatedAt）
     }
 
     public void onPaid(WorkStage ws, Long buyerId) {
@@ -431,6 +426,9 @@ public class CreditScoring {
     }
 
     private void insert(Long tenantId, String type, int change, String refType, Long refId, String remark) {
+        if (change == 0) {
+            return;
+        }
         if (tenantId == null || refId == null || hasEvent(tenantId, type, refType, refId)) {
             return;
         }

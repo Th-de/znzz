@@ -14,14 +14,6 @@
         :title="'近 90 天取消 ' + cancelStats.last90Days + ' 次'"
         style="margin-bottom:12px"
       />
-      <h3>待办</h3>
-      <el-empty v-if="!todos.length" description="暂无待办" :image-size="60" />
-      <div v-else class="todos">
-        <el-card v-for="t in todos" :key="t.type + t.link" shadow="hover" class="todo">
-          <div>{{ t.title }}</div>
-          <el-button type="primary" size="small" style="margin-top:8px" @click="$router.push(t.link)">去办理</el-button>
-        </el-card>
-      </div>
       <h3>我的需求</h3>
       <PagedBox :data="demands" v-slot="{ rows }">
       <el-table :data="rows" border>
@@ -127,6 +119,4 @@ onMounted(load)
 </script>
 
 <style scoped>
-.todos { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
-.todo { width: 260px; }
 </style>

@@ -24,5 +24,7 @@ public class FundFlow {
     private String idempotentNo;
     @TableField(exist = false)
     private String enterpriseName;
+    @TableField(exist = false)
+    private String demandTitle;
     private LocalDateTime createdAt;
 }

@@ -108,6 +108,7 @@ public class OrderService {
         demandMapper.updateById(d);
         siteNotify.send(d.getTenantId(), "方案已确认#" + demandId,
                 "需求「" + d.getTitle() + "」方案已确认，请按中标厂上传合同并签署。");
+        auditService.record("买家确认方案", "SOLUTION", solutionId, "需求#" + demandId + "「" + d.getTitle() + "」");
         dispatch(demandId);
     }
 
@@ -209,6 +210,52 @@ public class OrderService {
         }
         ws.setStatus("IN_PRODUCTION");
         workStageMapper.updateById(ws);
+        auditService.record("工厂开工", "STAGE", stageId, "工序「" + ws.getProcessName() + "」");
+    }
+
+    /** 运营手动开启该厂下一期（不等待分期开始时间），便于测试提交入口。 */
+    @Transactional
+    public void openNextPeriod(Long orderId, Long factoryId) {
+        Order o = orderMapper.selectById(orderId);
+        if (o == null) {
+            throw new BizException("订单不存在");
+        }
+        if (factoryId == null) {
+            throw new BizException("工厂不能为空");
+        }
+        if (!contractService.isSigned(orderId, factoryId)) {
+            throw new BizException("该厂合同尚未确认签署，不能开下一期");
+        }
+        List<WorkStage> list = workStageMapper.selectList(new LambdaQueryWrapper<WorkStage>()
+                .eq(WorkStage::getOrderId, orderId)
+                .eq(WorkStage::getTenantId, factoryId)
+                .orderByAsc(WorkStage::getPeriodNo)
+                .orderByAsc(WorkStage::getId));
+        WorkStage next = null;
+        for (WorkStage ws : list) {
+            String st = ws.getStatus();
+            if ("WAITING_OPEN".equals(st) || "PENDING".equals(st)) {
+                next = ws;
+                break;
+            }
+        }
+        if (next == null) {
+            throw new BizException("该厂没有等待开启的下一期");
+        }
+        next.setPeriodStart(LocalDateTime.now());
+        next.setStatus("IN_PRODUCTION");
+        next.setUpdatedAt(LocalDateTime.now());
+        workStageMapper.updateById(next);
+        int no = next.getPeriodNo() == null ? 0 : next.getPeriodNo();
+        siteNotify.send(factoryId, "下一期已开启#" + next.getId(),
+                "运营已开启第" + no + "期提交入口，可上报进度与交付。");
+        Demand d = demandMapper.selectById(o.getDemandId());
+        if (d != null) {
+            siteNotify.send(d.getTenantId(), "工厂进入下一期#" + o.getId(),
+                    "工厂已可提交第" + no + "期。");
+        }
+        auditService.record("开启下一期工单", "STAGE", next.getId(),
+                "工厂" + factoryId + " 第" + no + "期");
     }
 
     @Transactional
@@ -325,6 +372,8 @@ public class OrderService {
         ws.setUpdatedAt(java.time.LocalDateTime.now());
         enterInspectPay(ws, o, d);
         creditScoring.onDeliver(ws);
+        auditService.record("工厂交付", "STAGE", stageId,
+                "工序「" + ws.getProcessName() + "」实交" + delivered);
     }
 
     private void activateIfWindowOpen(WorkStage ws) {
@@ -381,11 +430,8 @@ public class OrderService {
             throw new BizException(403, "请由质检方填写质检单");
         }
         int agreed = ws.getQuantity() == null ? 0 : ws.getQuantity();
-        int delivered = nvlInt(ws.getDeliveredQty());
-        if (delivered <= 0) {
-            throw new BizException("工厂尚未登记实交件数，不能质检");
-        }
-        boolean qtyOk = delivered >= agreed;
+        int delivered = resolveDeliveredQty(ws, req.deliveredQty());
+        boolean qtyOk = req.quantityOk() != null ? req.quantityOk() : delivered >= agreed;
         int dc = nvlInt(req.criticalFailCount());
         int dg = nvlInt(req.generalFailCount());
         int n = nvlInt(req.sampleCount());
@@ -474,15 +520,23 @@ public class OrderService {
             throw new BizException("质检方尚未提交质检单");
         }
         Map<String, Object> report = readReport(ins.getReportJson());
-        int dc = mapInt(report, "criticalFailCount");
-        int dg = mapInt(report, "generalFailCount");
-        int n = mapInt(report, "sampleCount");
-        boolean qtyOk = Boolean.TRUE.equals(report.get("quantityOk"));
+        int agreed = ws.getQuantity() == null ? 0 : ws.getQuantity();
+        int delivered = resolveDeliveredQty(ws, req.deliveredQty());
+        int dc = req.criticalFailCount() != null ? nvlInt(req.criticalFailCount()) : mapInt(report, "criticalFailCount");
+        int dg = req.generalFailCount() != null ? nvlInt(req.generalFailCount()) : mapInt(report, "generalFailCount");
+        int n = req.sampleCount() != null ? nvlInt(req.sampleCount()) : mapInt(report, "sampleCount");
+        boolean qtyOk = req.quantityOk() != null ? req.quantityOk() : Boolean.TRUE.equals(report.get("quantityOk"));
         Order o = orderMapper.selectById(ws.getOrderId());
         Demand d = o == null ? null : demandMapper.selectById(o.getDemandId());
-        int delivered = nvlInt(ws.getDeliveredQty());
         String mode = d == null ? null : d.getInspectMode();
         AqlPlans.Plan aqlPlan = InspectPrices.includesAql(mode) ? AqlPlans.plan(delivered, d.getAql()) : null;
+        int need = InspectRules.requiredSample(mode, d == null ? null : d.getAql(), agreed, delivered);
+        if (n < need) {
+            throw new BizException("抽检数不能少于规定的 " + need + " 件");
+        }
+        if (dc + dg > n) {
+            throw new BizException("不合格件数不能超过抽检数");
+        }
         BigDecimal minY = aqlPlan != null ? null : (d == null || d.getMinYield() == null ? BigDecimal.ZERO : d.getMinYield());
         BigDecimal y = InspectRules.yield(n, dc, dg);
         boolean toleranceOk = InspectRules.tolerancePass(mode, dc, dg, y, minY, aqlPlan);
@@ -492,10 +546,22 @@ public class OrderService {
             throw new BizException("是否合格须与检验数据一致：数量达标且公差合格才为合格");
         }
         ins.setResult(result);
+        report.put("sampleCount", n);
+        report.put("failCount", dc + dg);
+        report.put("criticalFailCount", dc);
+        report.put("generalFailCount", dg);
+        report.put("deliveredQty", delivered);
+        report.put("quantityOk", qtyOk);
+        report.put("actualYield", y);
         report.put("meetsRequirement", pass);
         report.put("toleranceOk", toleranceOk);
         if (minY != null) {
             report.put("minYield", minY);
+        }
+        if (aqlPlan != null && d != null) {
+            report.put("aql", d.getAql());
+            report.put("aqlAc", aqlPlan.ac());
+            report.put("aqlRe", aqlPlan.re());
         }
         String reportJson = writeJson(report);
         ins.setReportJson(reportJson);
@@ -927,6 +993,7 @@ public class OrderService {
         creditScoring.applyOnComplete(o);
         siteNotify.send(d.getTenantId(), "订单已完成#" + orderId, "完工确认完成，工厂工钱已结算，平台佣金已从托管工钱扣除。");
         byFactory.keySet().forEach(fid -> siteNotify.send(fid, "订单已结算#" + orderId, "工钱已到账，佣金已从托管工钱扣除，剩余保证金已退回。"));
+        auditService.record("买家完工确认", "ORDER", orderId, "需求#" + d.getId() + "「" + d.getTitle() + "」已结算");
     }
 
     @Transactional
@@ -1073,6 +1140,15 @@ public class OrderService {
 
     private BigDecimal stageAmount(WorkStage ws) {
         return ws.getAmount() == null ? BigDecimal.ZERO : ws.getAmount();
+    }
+
+    private int resolveDeliveredQty(WorkStage ws, Integer requested) {
+        int delivered = requested != null && requested > 0 ? requested : nvlInt(ws.getDeliveredQty());
+        if (delivered <= 0) {
+            throw new BizException("请填写实交件数");
+        }
+        ws.setDeliveredQty(delivered);
+        return delivered;
     }
 
     private static int nvlInt(Integer v) {

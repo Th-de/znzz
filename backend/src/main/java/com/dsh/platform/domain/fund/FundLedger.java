@@ -254,6 +254,35 @@ public class FundLedger {
                 "DEPOSIT-FREEZE-" + q.getId());
         q.setDepositStatus("FROZEN");
         quotationMapper.updateById(q);
+        releaseIntentionAfterDeposit(q);
+    }
+
+    /** 冻结履约保证金后释放该厂本单意向金，不改变报价/中标状态。 */
+    private void releaseIntentionAfterDeposit(Quotation q) {
+        if (q.getDemandId() == null || q.getTenantId() == null) {
+            return;
+        }
+        List<Quotation> mine = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
+                .eq(Quotation::getDemandId, q.getDemandId())
+                .eq(Quotation::getTenantId, q.getTenantId()));
+        boolean paid = false;
+        for (Quotation each : mine) {
+            if ("FROZEN".equals(each.getIntentionStatus()) && !paid) {
+                String key = "INTENTION-UNFREEZE-DEPOSIT-" + each.getDemandId() + "-" + each.getTenantId();
+                Long exists = fundFlowMapper.selectCount(new LambdaQueryWrapper<FundFlow>()
+                        .eq(FundFlow::getIdempotentNo, key));
+                BigDecimal amt = freezeAmount(each, "INTENTION");
+                if ((exists == null || exists == 0) && amt.compareTo(BigDecimal.ZERO) > 0) {
+                    accountService.unfreeze(each.getTenantId(), amt);
+                    write("INTENTION", "UNFREEZE", amt, each.getDemandId(), each.getTenantId(), null, key);
+                }
+                paid = true;
+            }
+            if ("FROZEN".equals(each.getIntentionStatus()) || "COVERED".equals(each.getIntentionStatus())) {
+                each.setIntentionStatus("RELEASED");
+                quotationMapper.updateById(each);
+            }
+        }
     }
 
     public void escrowStage(Long orderId, Long stageId, Long buyerTenantId, BigDecimal amount) {

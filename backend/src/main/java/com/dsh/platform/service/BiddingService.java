@@ -48,6 +48,7 @@ public class BiddingService {
     private final SiteNotify siteNotify;
     private final PaymentChannel paymentChannel;
     private final DeviceService deviceService;
+    private final AuditService auditService;
     private final OrderMapper orderMapper;
     private final ContractMapper contractMapper;
     private final AttachmentMapper attachmentMapper;
@@ -199,7 +200,8 @@ public class BiddingService {
         siteNotify.send(d.getTenantId(), "工厂已填报#" + d.getId(),
                 "需求「" + d.getTitle() + "」有工厂完成思考期填报（详情在方案核定期可见）。");
         siteNotify.send(UserContext.tenantId(), "报价已提交#" + d.getId(),
-                "你已提交需求「" + d.getTitle() + "」的报价与实施方案，保证金已冻结。");
+                "你已提交需求「" + d.getTitle() + "」的报价与实施方案，保证金已冻结，意向金已退回。");
+        auditService.record("工厂提交报价", "DEMAND", d.getId(), "「" + d.getTitle() + "」保证金已冻结，意向金已退回");
     }
 
     /** 工厂思考期退出：不参加，退回意向金。 */
@@ -224,6 +226,7 @@ public class BiddingService {
                 "需求「" + d.getTitle() + "」有报名工厂在思考期退出，意向金已退回该厂。");
         siteNotify.send(UserContext.tenantId(), "已取消报价#" + demandId,
                 "你已退出需求「" + d.getTitle() + "」的工厂思考期，意向金已退回。");
+        auditService.record("工厂思考期退出", "DEMAND", demandId, "「" + d.getTitle() + "」意向金已退回");
     }
 
     @Transactional
@@ -277,6 +280,7 @@ public class BiddingService {
                 "你已报名需求「" + d.getTitle() + "」，意向金已冻结。意向期只能报名，思考期开始后才可填报报价。");
         siteNotify.send(d.getTenantId(), "工厂已报名#" + d.getId(),
                 "需求「" + d.getTitle() + "」有工厂完成意向报名。" + coverageService.unsatisfiedText(view));
+        auditService.record("工厂报名", "DEMAND", d.getId(), "「" + d.getTitle() + "」意向金已冻结");
     }
 
     /** 取消报名：意向金按单收，一并取消该需求下本厂全部工序报名。 */
@@ -303,6 +307,7 @@ public class BiddingService {
                     "你已取消需求「" + d.getTitle() + "」的意向报名，意向金已退回。意向期内可重新报名。");
             siteNotify.send(d.getTenantId(), "工厂取消报名#" + d.getId(),
                     "需求「" + d.getTitle() + "」有工厂取消意向报名。" + coverageService.unsatisfiedText(view));
+            auditService.record("工厂取消报名", "DEMAND", d.getId(), "「" + d.getTitle() + "」意向金已退回");
         }
     }
 
@@ -321,6 +326,7 @@ public class BiddingService {
                 "你已取消需求「" + d.getTitle() + "」的锁定报价，保证金已按规则扣除。");
         siteNotify.send(d.getTenantId(), "工厂取消锁定报价#" + d.getId(),
                 "需求「" + d.getTitle() + "」有工厂取消锁定报价。");
+        auditService.record("工厂取消锁定报价", "DEMAND", d.getId(), "「" + d.getTitle() + "」保证金已按规则扣除");
     }
 
     @Transactional
@@ -351,7 +357,7 @@ public class BiddingService {
         quotationMapper.updateById(q);
         fundLedger.freezeDeposit(q, req.price().multiply(depositRate));
         siteNotify.send(UserContext.tenantId(), "已锁定报价#" + d.getId(),
-                "你已锁定需求「" + d.getTitle() + "」的报价，保证金已冻结。");
+                "你已锁定需求「" + d.getTitle() + "」的报价，保证金已冻结，意向金已退回。");
         siteNotify.send(d.getTenantId(), "工厂已锁定报价#" + d.getId(),
                 "需求「" + d.getTitle() + "」有工厂完成锁定报价。");
         return q.getId();

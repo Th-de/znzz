@@ -24,6 +24,18 @@ public class FundController {
         return R.ok(fundQueryService.overview());
     }
 
+    @GetMapping("/trend")
+    @PreAuthorize("hasAnyRole('OPERATOR','SUPER_ADMIN')")
+    public R<List<Map<String, Object>>> trend() {
+        return R.ok(fundQueryService.trend(30));
+    }
+
+    @GetMapping("/tenant/{tenantId}")
+    @PreAuthorize("hasAnyRole('OPERATOR','SUPER_ADMIN')")
+    public R<Map<String, Object>> byTenant(@PathVariable Long tenantId) {
+        return R.ok(fundQueryService.byTenant(tenantId));
+    }
+
     @GetMapping("/by-demand")
     @PreAuthorize("hasAnyRole('OPERATOR','SUPER_ADMIN')")
     public R<List<Map<String, Object>>> byDemand() {

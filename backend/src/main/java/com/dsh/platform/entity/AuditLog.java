@@ -23,4 +23,7 @@ public class AuditLog {
     private LocalDateTime createdAt;
     @TableField(exist = false)
     private String actorName;
+    /** 对象类型中文名，如「需求」「订单」 */
+    @TableField(exist = false)
+    private String targetLabel;
 }

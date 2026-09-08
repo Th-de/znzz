@@ -7,14 +7,12 @@ import com.dsh.platform.domain.notify.NotifyDemandService;
 import com.dsh.platform.dto.NotifyDemandRow;
 import com.dsh.platform.dto.NotifyView;
 import com.dsh.platform.dto.OrderDtos.TodoItem;
-import com.dsh.platform.service.TodoService;
 import com.dsh.platform.entity.CreditEvent;
-import com.dsh.platform.entity.Enterprise;
+import com.dsh.platform.service.CreditQueryService;
+import com.dsh.platform.service.FundQueryService;
+import com.dsh.platform.service.TodoService;
 import com.dsh.platform.entity.FundFlow;
 import com.dsh.platform.entity.Notify;
-import com.dsh.platform.mapper.CreditEventMapper;
-import com.dsh.platform.mapper.EnterpriseMapper;
-import com.dsh.platform.mapper.FundFlowMapper;
 import com.dsh.platform.mapper.NotifyMapper;
 import com.dsh.platform.security.UserContext;
 import lombok.RequiredArgsConstructor;
@@ -28,12 +26,11 @@ import java.util.List;
 public class NotifyController {
 
     private final NotifyMapper notifyMapper;
-    private final FundFlowMapper fundFlowMapper;
-    private final EnterpriseMapper enterpriseMapper;
-    private final CreditEventMapper creditEventMapper;
     private final NotifyActionResolver notifyActionResolver;
     private final NotifyDemandService notifyDemandService;
     private final TodoService todoService;
+    private final FundQueryService fundQueryService;
+    private final CreditQueryService creditQueryService;
 
     @GetMapping("/todos")
     public R<List<TodoItem>> todos() {
@@ -56,27 +53,17 @@ public class NotifyController {
 
     @GetMapping("/funds")
     public R<List<FundFlow>> funds() {
-        return R.ok(fundFlowMapper.selectList(new LambdaQueryWrapper<FundFlow>()
-                .eq(FundFlow::getTenantId, UserContext.tenantId())
-                .orderByDesc(FundFlow::getId)));
+        return R.ok(fundQueryService.mine(UserContext.tenantId()));
     }
 
     @GetMapping("/credits")
     public R<List<CreditEvent>> credits() {
-        return R.ok(creditEventMapper.selectList(new LambdaQueryWrapper<CreditEvent>()
-                .eq(CreditEvent::getTenantId, UserContext.tenantId())
-                .orderByDesc(CreditEvent::getId)));
+        return R.ok(creditQueryService.mine(UserContext.tenantId()));
     }
 
     @GetMapping("/all-funds")
     @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('OPERATOR','SUPER_ADMIN')")
     public R<List<FundFlow>> allFunds() {
-        List<FundFlow> list = fundFlowMapper.selectList(new LambdaQueryWrapper<FundFlow>()
-                .orderByDesc(FundFlow::getId));
-        for (FundFlow f : list) {
-            Enterprise e = f.getTenantId() == null ? null : enterpriseMapper.selectById(f.getTenantId());
-            f.setEnterpriseName(e == null ? "" : e.getName());
-        }
-        return R.ok(list);
+        return R.ok(fundQueryService.all());
     }
 }

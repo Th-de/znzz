@@ -32,7 +32,7 @@ public class AuthService {
             throw new BizException("请填写注册信息");
         }
         if (!validPhone(req.phone())) {
-            throw new BizException("请填写11位手机号");
+            throw new BizException("手机号必须为11位数字");
         }
         if (!StringUtils.hasText(req.password()) || req.password().length() < 6) {
             throw new BizException("密码至少 6 位");
@@ -104,8 +104,8 @@ public class AuthService {
         if (req == null) {
             throw new BizException("请填写账号信息");
         }
-        if (!StringUtils.hasText(req.phone())) {
-            throw new BizException("请填写手机号");
+        if (!validPhone(req.phone())) {
+            throw new BizException("手机号必须为11位数字");
         }
         if (!StringUtils.hasText(req.password()) || req.password().length() < 6) {
             throw new BizException("密码至少 6 位");
@@ -257,6 +257,6 @@ public class AuthService {
     }
 
     private static boolean validPhone(String phone) {
-        return phone != null && phone.trim().matches("^1\\d{10}$");
+        return phone != null && phone.trim().matches("^\\d{11}$");
     }
 }

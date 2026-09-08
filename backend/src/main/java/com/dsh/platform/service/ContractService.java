@@ -169,6 +169,7 @@ public class ContractService {
         contractMapper.updateById(c);
         touchFactoryQuotes(o.getDemandId(), factoryTenantId);
         maybeOpenSignWindow(o);
+        auditService.record("买家上传合同", "CONTRACT", c.getId(), "订单#" + orderId + " 工厂#" + factoryTenantId);
     }
 
     private void maybeOpenSignWindow(Order o) {
@@ -295,6 +296,7 @@ public class ContractService {
                         fname + " 已完成合同签字，请在需求详情确认。全部工厂签完后可确认并开始派单。");
             }
         }
+        auditService.record("工厂签署合同", "CONTRACT", c.getId(), "订单#" + orderId);
     }
 
     @Transactional

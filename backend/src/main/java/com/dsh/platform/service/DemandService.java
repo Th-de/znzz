@@ -68,6 +68,7 @@ public class DemandService {
         if (req.attachmentId() != null) {
             fileService.bind(req.attachmentId(), "DEMAND", d.getId());
         }
+        auditService.record("买家申请发布", "DEMAND", d.getId(), "「" + d.getTitle() + "」提交审核");
         return d.getId();
     }
 
@@ -91,6 +92,7 @@ public class DemandService {
         if (req.attachmentId() != null) {
             fileService.bind(req.attachmentId(), "DEMAND", d.getId());
         }
+        auditService.record("买家再次提交审核", "DEMAND", d.getId(), "「" + d.getTitle() + "」");
         return d.getId();
     }
 
@@ -128,6 +130,7 @@ public class DemandService {
             siteNotify.send(d.getTenantId(), "需求已取消#" + demandId,
                     "需求「" + d.getTitle() + "」已取消。" + (StringUtils.hasText(d.getCancelReason())
                             ? "原因：" + d.getCancelReason() : ""));
+            auditService.record("买家取消需求", "DEMAND", demandId, "「" + d.getTitle() + "」" + d.getCancelReason());
             return;
         }
         if (st != DemandStatus.PUBLISHED) {
@@ -145,6 +148,7 @@ public class DemandService {
                 "需求「" + d.getTitle() + "」已取消。" + (StringUtils.hasText(d.getCancelReason())
                         ? "原因：" + d.getCancelReason() : ""));
         fundLedger.unfreezeIntentionsOfDemand(demandId);
+        auditService.record("买家取消需求", "DEMAND", demandId, "「" + d.getTitle() + "」" + d.getCancelReason());
     }
 
     private void notifyActiveFactories(Demand d, String title, String content) {

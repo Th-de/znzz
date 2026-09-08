@@ -17,7 +17,9 @@
         </el-tab-pane>
         <el-tab-pane label="注册" name="register">
           <el-form ref="regRef" :model="regForm" :rules="regRules" label-width="90px">
-            <el-form-item label="手机号" prop="phone"><el-input v-model="regForm.phone" maxlength="11" /></el-form-item>
+            <el-form-item label="手机号" prop="phone">
+              <el-input v-model="regForm.phone" maxlength="11" placeholder="11位手机号" @input="onRegPhone" />
+            </el-form-item>
             <el-form-item label="密码" prop="password"><el-input v-model="regForm.password" type="password" show-password /></el-form-item>
             <el-form-item label="企业名称" prop="companyName"><el-input v-model="regForm.companyName" /></el-form-item>
             <el-form-item label="信用代码" prop="creditCode"><el-input v-model="regForm.creditCode" maxlength="18" placeholder="18位统一社会信用代码" /></el-form-item>
@@ -56,7 +58,7 @@ const loginRules = {
 const regRules = {
   phone: [
     { required: true, message: '请填写手机号', trigger: 'blur' },
-    { pattern: /^1\d{10}$/, message: '请填写11位手机号', trigger: 'blur' },
+    { pattern: /^\d{11}$/, message: '手机号必须为11位数字', trigger: ['blur', 'change'] },
   ],
   password: [
     { required: true, message: '请填写密码', trigger: 'blur' },
@@ -91,6 +93,10 @@ async function doRegister() {
   ElMessage.success('注册成功，请登录')
   tab.value = 'login'
   loginForm.phone = regForm.phone
+}
+
+function onRegPhone(v) {
+  regForm.phone = String(v ?? '').replace(/\D/g, '').slice(0, 11)
 }
 </script>
 
