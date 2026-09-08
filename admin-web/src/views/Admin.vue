@@ -57,7 +57,10 @@
           <template v-else>
             <el-table-column prop="quantity" label="数量" width="100" />
             <el-table-column prop="status" label="当前状态" width="170">
-              <template #default="{row}"><el-tag :type="tagType(row.status)">{{ statusText(row.status) }}</el-tag></template>
+              <template #default="{row}">
+                <el-tag v-if="demandTab==='fulfill' && row.pendingReview" type="danger">待审核</el-tag>
+                <el-tag v-else :type="tagType(row.status)">{{ statusText(row.status) }}</el-tag>
+              </template>
             </el-table-column>
             <el-table-column label="提交时间" width="160">
               <template #default="{row}">{{ fmtTime(row.createdAt) }}</template>
@@ -82,7 +85,7 @@
               <el-button v-if="row.status==='REVIEWING'" size="small" type="primary" @click="review(row,true)">同意取消</el-button>
               <el-button v-if="row.status==='REVIEWING'" size="small" type="danger" @click="review(row,false)">驳回取消</el-button>
               <el-button v-if="row.status==='LOCKING'" size="small" type="warning" @click="endLocking(row)">结束保证金期</el-button>
-              <el-tag v-if="['THINKING','BUYER_THINKING','SOLUTION_CONFIRMED','SOLUTION_SELECTED','CONTRACTED','IN_PRODUCTION','COMPLETED','CANCELLED','FLOW_FAILED','RETURNED'].includes(row.status)" type="info" size="small">{{ row.status==='RETURNED' ? '待买家修改' : (row.status==='BUYER_THINKING' ? '等待买家决定' : (row.status==='SOLUTION_SELECTED' || row.status==='SOLUTION_CONFIRMED' ? '等待买家签署合同' : '等待其他角色操作')) }}</el-tag>
+              <el-tag v-if="['THINKING','BUYER_THINKING','SOLUTION_CONFIRMED','SOLUTION_SELECTED','CONTRACTED','IN_PRODUCTION','COMPLETED','CANCELLED','FLOW_FAILED','RETURNED'].includes(row.status) && !row.pendingReview" type="info" size="small">{{ row.status==='RETURNED' ? '待买家修改' : (row.status==='BUYER_THINKING' ? '等待买家决定' : (row.status==='SOLUTION_SELECTED' || row.status==='SOLUTION_CONFIRMED' ? '等待买家签署合同' : '等待其他角色操作')) }}</el-tag>
               </div>
             </template>
           </el-table-column>
@@ -130,7 +133,7 @@
         </PagedBox>
       </div>
 
-        <el-drawer v-model="detailOpen" title="需求详情" size="860px" append-to-body>
+        <el-drawer v-model="detailOpen" title="需求详情" size="70%" append-to-body>
           <el-alert v-if="detail.demand?.returnReason" type="warning" :closable="false" :title="'退回原因：' + detail.demand.returnReason" style="margin-bottom:12px" />
           <el-steps :active="detailStep" finish-status="success" align-center style="margin-bottom:16px">
             <el-step title="申请发布" />
@@ -142,8 +145,8 @@
           <div v-if="detailReached(3)" style="margin-bottom:16px">
             <h4>生产与质检 {{ detailProgress }}%</h4>
             <el-progress :percentage="detailProgress" style="margin-bottom:10px" />
-            <p class="hint">运营仅查看进度，并审核质检员提交的结果。不代替买家付款或评价。测试可用「进入下一阶段」开启该厂下一期提交入口。</p>
-            <el-table :data="detailStageGroups" border size="small" row-key="key">
+            <p class="hint">工单状态含待交质检费、质检中、结算中。返工工单显示在对应工期下一行。运营审核质检员已提交的结果，不代替买家付款。</p>
+            <el-table :data="detailStageGroups" border size="small" row-key="key" :expand-row-keys="detailExpandKeys" @expand-change="onDetailExpand">
               <el-table-column type="expand">
                 <template #default="{ row }">
                   <el-table :data="row.children" border size="small">
@@ -152,6 +155,22 @@
                     </el-table-column>
                     <el-table-column label="数量" width="90">
                       <template #default="{ row: p }">{{ p.quantity != null ? p.quantity + ' 件' : '-' }}</template>
+                    </el-table-column>
+                    <el-table-column label="开始" width="108">
+                      <template #default="{ row: p }">
+                        <div class="dt-2">
+                          <div>{{ fmtDateLine(p.periodStart) }}</div>
+                          <div v-if="fmtTimeLine(p.periodStart)" class="dt-clock">{{ fmtTimeLine(p.periodStart) }}</div>
+                        </div>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="截止" width="108">
+                      <template #default="{ row: p }">
+                        <div class="dt-2">
+                          <div>{{ fmtDateLine(p.periodEnd || p.promisedDate) }}</div>
+                          <div v-if="fmtTimeLine(p.periodEnd || p.promisedDate)" class="dt-clock">{{ fmtTimeLine(p.periodEnd || p.promisedDate) }}</div>
+                        </div>
+                      </template>
                     </el-table-column>
                     <el-table-column label="进度" width="150">
                       <template #default="{ row: p }">
@@ -164,20 +183,36 @@
                     <el-table-column label="托管" width="90">
                       <template #default="{ row: p }">{{ label(ESCROW_STATUS, p.escrowStatus) }}</template>
                     </el-table-column>
-                    <el-table-column label="状态" width="110">
-                      <template #default="{ row: p }">{{ label(STAGE_STATUS, p.status) }}</template>
+                    <el-table-column label="状态" width="120">
+                      <template #default="{ row: p }">{{ stageProgressLabel(p) }}</template>
                     </el-table-column>
                     <el-table-column label="操作" min-width="200">
                       <template #default="{ row: p }">
                         <el-button size="small" @click="openProgress(p)">进度记录</el-button>
                         <el-button v-if="p.status==='PENDING_REVIEW'" size="small" type="warning" @click="openInspect(p)">审核质检</el-button>
-                        <el-button v-else-if="['PASS','FAIL','CLOSED','COMPLETED','PENDING_INSPECTION','PENDING_INSPECT_PAY'].includes(p.status)" size="small" @click="openInspect(p)">质检结果</el-button>
+                        <el-button v-else-if="canShowInspectReport(p)" size="small" @click="openInspect(p)">质检结果</el-button>
                       </template>
                     </el-table-column>
                   </el-table>
                 </template>
               </el-table-column>
               <el-table-column prop="factoryName" label="工厂" min-width="160" />
+              <el-table-column label="开始" width="108">
+                <template #default="{ row }">
+                  <div class="dt-2">
+                    <div>{{ fmtDateLine(row.spanStart) }}</div>
+                    <div v-if="fmtTimeLine(row.spanStart)" class="dt-clock">{{ fmtTimeLine(row.spanStart) }}</div>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="截止" width="108">
+                <template #default="{ row }">
+                  <div class="dt-2">
+                    <div>{{ fmtDateLine(row.spanEnd) }}</div>
+                    <div v-if="fmtTimeLine(row.spanEnd)" class="dt-clock">{{ fmtTimeLine(row.spanEnd) }}</div>
+                  </div>
+                </template>
+              </el-table-column>
               <el-table-column label="承接总数" width="110">
                 <template #default="{ row }">{{ row.totalQty }} 件</template>
               </el-table-column>
@@ -238,8 +273,10 @@
             </el-collapse-item>
           </el-collapse>
           <div v-if="detailReached(1)">
+          <template v-if="showCoverage">
           <h4>零件覆盖</h4>
           <CoverageBars :items="coverage" />
+          </template>
           <h4>报名与报价（工厂）</h4>
           <el-empty v-if="!(detail.factories || []).length" description="暂无工厂报名" :image-size="56" />
           <el-table v-else :data="detail.factories" border size="small">
@@ -417,9 +454,7 @@
           <el-table-column label="操作" width="120">
             <template #default="{ row }">
               <el-button v-if="isInspector && row.status==='PENDING_INSPECTION'" size="small" type="primary" @click="openInspect(row)">填写质检</el-button>
-              <el-button v-else-if="!isInspector && row.status==='PENDING_INSPECT_PAY'" size="small" disabled>待付质检费</el-button>
-              <el-button v-else-if="!isInspector && row.status==='PENDING_REVIEW'" size="small" type="warning" @click="openInspect(row)">审核</el-button>
-              <el-button v-else-if="['PASS','FAIL','CLOSED','COMPLETED'].includes(row.status)" size="small" type="primary" @click="openInspect(row)">质检结果</el-button>
+              <el-button v-else-if="canShowInspectReport(row)" size="small" type="primary" @click="openInspect(row)">质检结果</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -502,10 +537,23 @@
               <span v-for="(t, i) in fundTrendPoints.yTicks.slice().reverse()" :key="i">{{ t }}</span>
             </div>
             <div class="trend-plot-main">
-              <svg class="trend-svg" viewBox="0 0 640 180" preserveAspectRatio="none">
-                <line v-for="(y, i) in fundTrendPoints.gridYs" :key="'g'+i" x1="0" :y1="y" x2="640" :y2="y" stroke="#ebeef5" stroke-width="1" />
-                <polyline :points="fundTrendPoints.line" fill="none" stroke="#2B6BFF" stroke-width="2.5" stroke-linejoin="round" />
-              </svg>
+              <div class="trend-svg-wrap" @mousemove="onTrendMove" @mouseleave="fundTrendHover = null">
+                <svg class="trend-svg" viewBox="0 0 640 180" preserveAspectRatio="none">
+                  <line v-for="(y, i) in fundTrendPoints.gridYs" :key="'g'+i" x1="0" :y1="y" x2="640" :y2="y" stroke="#ebeef5" stroke-width="1" />
+                  <line v-if="fundTrendHover" :x1="fundTrendHover.x" :x2="fundTrendHover.x" y1="0" y2="180" stroke="#2B6BFF" stroke-width="1" stroke-dasharray="3 3" />
+                  <polyline :points="fundTrendPoints.line" fill="none" stroke="#2B6BFF" stroke-width="2.5" stroke-linejoin="round" />
+                  <circle v-for="(p, i) in fundTrendPoints.dots" :key="'d'+i" :cx="p.x" :cy="p.y" r="3" fill="#2B6BFF" />
+                  <circle v-if="fundTrendHover" :cx="fundTrendHover.x" :cy="fundTrendHover.y" r="5" fill="#fff" stroke="#2B6BFF" stroke-width="2" />
+                </svg>
+                <div
+                  v-if="fundTrendHover"
+                  class="trend-tip"
+                  :style="{ left: fundTrendHover.xPct + '%', transform: fundTrendHover.xPct > 85 ? 'translateX(-100%)' : (fundTrendHover.xPct < 15 ? 'translateX(0)' : 'translateX(-50%)') }"
+                >
+                  <div>{{ fundTrendHover.dateLabel }}</div>
+                  <div class="trend-tip-amt">¥ {{ fmtAmt(fundTrendHover.amount) }}</div>
+                </div>
+              </div>
               <div class="trend-axis">
                 <span v-for="(t, i) in fundTrendAxis" :key="i">{{ t }}</span>
               </div>
@@ -521,8 +569,12 @@
           <el-col :span="4"><el-card shadow="never"><div class="kpi">平台余额</div><div class="kpi-v">¥ {{ fundOverview.platformBalance || 0 }}</div></el-card></el-col>
         </el-row>
         <el-tabs v-model="fundTab">
-          <el-tab-pane label="需求流水" name="byDemand">
-            <PagedBox v-if="fundByDemand.length" :data="fundByDemand" v-slot="{ rows }">
+          <el-tab-pane label="需求流水" name="byDemand" />
+          <el-tab-pane label="买家流水" name="buyers" />
+          <el-tab-pane label="工厂流水" name="factories" />
+        </el-tabs>
+        <div v-if="fundTab==='byDemand'">
+          <PagedBox v-if="fundByDemand.length" :data="fundByDemand" v-slot="{ rows }">
             <el-collapse>
               <el-collapse-item v-for="g in rows" :key="g.demandId" :title="'#' + g.demandId + ' ' + (g.demandTitle || '') + ' · 小计 ¥' + g.subtotal">
                 <el-table :data="g.flows" border size="small">
@@ -536,40 +588,45 @@
                 </el-table>
               </el-collapse-item>
             </el-collapse>
-            </PagedBox>
-            <el-empty v-else description="暂无需求流水" :image-size="60" />
-          </el-tab-pane>
-          <el-tab-pane label="买家流水" name="buyers">
-            <PagedBox :data="fundBuyers" v-slot="{ rows }">
-            <el-table :data="rows" border>
+          </PagedBox>
+          <el-empty v-else description="暂无需求流水" :image-size="60" />
+        </div>
+        <div v-else-if="fundTab==='buyers'">
+          <PagedBox :data="fundBuyers" v-slot="{ rows }">
+            <el-table :key="'buyers-'+rows.length" :data="rows" border>
               <el-table-column prop="tenantId" label="企业ID" width="80" />
               <el-table-column prop="enterpriseName" label="企业" min-width="160" />
               <el-table-column prop="balance" label="可用余额" width="120" />
               <el-table-column prop="frozen" label="冻结" width="120" />
-              <el-table-column label="操作" width="120">
+              <el-table-column label="总流水" width="140">
+                <template #default="{ row }">{{ fmtAmt(enterpriseTotalFlow(row)) }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="120" fixed="right">
                 <template #default="{ row }">
                   <el-button size="small" type="primary" @click="openFundEnterprise(row)">流水详情</el-button>
                 </template>
               </el-table-column>
             </el-table>
-            </PagedBox>
-          </el-tab-pane>
-          <el-tab-pane label="工厂流水" name="factories">
-            <PagedBox :data="fundFactories" v-slot="{ rows }">
-            <el-table :data="rows" border>
+          </PagedBox>
+        </div>
+        <div v-else>
+          <PagedBox :data="fundFactories" v-slot="{ rows }">
+            <el-table :key="'factories-'+rows.length" :data="rows" border>
               <el-table-column prop="tenantId" label="企业ID" width="80" />
               <el-table-column prop="enterpriseName" label="企业" min-width="160" />
               <el-table-column prop="balance" label="可用余额" width="120" />
               <el-table-column prop="frozen" label="冻结" width="120" />
-              <el-table-column label="操作" width="120">
+              <el-table-column label="总流水" width="140">
+                <template #default="{ row }">{{ fmtAmt(enterpriseTotalFlow(row)) }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="120" fixed="right">
                 <template #default="{ row }">
                   <el-button size="small" type="primary" @click="openFundEnterprise(row)">流水详情</el-button>
                 </template>
               </el-table-column>
             </el-table>
-            </PagedBox>
-          </el-tab-pane>
-        </el-tabs>
+          </PagedBox>
+        </div>
         </div>
         <div v-else>
           <div class="toolbar">
@@ -583,6 +640,7 @@
             <el-descriptions-item label="类型">{{ fundEnterprise.enterpriseType === 'BUYER' ? '买家' : (fundEnterprise.enterpriseType === 'FACTORY' ? '工厂' : fundEnterprise.enterpriseType) }}</el-descriptions-item>
             <el-descriptions-item label="可用余额">¥ {{ fundEnterprise.account?.balance ?? 0 }}</el-descriptions-item>
             <el-descriptions-item label="冻结">¥ {{ fundEnterprise.account?.frozen ?? 0 }}</el-descriptions-item>
+            <el-descriptions-item label="总流水">¥ {{ fmtAmt(fundEnterprise.totalFlow ?? enterpriseFlowSum(fundEnterprise.flows)) }}</el-descriptions-item>
           </el-descriptions>
           <p class="hint">含意向金、保证金、托管工费、质检费等全部流水。</p>
           <PagedBox :data="fundEnterprise.flows || []" v-slot="{ rows }">
@@ -879,10 +937,11 @@ import IntentionCountdown from '../components/IntentionCountdown.vue'
 import PagedBox from '../components/PagedBox.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { View, Hide } from '@element-plus/icons-vue'
-import { DEMAND_STATUS, FUND_TYPE, FUND_DIR, STAGE_STATUS, DEVICE_STATUS, ESCROW_STATUS, label, fmtTime, deviceStatusType, formatInspectMode } from '../utils/labels'
+import { DEMAND_STATUS, FUND_TYPE, FUND_DIR, STAGE_STATUS, DEVICE_STATUS, ESCROW_STATUS, label, fmtTime, fmtDateLine, fmtTimeLine, deviceStatusType, formatInspectMode, stageProgressLabel, nestReworkPeriods, canShowInspectReport, factoryWorkSpan } from '../utils/labels'
+import { getRole, clearAuth } from '../utils/auth'
 
 const router = useRouter()
-const role = localStorage.getItem('role') || ''
+const role = getRole()
 const isInspector = role === 'INSPECTION'
 const active = ref(isInspector ? 'inspect' : 'overview')
 const demandTab = ref('audit')
@@ -917,11 +976,12 @@ const fundAccounts = ref([])
 const fundTrend = ref([])
 const fundTab = ref('byDemand')
 const fundEnterprise = ref(null)
+const fundTrendHover = ref(null)
 const fundBuyers = computed(() => (fundAccounts.value || []).filter(a => a.enterpriseType === 'BUYER'))
 const fundFactories = computed(() => (fundAccounts.value || []).filter(a => a.enterpriseType === 'FACTORY'))
 const fundTrendPoints = computed(() => {
   const list = fundTrend.value || []
-  if (!list.length) return { line: '', yTicks: [], gridYs: [] }
+  if (!list.length) return { line: '', yTicks: [], gridYs: [], dots: [] }
   const vals = list.map(d => Number(d.amount) || 0)
   const max = niceTrendMax(Math.max(...vals, 0))
   const w = 640
@@ -930,10 +990,18 @@ const fundTrendPoints = computed(() => {
   const padBot = 8
   const n = list.length
   const innerH = h - padTop - padBot
-  const pts = list.map((d, i) => {
+  const dots = list.map((d, i) => {
+    const amount = Number(d.amount) || 0
     const x = n === 1 ? w / 2 : (i * w / (n - 1))
-    const y = h - padBot - ((Number(d.amount) || 0) / max) * innerH
-    return `${x.toFixed(1)},${y.toFixed(1)}`
+    const y = h - padBot - (amount / max) * innerH
+    return {
+      x: x.toFixed(1),
+      y: y.toFixed(1),
+      xPct: n === 1 ? 50 : (i / (n - 1)) * 100,
+      amount,
+      date: d.date,
+      dateLabel: fmtTrendDate(d.date),
+    }
   })
   const steps = 4
   const yTicks = []
@@ -942,7 +1010,7 @@ const fundTrendPoints = computed(() => {
     yTicks.push(formatTrendY((max * i) / steps))
     gridYs.push((h - padBot - (innerH * i) / steps).toFixed(1))
   }
-  return { line: pts.join(' '), yTicks, gridYs }
+  return { line: dots.map(p => `${p.x},${p.y}`).join(' '), yTicks, gridYs, dots }
 })
 const fundTrendAxis = computed(() => {
   const list = fundTrend.value || []
@@ -968,6 +1036,30 @@ function formatTrendY(v) {
   if (v >= 1000) return String(Math.round(v))
   if (Number.isInteger(v)) return String(v)
   return v.toFixed(1)
+}
+function onTrendMove(e) {
+  const dots = fundTrendPoints.value.dots || []
+  if (!dots.length) return
+  const rect = e.currentTarget.getBoundingClientRect()
+  if (rect.width <= 0) return
+  const pct = (e.clientX - rect.left) / rect.width
+  const i = Math.round(pct * (dots.length - 1))
+  fundTrendHover.value = dots[Math.min(dots.length - 1, Math.max(0, i))]
+}
+function fmtAmt(v) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '0'
+  return n.toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
+}
+function enterpriseFlowSum(flows) {
+  return (flows || []).reduce((s, f) => s + Math.abs(Number(f.amount) || 0), 0)
+}
+function enterpriseTotalFlow(row) {
+  if (row?.totalFlow != null && row.totalFlow !== '') return row.totalFlow
+  const id = row?.tenantId
+  return (funds.value || [])
+    .filter(f => f.tenantId === id)
+    .reduce((s, f) => s + Math.abs(Number(f.amount) || 0), 0)
 }
 const enterprises = ref([])
 const entTab = ref('BUYER')
@@ -1054,10 +1146,14 @@ const detailStep = computed(() => {
 function detailReached(n) {
   return detailStatusIndex(detail.demand?.status) >= n
 }
+const showCoverage = computed(() => {
+  const st = detail.demand?.status
+  return detailReached(1) && !['SOLUTION_CONFIRMED', 'SOLUTION_SELECTED', 'CONTRACTED', 'IN_PRODUCTION', 'COMPLETED', 'CANCELLED', 'FLOW_FAILED'].includes(st)
+})
 const detailStageGroups = computed(() => {
   const map = new Map()
   for (const p of detail.stages || []) {
-    const key = p.tenantId ?? p.factoryName ?? p.id
+    const key = String(p.tenantId ?? p.factoryName ?? p.id)
     if (!map.has(key)) {
       map.set(key, { key, tenantId: p.tenantId, factoryName: p.factoryName || ('工厂-' + p.tenantId), children: [], totalQty: 0, totalAmount: 0 })
     }
@@ -1067,12 +1163,25 @@ const detailStageGroups = computed(() => {
     g.totalAmount += Number(p.amount) || 0
   }
   for (const g of map.values()) {
+    g.children = nestReworkPeriods(g.children)
+    const span = factoryWorkSpan(g.children)
+    g.spanStart = span.start
+    g.spanEnd = span.end
     g.progress = g.children.length
       ? Math.round(g.children.reduce((s, p) => s + (Number(p.actualProgress) || 0), 0) / g.children.length)
       : 0
   }
   return [...map.values()]
 })
+const detailExpandKeys = ref([])
+function onDetailExpand(row, expandedRows) {
+  detailExpandKeys.value = (expandedRows || []).map(r => r.key)
+}
+function syncDetailExpand() {
+  detailExpandKeys.value = detailStageGroups.value
+    .filter(g => (g.children || []).some(p => p.status === 'PENDING_REVIEW'))
+    .map(g => g.key)
+}
 const detailProgress = computed(() => {
   const list = detail.stages || []
   if (!list.length) return 0
@@ -1203,23 +1312,31 @@ const inspDialogTitle = computed(() => {
   return '质检单'
 })
 function inspectStatusText(row) {
-  const s = typeof row === 'string' ? row : row?.status
-  if (s === 'PENDING_INSPECT_PAY') return '待付质检费'
-  if (s === 'PENDING_INSPECTION') return '待质检'
-  if (s === 'PENDING_REVIEW') return '待审核'
+  if (row && typeof row === 'object') return stageProgressLabel(row)
+  const s = row
+  if (s === 'PENDING_INSPECT_PAY') return '待交质检费'
+  if (s === 'PENDING_INSPECTION' || s === 'PENDING_REVIEW' || s === 'INSPECTING') return '质检中'
+  if (s === 'PASS') return '结算中'
   if (s === 'FAIL') return '待买家处理'
   if (s === 'CLOSED') return '已关闭'
-  if (['PASS', 'COMPLETED'].includes(s)) return '已完成'
+  if (s === 'COMPLETED') return '已完成'
   return statusText(s)
 }
 function inspectStatusType(s) {
-  if (s === 'PENDING_REVIEW' || s === 'FAIL') return 'warning'
+  if (s === 'PENDING_INSPECT_PAY' || s === 'PENDING_REVIEW' || s === 'FAIL') return 'warning'
   if (s === 'CLOSED') return 'info'
   if (['PASS', 'COMPLETED'].includes(s)) return 'success'
   return ''
 }
 function statusText(s) { return label(DEMAND_STATUS, s) === s ? label(STAGE_STATUS, s) : label(DEMAND_STATUS, s) }
 function stageStart(row) {
+  if (['CONTRACTED', 'IN_PRODUCTION'].includes(row.status)) {
+    try {
+      const arr = JSON.parse(row.deliveryPlanJson || '[]')
+      const first = (Array.isArray(arr) ? arr : []).find(x => x && x.startAt)?.startAt
+      if (first) return fmtTime(first)
+    } catch { /* 无分期计划 */ }
+  }
   const v = ({
     PENDING_AUDIT: row.createdAt,
     PUBLISHED: row.publishedAt,
@@ -1232,6 +1349,9 @@ function stageStart(row) {
   return fmtTime(v)
 }
 function stageEnd(row) {
+  if (['CONTRACTED', 'IN_PRODUCTION'].includes(row.status)) {
+    return row.deadlineHard ? String(row.deadlineHard) : '-'
+  }
   const v = ({
     PUBLISHED: row.intentionEndAt,
     FACTORY_THINKING: row.factoryThinkingEndAt,
@@ -1321,7 +1441,16 @@ function parseRationale(raw) {
   return { rationale: raw, risks: [] }
 }
 
-async function loadDemands() { demands.value = await listAll() }
+async function loadDemands() {
+  demands.value = await listAll()
+  try {
+    const qs = await inspectQueue()
+    const pending = new Set((qs || []).filter(s => s.status === 'PENDING_REVIEW').map(s => Number(s.demandId)))
+    for (const d of demands.value) {
+      d.pendingReview = pending.has(Number(d.id))
+    }
+  } catch { /* 质检队列失败时不影响需求列表 */ }
+}
 async function loadStages() {
   stages.value = await inspectQueue()
 }
@@ -1426,8 +1555,13 @@ async function openDetail(row) {
   detail.stages = []
   detail.orderId = null
   detail.confirmedPlan = { groups: [], total: 0, hint: '' }
-  const cov = await getCoverage(row.id)
-  coverage.value = cov.processes || []
+  const st0 = view.demand?.status
+  if (['SOLUTION_CONFIRMED', 'SOLUTION_SELECTED', 'CONTRACTED', 'IN_PRODUCTION', 'COMPLETED', 'CANCELLED', 'FLOW_FAILED'].includes(st0)) {
+    coverage.value = []
+  } else {
+    const cov = await getCoverage(row.id)
+    coverage.value = cov.processes || []
+  }
   try {
     detail.factories = (await listBidFactories(row.id)) || []
   } catch { /* 无报名时仍可看详情 */ }
@@ -1447,6 +1581,7 @@ async function openDetail(row) {
       try { detail.stages = (await listStages(hit.id)) || [] } catch { detail.stages = [] }
     }
   } catch { /* 无订单时详情仍可看 */ }
+  syncDetailExpand()
   detailOpen.value = true
 }
 function openReturn(row) {
@@ -1710,6 +1845,11 @@ async function openFactoryProfile(id) {
   factoryProfileOpen.value = true
 }
 async function openInspect(row) {
+  const filling = isInspector && row.status === 'PENDING_INSPECTION'
+  const reviewing = !isInspector && row.status === 'PENDING_REVIEW'
+  if (!filling && !reviewing && !canShowInspectReport(row)) {
+    return ElMessage.warning('质检尚未完成，暂无质检报告')
+  }
   inspTarget.value = row
   inspBuyer.value = {}
   if (!isInspector && row.demandId) {
@@ -1720,7 +1860,7 @@ async function openInspect(row) {
   }
   const agreed = Number(row.quantity) || 0
   const reported = row.deliveredQty != null ? Number(row.deliveredQty) : agreed
-  inspForm.result = row.status === 'FAIL' || row.status === 'CLOSED' ? 'FAIL' : 'PASS'
+  inspForm.result = ''
   inspForm.deliveredQty = reported
   inspForm.quantityOk = reported >= agreed
   inspForm.sampleCount = Number(row.requiredSampleCount) > 0
@@ -1732,11 +1872,14 @@ async function openInspect(row) {
   inspForm.keyDimensions = ''
   inspForm.meetsRequirement = true
   inspForm.remark = ''
-  if (row.status !== 'PENDING_INSPECTION' || !isInspector) {
+  if (!filling) {
     try {
       const ins = await inspectionOf(row.id)
-      const r = parseInspectReport(ins?.reportJson)
-      inspForm.result = ins?.result || inspForm.result
+      if (!ins) {
+        return ElMessage.warning('质检尚未完成，暂无质检报告')
+      }
+      const r = parseInspectReport(ins.reportJson)
+      inspForm.result = ins.result || inspForm.result
       inspForm.sampleCount = r.sampleCount ?? inspForm.sampleCount
       inspForm.failCount = r.failCount ?? inspForm.failCount
       inspForm.criticalFailCount = r.criticalFailCount ?? 0
@@ -1746,7 +1889,9 @@ async function openInspect(row) {
       inspForm.meetsRequirement = r.meetsRequirement !== false
       inspForm.remark = r.remark || ''
       inspForm.quantityOk = r.quantityOk != null ? !!r.quantityOk : ((Number(inspForm.deliveredQty) || 0) >= agreed)
-    } catch { /* 无报告则用默认 */ }
+    } catch {
+      return ElMessage.warning('质检尚未完成，暂无质检报告')
+    }
   }
   inspOpen.value = true
 }
@@ -1822,12 +1967,15 @@ async function changePwd() {
   pwd.oldPassword = pwd.newPassword = pwd.confirm = ''
 }
 
-function logout() { localStorage.clear(); router.push('/login') }
+function logout() { clearAuth(); router.push('/login') }
 
 function ignore() { /* 接口错误已由 axios 拦截器提示 */ }
 
 watch(active, (v) => {
-  if (v !== 'funds') fundEnterprise.value = null
+  if (v !== 'funds') {
+    fundEnterprise.value = null
+    fundTrendHover.value = null
+  }
 })
 
 onMounted(() => {
@@ -1883,6 +2031,8 @@ onMounted(() => {
 .audit-obj-id { font-variant-numeric: tabular-nums; color: #303133; font-weight: 600; }
 .file-preview { white-space: pre-wrap; word-break: break-word; margin: 0; font-size: 13px; line-height: 1.6; }
 .hint { color: #909399; font-size: 12px; margin: 4px 0 8px; }
+.dt-2 { line-height: 1.35; }
+.dt-clock { color: #606266; font-size: 12px; }
 .pwd-cell { display: inline-flex; align-items: center; gap: 6px; }
 .pwd-text { font-variant-numeric: tabular-nums; }
 .pwd-mask { letter-spacing: -3px; }
@@ -1930,6 +2080,22 @@ onMounted(() => {
   font-variant-numeric: tabular-nums;
 }
 .trend-plot-main { flex: 1; min-width: 0; }
+.trend-svg-wrap { position: relative; cursor: crosshair; }
 .trend-svg { width: 100%; height: 180px; background: #fafbfc; border-radius: 8px; display: block; }
+.trend-tip {
+  position: absolute;
+  top: 8px;
+  z-index: 2;
+  pointer-events: none;
+  background: #303133;
+  color: #fff;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0,0,0,.18);
+}
+.trend-tip-amt { font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
 .trend-axis { display: flex; justify-content: space-between; color: #909399; font-size: 12px; margin-top: 6px; }
 </style>

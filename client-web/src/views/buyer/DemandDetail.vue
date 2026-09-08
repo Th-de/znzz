@@ -429,6 +429,22 @@
               <el-table-column label="数量" width="90">
                 <template #default="{ row: p }">{{ p.quantity != null ? p.quantity + ' 件' : '-' }}</template>
               </el-table-column>
+              <el-table-column label="开始" width="108">
+                <template #default="{ row: p }">
+                  <div class="dt-2">
+                    <div>{{ fmtDateLine(p.periodStart) }}</div>
+                    <div v-if="fmtTimeLine(p.periodStart)" class="dt-clock">{{ fmtTimeLine(p.periodStart) }}</div>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="截止" width="108">
+                <template #default="{ row: p }">
+                  <div class="dt-2">
+                    <div>{{ fmtDateLine(p.periodEnd || p.promisedDate) }}</div>
+                    <div v-if="fmtTimeLine(p.periodEnd || p.promisedDate)" class="dt-clock">{{ fmtTimeLine(p.periodEnd || p.promisedDate) }}</div>
+                  </div>
+                </template>
+              </el-table-column>
               <el-table-column label="进度" width="150">
                 <template #default="{ row: p }">
                   <el-progress :percentage="p.actualProgress || 0" :stroke-width="10" />
@@ -441,16 +457,19 @@
               <el-table-column label="应托管" width="100">
                 <template #default="{ row: p }">{{ p.payAmount != null ? p.payAmount : '-' }}</template>
               </el-table-column>
+              <el-table-column label="状态" width="120">
+                <template #default="{ row: p }">{{ stageProgressLabel(p) }}</template>
+              </el-table-column>
               <el-table-column label="托管" width="90">
                 <template #default="{ row: p }">{{ label(ESCROW_STATUS, p.escrowStatus) }}</template>
               </el-table-column>
               <el-table-column label="操作" min-width="280">
                 <template #default="{ row: p }">
                   <el-button size="small" @click="openProgress(p)">进度记录</el-button>
-                  <el-button v-if="p.status==='PENDING_INSPECT_PAY' && p.inspectFeePayer!=='FACTORY'" size="small" type="warning" @click="payFee(p)">支付质检费 ¥{{ p.inspectFeeAmount }}</el-button>
-                  <el-button v-if="['PASS','FAIL','CLOSED'].includes(p.status)" size="small" @click="openInsp(p)">质检报告</el-button>
+                  <el-button v-if="canPayInspectFee(p, false)" size="small" type="warning" @click="payFee(p)">提交质检费 ¥{{ p.inspectFeeAmount ?? 0 }}</el-button>
+                  <el-button v-if="canShowInspectReport(p)" size="small" @click="openInsp(p)">质检报告</el-button>
                   <el-button v-if="p.status==='FAIL'" size="small" type="warning" @click="openDecide(p)">处理结果</el-button>
-                  <el-button v-if="p.status==='PASS' && (p.escrowStatus==='NONE' || p.escrowStatus==='PENDING_PAY')" size="small" type="primary" @click="pay(p)">{{ p.escrowStatus==='PENDING_PAY' ? '继续支付' : ('支付 ¥' + (p.payAmount ?? p.amount)) }}</el-button>
+                  <el-button v-if="canPayStageLabor(p)" size="small" type="primary" @click="pay(p)">{{ p.escrowStatus==='PENDING_PAY' ? '继续支付' : ('支付工费 ¥' + (p.payAmount ?? p.amount)) }}</el-button>
                   <el-button v-if="p.status==='PASS' && !p.surveyed" size="small" @click="openSurvey(p)">评价</el-button>
                 </template>
               </el-table-column>
@@ -458,6 +477,22 @@
           </template>
         </el-table-column>
         <el-table-column prop="factoryName" label="工厂" min-width="160" />
+        <el-table-column label="开始" width="108">
+          <template #default="{ row }">
+            <div class="dt-2">
+              <div>{{ fmtDateLine(row.spanStart) }}</div>
+              <div v-if="fmtTimeLine(row.spanStart)" class="dt-clock">{{ fmtTimeLine(row.spanStart) }}</div>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="截止" width="108">
+          <template #default="{ row }">
+            <div class="dt-2">
+              <div>{{ fmtDateLine(row.spanEnd) }}</div>
+              <div v-if="fmtTimeLine(row.spanEnd)" class="dt-clock">{{ fmtTimeLine(row.spanEnd) }}</div>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column label="承接总数" width="110">
           <template #default="{ row }">{{ row.totalQty }} 件</template>
         </el-table-column>
@@ -604,7 +639,7 @@ import SignPad from '../../components/SignPad.vue'
 import InspectDeliveryRules from '../../components/InspectDeliveryRules.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete } from '@element-plus/icons-vue'
-import { DEVICE_STATUS, ESCROW_STATUS, label, fmtTime, deviceStatusType, formatInspectMode } from '../../utils/labels'
+import { DEVICE_STATUS, ESCROW_STATUS, label, fmtTime, fmtDateLine, fmtTimeLine, deviceStatusType, formatInspectMode, stageProgressLabel, nestReworkPeriods, canShowInspectReport, canPayInspectFee, canPayStageLabor, factoryWorkSpan } from '../../utils/labels'
 
 const route = useRoute()
 const loading = ref(false)
@@ -773,8 +808,10 @@ const fulfillHint = computed(() => {
   if (canConfirmDispatch.value) return '各厂已签字提交到本页，请确认全部签署后开始派单'
   const need = list.filter(c => c.status !== 'SIGNED').length
   if (need) return '有 ' + need + ' 份合同待工厂签署，签完后将提交到本页'
-  const pay = (stageList.value || []).filter(s => s.status === 'PASS' && (s.escrowStatus === 'NONE' || s.escrowStatus === 'PENDING_PAY'))
-  if (pay.length) return '有 ' + pay.length + ' 笔阶段款待支付托管'
+  const fee = (stageList.value || []).filter(s => canPayInspectFee(s, false))
+  if (fee.length) return '有 ' + fee.length + ' 笔工单待提交质检费'
+  const pay = (stageList.value || []).filter(s => canPayStageLabor(s))
+  if (pay.length) return '有 ' + pay.length + ' 笔工单待支付工费'
   const wait = (stageList.value || []).filter(s => s.status === 'FAIL')
   if (wait.length) return '有 ' + wait.length + ' 个工单待处理质检结果（让步 / 返工 / 关闭）'
   if (order.value.status === 'IN_PRODUCTION') return '生产进行中，可在下方查看各厂进度、质检与托管'
@@ -841,6 +878,10 @@ const factoryStageGroups = computed(() => {
   for (const g of map.values()) {
     const n = g.children.length || 1
     g.progress = Math.round(g.children.reduce((s, r) => s + (r.actualProgress || 0), 0) / n)
+    g.children = nestReworkPeriods(g.children)
+    const span = factoryWorkSpan(g.children)
+    g.spanStart = span.start
+    g.spanEnd = span.end
   }
   return [...map.values()]
 })
@@ -1260,7 +1301,10 @@ async function openProgress(row) {
   progOpen.value = true
 }
 async function openInsp(row) {
-  inspReport.value = (await inspectionOf(row.id)) || {}
+  if (!canShowInspectReport(row)) return ElMessage.warning('质检尚未完成，暂无质检报告')
+  const ins = await inspectionOf(row.id)
+  if (!ins) return ElMessage.warning('质检尚未完成，暂无质检报告')
+  inspReport.value = ins
   inspOpen.value = true
 }
 function openDecide(row) {
@@ -1471,6 +1515,8 @@ watch(() => route.params.id, load, { immediate: true })
 .phase-actions { margin-top: 12px; }
 .deposit-box { margin-top: 10px; padding: 10px 12px; background: #fdf6ec; border-radius: 6px; color: #b88230; font-size: 13px; }
 .cov-label { font-size: 13px; color: #303133; margin-bottom: 6px; }
+.dt-2 { line-height: 1.35; }
+.dt-clock { color: #606266; font-size: 12px; }
 h4 { margin: 16px 0 8px; }
 .file-preview { white-space: pre-wrap; word-break: break-word; margin: 0; font-size: 13px; line-height: 1.6; }
 .hint { color: #909399; font-size: 12px; }

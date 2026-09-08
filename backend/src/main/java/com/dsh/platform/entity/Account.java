@@ -23,4 +23,7 @@ public class Account {
     private String enterpriseName;
     @TableField(exist = false)
     private String enterpriseType;
+    /** 该企业全部资金流水金额绝对值合计 */
+    @TableField(exist = false)
+    private BigDecimal totalFlow;
 }

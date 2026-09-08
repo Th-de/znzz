@@ -56,6 +56,16 @@ public class TodoService {
         List<Order> orders = orderMapper.selectList(new LambdaQueryWrapper<Order>().in(Order::getDemandId, demandIds));
         Set<Long> orderIds = orders.stream().map(Order::getId).collect(Collectors.toSet());
         if (!orderIds.isEmpty()) {
+            List<WorkStage> inspectFee = workStageMapper.selectList(new LambdaQueryWrapper<WorkStage>()
+                    .in(WorkStage::getOrderId, orderIds)
+                    .eq(WorkStage::getStatus, "PENDING_INSPECT_PAY"));
+            List<WorkStage> buyerFee = inspectFee.stream()
+                    .filter(s -> s.getInspectFeePayer() == null || !"FACTORY".equals(s.getInspectFeePayer()))
+                    .toList();
+            if (!buyerFee.isEmpty()) {
+                out.add(new TodoItem("PAY_INSPECT_FEE", "有 " + buyerFee.size() + " 笔工单待提交质检费",
+                        buyerDemandLink(buyerFee.get(0).getOrderId()), buyerFee.size()));
+            }
             List<WorkStage> pay = workStageMapper.selectList(new LambdaQueryWrapper<WorkStage>()
                     .in(WorkStage::getOrderId, orderIds)
                     .eq(WorkStage::getStatus, "PASS")
@@ -175,6 +185,13 @@ public class TodoService {
         }
         List<WorkStage> stages = workStageMapper.selectList(new LambdaQueryWrapper<WorkStage>()
                 .eq(WorkStage::getTenantId, tid));
+        long inspectFee = stages.stream()
+                .filter(s -> "PENDING_INSPECT_PAY".equals(s.getStatus()) && "FACTORY".equals(s.getInspectFeePayer()))
+                .count();
+        if (inspectFee > 0) {
+            out.add(new TodoItem("PAY_INSPECT_FEE", "有 " + inspectFee + " 张工单待提交质检费",
+                    "/factory/quotations", (int) inspectFee));
+        }
         long startCount = stages.stream().filter(s -> "PENDING".equals(s.getStatus())).count();
         if (startCount > 0) {
             out.add(new TodoItem("START_WORK", "有 " + startCount + " 张工单待开工",

@@ -16,6 +16,7 @@
 import { reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api'
+import { setAuth } from '../utils/auth'
 import { ElMessage } from 'element-plus'
 
 const router = useRouter()
@@ -23,9 +24,7 @@ const form = reactive({ phone: 'admin', password: 'admin123' })
 
 async function login() {
   const data = await api.post('/auth/login', form)
-  localStorage.setItem('token', data.token)
-  localStorage.setItem('role', data.role)
-  localStorage.setItem('tenantId', data.tenantId)
+  setAuth(data)
   ElMessage.success('登录成功')
   router.push('/admin')
 }

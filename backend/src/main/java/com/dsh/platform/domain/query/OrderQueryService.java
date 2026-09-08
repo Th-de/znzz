@@ -497,6 +497,26 @@ public class OrderQueryService {
             fillDecisionFlags(ws);
             fillPeriodWindow(ws);
         }
+        fillInspectionFlags(stages);
+    }
+
+    private void fillInspectionFlags(List<WorkStage> stages) {
+        if (stages == null || stages.isEmpty()) {
+            return;
+        }
+        Set<Long> ids = stages.stream().map(WorkStage::getId).filter(id -> id != null).collect(Collectors.toSet());
+        if (ids.isEmpty()) {
+            return;
+        }
+        Set<Long> has = inspectionMapper.selectList(new LambdaQueryWrapper<Inspection>()
+                        .in(Inspection::getStageId, ids)
+                        .select(Inspection::getStageId))
+                .stream()
+                .map(Inspection::getStageId)
+                .collect(Collectors.toSet());
+        for (WorkStage ws : stages) {
+            ws.setHasInspection(has.contains(ws.getId()));
+        }
     }
 
     private void fillPeriodWindow(WorkStage ws) {

@@ -1,7 +1,8 @@
 import axios from 'axios'
+import { getToken } from '../utils/auth'
 
 export async function fetchAttachment(id) {
-  const token = localStorage.getItem('token')
+  const token = getToken()
   const res = await axios.get(`/api/file/${id}`, {
     responseType: 'blob',
     headers: { Authorization: 'Bearer ' + token },

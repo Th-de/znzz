@@ -139,6 +139,11 @@ public class NotifyActionResolver {
             v.setAction("查看报名");
             return;
         }
+        if (title.startsWith("已落选#")) {
+            v.setLink(factoryBidLink(v.getDemandId()));
+            v.setAction("查看报名");
+            return;
+        }
         if (title.startsWith("报名成功#") || title.startsWith("已取消报名#")
                 || title.startsWith("报价已提交#") || title.startsWith("已取消报价#")
                 || title.startsWith("已锁定报价#") || title.startsWith("已取消锁定报价#")
@@ -313,10 +318,20 @@ public class NotifyActionResolver {
         return title.startsWith("请按厂上传合同#")
                 || title.startsWith("请上传合同#")
                 || title.startsWith("合同已审过#")
+                || title.startsWith("待下发合同#")
                 || title.startsWith("请签合同#")
+                || title.startsWith("合同签署期开始#")
+                || title.startsWith("已确认签署并派单#")
+                || title.startsWith("买家已确认合同#")
                 || title.startsWith("订单已完成#")
                 || title.startsWith("订单已结算#")
-                || title.startsWith("保证金已退还#");
+                || title.startsWith("订单已取消#")
+                || title.startsWith("买家违约赔偿#")
+                || title.startsWith("工厂未签已获赔偿#")
+                || title.startsWith("合同取消已扣保证金#")
+                || title.startsWith("保证金已退还#")
+                || title.startsWith("下一期已开启#")
+                || title.startsWith("工厂进入下一期#");
     }
 
     private String factoryBidLink(Long demandId) {

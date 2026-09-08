@@ -1,9 +1,9 @@
 <template>
   <div v-loading="loading">
-    <el-steps :active="stepActive" finish-status="success" align-center class="flow-steps">
+    <el-steps :active="stepActive" :process-status="lost ? 'error' : 'process'" finish-status="success" align-center class="flow-steps">
       <el-step title="发布需求" />
       <el-step title="意向期" />
-      <el-step title="方案确定" />
+      <el-step title="方案确定" :description="lost ? '已落选' : ''" />
       <el-step title="合同签署" />
       <el-step title="生产与质检" />
       <el-step title="订单结算" />
@@ -17,7 +17,7 @@
           <el-descriptions-item label="产品类别">{{ demand.category || '-' }}</el-descriptions-item>
           <el-descriptions-item label="图号/版本">{{ demand.partRevision || '-' }}</el-descriptions-item>
           <el-descriptions-item label="数量">{{ demand.quantity }}</el-descriptions-item>
-          <el-descriptions-item label="阶段">{{ label(DEMAND_STATUS, demand.status) }}</el-descriptions-item>
+          <el-descriptions-item label="阶段">{{ lost ? '已落选' : label(DEMAND_STATUS, demand.status) }}</el-descriptions-item>
           <el-descriptions-item label="提交时间">{{ fmtTime(demand.createdAt) }}</el-descriptions-item>
         </el-descriptions>
       </el-tab-pane>
@@ -123,8 +123,8 @@
     </el-card>
 
     <el-card v-if="reached(2)" shadow="never" class="phase">
-      <template #header>方案确定（本厂承接）</template>
-      <el-alert v-if="actionKey==='LOSE'" type="info" :closable="false" title="本厂未中标。不展示其他工厂及整单方案。" />
+      <template #header>方案确定</template>
+      <el-alert v-if="lost" type="error" :closable="false" title="已落选" description="方案已确定，本厂未入选。保证金将按规则退还，无需签署合同。" />
       <template v-else-if="won">
         <el-descriptions :column="2" border>
           <el-descriptions-item label="分配件数">{{ wonQty }}</el-descriptions-item>
@@ -135,40 +135,47 @@
       <p v-else class="hint">买家确认方案后，此处仅显示分配给本厂的件数与金额。</p>
     </el-card>
 
-    <el-card v-if="reached(3)" shadow="never" class="phase">
+    <el-card v-if="reached(3) && !lost" shadow="never" class="phase">
       <template #header>合同签署</template>
-      <template v-if="actionKey==='LOSE'">
-        <p class="hint">未中标，无需签署合同。</p>
-      </template>
-      <template v-else>
-        <p v-if="!row.orderId" class="hint">尚未生成与本厂的订单。</p>
-        <el-descriptions v-else :column="1" border>
-          <el-descriptions-item label="订单">#{{ row.orderId }}</el-descriptions-item>
-          <el-descriptions-item label="状态">{{ alreadySigned ? '已签约' : (contract.status || '待签署') }}</el-descriptions-item>
-          <el-descriptions-item label="合同文件">
-            <el-button v-if="contract.attachmentId" size="small" link type="primary" @click="openContractFile(contract.attachmentId)">{{ contract.fileName || ('附件 #' + contract.attachmentId) }}</el-button>
-            <span v-else>买家尚未下发与你的合同</span>
-          </el-descriptions-item>
-        </el-descriptions>
-        <div class="phase-actions">
-          <el-button v-if="actionKey==='SIGN'" type="primary" @click="openSign">签署合同</el-button>
-          <el-button v-if="actionKey==='SIGN'" type="danger" @click="cancelOrder">取消订单</el-button>
-          <span v-else-if="actionKey==='WAIT_ISSUE'" class="op-text">待下发合同</span>
-          <span v-else-if="actionKey==='WAIT_BUYER_CONFIRM' || actionKey==='PENDING_REVIEW'" class="op-text">已提交买家确认</span>
-          <span v-else-if="actionKey==='SIGNED'" class="op-text">已签约</span>
-        </div>
-      </template>
+      <p v-if="!row.orderId" class="hint">尚未生成与本厂的订单。</p>
+      <el-descriptions v-else :column="1" border>
+        <el-descriptions-item label="订单">#{{ row.orderId }}</el-descriptions-item>
+        <el-descriptions-item label="状态">{{ alreadySigned ? '已签约' : (contract.status || '待签署') }}</el-descriptions-item>
+        <el-descriptions-item label="合同文件">
+          <el-button v-if="contract.attachmentId" size="small" link type="primary" @click="openContractFile(contract.attachmentId)">{{ contract.fileName || ('附件 #' + contract.attachmentId) }}</el-button>
+          <span v-else>买家尚未下发与你的合同</span>
+        </el-descriptions-item>
+      </el-descriptions>
+      <div v-if="row.orderId" class="phase-actions">
+        <el-button v-if="actionKey==='SIGN'" type="primary" @click="openSign">签署合同</el-button>
+        <el-button v-if="actionKey==='SIGN'" type="danger" @click="cancelOrder">取消订单</el-button>
+        <span v-else-if="actionKey==='WAIT_ISSUE'" class="op-text">待下发合同</span>
+        <span v-else-if="actionKey==='WAIT_BUYER_CONFIRM' || actionKey==='PENDING_REVIEW'" class="op-text">已提交买家确认</span>
+        <span v-else-if="actionKey==='SIGNED'" class="op-text">已签约</span>
+      </div>
     </el-card>
 
-    <el-card v-if="showStages" shadow="never" class="phase">
+    <el-card v-if="showStages && !lost" shadow="never" class="phase">
       <template #header>生产与质检 {{ job.progress || 0 }}%</template>
       <el-progress :percentage="job.progress || 0" style="margin-bottom:10px" />
       <el-alert type="info" :closable="false" title="到开始时间后状态变为进行中，才能上报进度和交付。未到开始时间为待开启。" style="margin-bottom:12px" />
       <el-descriptions :column="2" border style="margin-bottom:12px">
         <el-descriptions-item label="总计工费">{{ job.totalAmount ?? '-' }}</el-descriptions-item>
         <el-descriptions-item label="状态">{{ jobStatusText(job) }}</el-descriptions-item>
+        <el-descriptions-item label="开始">
+          <div class="dt-2">
+            <div>{{ fmtDateLine(factoryWorkSpan(job.periods).start) }}</div>
+            <div v-if="fmtTimeLine(factoryWorkSpan(job.periods).start)" class="dt-clock">{{ fmtTimeLine(factoryWorkSpan(job.periods).start) }}</div>
+          </div>
+        </el-descriptions-item>
+        <el-descriptions-item label="截止">
+          <div class="dt-2">
+            <div>{{ fmtDateLine(factoryWorkSpan(job.periods).end) }}</div>
+            <div v-if="fmtTimeLine(factoryWorkSpan(job.periods).end)" class="dt-clock">{{ fmtTimeLine(factoryWorkSpan(job.periods).end) }}</div>
+          </div>
+        </el-descriptions-item>
       </el-descriptions>
-      <el-table :data="job.periods || []" border size="small">
+            <el-table :data="nestReworkPeriods(job.periods || [])" border size="small">
         <el-table-column label="期" width="90">
           <template #default="{ row: p }">{{ p.periodLabel || ('第' + (p.periodNo || '-') + '期') }}</template>
         </el-table-column>
@@ -178,11 +185,21 @@
         <el-table-column label="实交数量" width="90">
           <template #default="{ row: p }">{{ p.deliveredQty ?? '-' }}</template>
         </el-table-column>
-        <el-table-column label="开始时间" width="160">
-          <template #default="{ row: p }">{{ fmtTime(p.periodStart) }}</template>
+        <el-table-column label="开始" width="108">
+          <template #default="{ row: p }">
+            <div class="dt-2">
+              <div>{{ fmtDateLine(p.periodStart) }}</div>
+              <div v-if="fmtTimeLine(p.periodStart)" class="dt-clock">{{ fmtTimeLine(p.periodStart) }}</div>
+            </div>
+          </template>
         </el-table-column>
-        <el-table-column label="截止时间" width="160">
-          <template #default="{ row: p }">{{ fmtTime(p.periodEnd || p.promisedDate) }}</template>
+        <el-table-column label="截止" width="108">
+          <template #default="{ row: p }">
+            <div class="dt-2">
+              <div>{{ fmtDateLine(p.periodEnd || p.promisedDate) }}</div>
+              <div v-if="fmtTimeLine(p.periodEnd || p.promisedDate)" class="dt-clock">{{ fmtTimeLine(p.periodEnd || p.promisedDate) }}</div>
+            </div>
+          </template>
         </el-table-column>
         <el-table-column label="本期工费" width="100">
           <template #default="{ row: p }">{{ p.amount ?? '-' }}</template>
@@ -190,7 +207,7 @@
         <el-table-column label="状态" width="140">
           <template #default="{ row: p }">
             <span v-if="isReworking(p)" class="rework-status" @click="openReworkReason(p)">返工生产中</span>
-            <span v-else>{{ periodStatusText(p) }}</span>
+            <span v-else>{{ stageProgressLabel(p) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="托管" width="100">
@@ -200,8 +217,8 @@
           <template #default="{ row: p }">
             <el-button v-if="canProduce(p)" size="small" type="warning" @click="openProg(p)">上报进度</el-button>
             <el-button v-if="canProduce(p)" size="small" type="primary" @click="openDeliver(p)">交付</el-button>
-            <el-button v-if="p.status==='PENDING_INSPECT_PAY' && p.inspectFeePayer==='FACTORY'" size="small" type="warning" @click="payFee(p)">支付质检费 ¥{{ p.inspectFeeAmount }}</el-button>
-            <el-button v-if="['PASS','FAIL','CLOSED'].includes(p.status)" size="small" @click="openInsp(p)">质检报告</el-button>
+            <el-button v-if="canPayInspectFee(p, true)" size="small" type="warning" @click="payFee(p)">提交质检费 ¥{{ p.inspectFeeAmount ?? 0 }}</el-button>
+            <el-button v-if="canShowInspectReport(p)" size="small" @click="openInsp(p)">质检报告</el-button>
             <el-button v-if="p.status==='PASS' && !p.surveyed" size="small" @click="openSurvey(p)">评价</el-button>
             <span v-if="p.status==='WAITING_OPEN' && p.contractSigned" class="hint">未到开始时间</span>
             <span v-if="!p.contractSigned" class="hint">请先在「合同签署」完成签约</span>
@@ -210,7 +227,7 @@
       </el-table>
     </el-card>
 
-    <el-card v-if="reached(5) || settledHint" shadow="never" class="phase">
+    <el-card v-if="!lost && (reached(5) || settledHint)" shadow="never" class="phase">
       <template #header>订单结算</template>
       <p v-if="demand.status==='COMPLETED'" class="hint">本需求已完成结算。本厂工单见上方生产与质检。</p>
       <p v-else class="hint">工单质检通过并评价后进入结算，资金按托管规则解冻。</p>
@@ -341,7 +358,7 @@ import { downloadAttachment } from '../../api/file'
 import SignPad from '../../components/SignPad.vue'
 import IntentionCountdown from '../../components/IntentionCountdown.vue'
 import BuyerInfoBlock from '../../components/BuyerInfoBlock.vue'
-import { DEMAND_STATUS, INTENTION_STATUS, DEPOSIT_STATUS, STAGE_STATUS, ESCROW_STATUS, label, fmtTime, formatInspectMode } from '../../utils/labels'
+import { DEMAND_STATUS, INTENTION_STATUS, DEPOSIT_STATUS, STAGE_STATUS, ESCROW_STATUS, label, fmtTime, fmtDateLine, fmtTimeLine, formatInspectMode, stageProgressLabel, nestReworkPeriods, canShowInspectReport, canPayInspectFee, factoryWorkSpan } from '../../utils/labels'
 
 const route = useRoute()
 const loading = ref(false)
@@ -365,7 +382,7 @@ const row = computed(() => {
     orderId: null,
     quotes: qs,
   }
-  const prefer = { PAY: 6, COMMIT: 6, WAIT_INTENTION: 5, SIGN: 5, WAIT_BUYER_CONFIRM: 5, PENDING_REVIEW: 5, WAIT_ISSUE: 4, WAIT_BUYER: 4, WAIT_SOLUTION: 4, WAIT_DISPATCH: 4, SIGNED: 4, REAPPLY: 2, LOSE: 1, NONE: 0 }
+  const prefer = { LOSE: 10, PAY: 6, COMMIT: 6, WAIT_INTENTION: 5, SIGN: 5, WAIT_BUYER_CONFIRM: 5, PENDING_REVIEW: 5, WAIT_ISSUE: 4, WAIT_BUYER: 4, WAIT_SOLUTION: 4, WAIT_DISPATCH: 4, SIGNED: 4, REAPPLY: 2, NONE: 0 }
   for (const q of qs) {
     if (q.createdAt && (!g.createdAt || q.createdAt < g.createdAt)) g.createdAt = q.createdAt
     if ((prefer[q.actionKey] || 0) > (prefer[g.actionKey] || 0)) {
@@ -373,6 +390,9 @@ const row = computed(() => {
       g.orderId = q.orderId || g.orderId
     }
     if (q.orderId) g.orderId = q.orderId
+  }
+  if (qs.some(q => q.status === 'LOSE') && !qs.some(q => q.status === 'WIN')) {
+    g.actionKey = 'LOSE'
   }
   return g
 })
@@ -389,8 +409,18 @@ function statusIndex(st) {
   if (st === 'CANCELLED' || st === 'FLOW_FAILED') return demand.value.publishedAt ? 1 : 0
   return 0
 }
-const flowStep = computed(() => statusIndex(demand.value.status))
-const stepActive = computed(() => demand.value.status === 'COMPLETED' ? 6 : flowStep.value)
+const won = computed(() => quotes.value.some(q => q.status === 'WIN'))
+const lost = computed(() => {
+  const st = demand.value.status
+  const after = ['SOLUTION_CONFIRMED', 'SOLUTION_SELECTED', 'CONTRACTED', 'IN_PRODUCTION', 'COMPLETED']
+  if (!after.includes(st) || won.value) return false
+  return quotes.value.some(q => q.status === 'LOSE' || q.actionKey === 'LOSE') || actionKey.value === 'LOSE'
+})
+const flowStep = computed(() => lost.value ? 2 : statusIndex(demand.value.status))
+const stepActive = computed(() => {
+  if (lost.value) return 2
+  return demand.value.status === 'COMPLETED' ? 6 : flowStep.value
+})
 function reached(n) {
   return flowStep.value >= n
 }
@@ -401,7 +431,6 @@ const showThinkingCard = computed(() => {
     || hasQuoted.value
 })
 const hasQuoted = computed(() => quotes.value.some(q => q.unitPrice != null || ['LOCKED', 'WIN', 'LOSE'].includes(q.status)))
-const won = computed(() => quotes.value.some(q => q.status === 'WIN') || actionKey.value === 'SIGNED' || actionKey.value === 'SIGN' || (job.value.periods || []).length > 0)
 const wonQty = computed(() => {
   const q = quotes.value.find(x => x.status === 'WIN') || quotes.value[0]
   return q?.quantity ?? job.value?.periods?.reduce((s, p) => s + (Number(p.quantity) || 0), 0) ?? '-'
@@ -582,10 +611,7 @@ function jobStatusText(j) {
   return label(STAGE_STATUS, j.status)
 }
 function periodStatusText(p) {
-  if (!p.contractSigned && (p.status === 'PENDING' || p.status === 'WAITING_OPEN')) return '待签约'
-  if (p.status === 'IN_PRODUCTION') return '进行中'
-  if (p.status === 'WAITING_OPEN') return '待开启'
-  return label(STAGE_STATUS, p.status)
+  return stageProgressLabel(p)
 }
 function canProduce(p) {
   return p.contractSigned && p.windowOpen && p.status === 'IN_PRODUCTION' && p.status !== 'CANCELLED'
@@ -644,7 +670,10 @@ async function submitProg() {
   load()
 }
 async function openInsp(p) {
-  inspReport.value = (await inspectionOf(p.id)) || {}
+  if (!canShowInspectReport(p)) return ElMessage.warning('质检尚未完成，暂无质检报告')
+  const ins = await inspectionOf(p.id)
+  if (!ins) return ElMessage.warning('质检尚未完成，暂无质检报告')
+  inspReport.value = ins
   inspOpen.value = true
 }
 function openDeliver(p) {
@@ -655,7 +684,7 @@ function openDeliver(p) {
 async function submitDeliver() {
   if (!delQty.value || delQty.value < 1) return ElMessage.warning('请填写实交件数')
   await deliver(delStage.value.id, { deliveredQty: delQty.value })
-  ElMessage.success('已交付，请等待对应方支付质检费后再质检')
+  ElMessage.success('已交付')
   delOpen.value = false
   load()
 }
@@ -684,6 +713,8 @@ watch(() => route.params.id, load, { immediate: true })
 .phase { margin-top: 16px; }
 .phase-actions { margin-top: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .hint { color: #909399; font-size: 12px; }
+.dt-2 { line-height: 1.35; }
+.dt-clock { color: #606266; font-size: 12px; }
 .op-text { color: #909399; font-size: 13px; }
 .summary { margin: 12px 0; font-size: 14px; }
 h4 { margin: 16px 0 8px; }

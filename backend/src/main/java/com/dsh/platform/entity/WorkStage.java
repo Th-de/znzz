@@ -97,6 +97,9 @@ public class WorkStage {
     private Integer aqlAc;
     @TableField(exist = false)
     private Integer aqlRe;
+    /** 质检员是否已提交质检单 */
+    @TableField(exist = false)
+    private Boolean hasInspection;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     @TableLogic

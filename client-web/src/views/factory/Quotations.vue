@@ -6,8 +6,11 @@
       <el-table-column label="报名时间" width="170">
         <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
       </el-table-column>
-      <el-table-column label="阶段" width="120">
-        <template #default="{ row }">{{ label(DEMAND_STATUS, row.demandStatus) }}</template>
+      <el-table-column label="状态" width="140">
+        <template #default="{ row }">
+          <el-tag v-if="row.lost" type="danger" size="small">已落选</el-tag>
+          <span v-else>{{ label(DEMAND_STATUS, row.demandStatus) }}</span>
+        </template>
       </el-table-column>
       <el-table-column label="更新时间" width="170">
         <template #default="{ row }">{{ fmtTime(row.demandStageAt) }}</template>
@@ -42,12 +45,22 @@ const rows = computed(() => {
         demandStageAt: q.demandStageAt,
         demandStageEndAt: q.demandStageEndAt,
         createdAt: q.createdAt,
+        quoteStatuses: [],
+        actionKeys: [],
       })
     }
     const g = map.get(q.demandId)
     if (q.createdAt && (!g.createdAt || q.createdAt < g.createdAt)) g.createdAt = q.createdAt
+    if (q.status) g.quoteStatuses.push(q.status)
+    if (q.actionKey) g.actionKeys.push(q.actionKey)
   }
-  return [...map.values()]
+  return [...map.values()].map((g) => {
+    const afterConfirm = ['SOLUTION_CONFIRMED', 'SOLUTION_SELECTED', 'CONTRACTED', 'IN_PRODUCTION', 'COMPLETED']
+    const won = g.quoteStatuses.includes('WIN')
+    const lost = !won && afterConfirm.includes(g.demandStatus)
+      && (g.quoteStatuses.includes('LOSE') || g.actionKeys.includes('LOSE'))
+    return { ...g, lost }
+  })
 })
 
 async function load() {

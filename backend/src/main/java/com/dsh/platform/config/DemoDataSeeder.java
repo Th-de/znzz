@@ -26,7 +26,7 @@ import java.time.LocalDateTime;
 
 @Slf4j
 @Component
-@Order(21)
+@Order(23)
 @RequiredArgsConstructor
 public class DemoDataSeeder implements CommandLineRunner {
 
@@ -42,7 +42,7 @@ public class DemoDataSeeder implements CommandLineRunner {
     @Override
     public void run(String... args) throws Exception {
         enrichFactory("91330205MA2H9C2D2B",
-                "宁波博锐精密机械有限公司", "李建国", "宁波市鄞州区姜山镇科技园南路 88 号", 82,
+                "宁波博锐精密机械有限公司", "李建国", "宁波市鄞州区姜山镇科技园南路 88 号", 87,
                 capJson("立式加工中心", "VMC850", "0.01mm",
                         "[\"20CrMnTi\",\"合金钢\",\"不锈钢\"]",
                         "[\"铣削\",\"精磨\",\"精加工\"]",
@@ -50,7 +50,7 @@ public class DemoDataSeeder implements CommandLineRunner {
                         "[{\"processName\":\"精磨\",\"dailyCapacity\":800,\"loadPct\":35}]",
                         0.99, "三坐标测量机"));
         enrichFactory("91331002MA2J1E3F3C",
-                "台州宏达机械加工厂", "王海峰", "台州市椒江区下陈街道机场路 216 号", 70,
+                "台州宏达机械加工厂", "王海峰", "台州市椒江区下陈街道机场路 216 号", 73,
                 capJson("数控车床", "CK6150", "0.05mm",
                         "[\"20CrMnTi\",\"碳钢\",\"合金钢\"]",
                         "[\"粗车\",\"车削\",\"粗加工\"]",
@@ -58,7 +58,7 @@ public class DemoDataSeeder implements CommandLineRunner {
                         "[{\"processName\":\"粗车\",\"dailyCapacity\":2000,\"loadPct\":40}]",
                         0.96, "游标卡尺+千分尺"));
         enrichFactory("91330402MA2L4G5H5D",
-                "嘉兴金盾热处理有限公司", "赵丽华", "嘉兴市南湖区大桥镇工业园区兴工路 66 号", 76,
+                "嘉兴金盾热处理有限公司", "赵丽华", "嘉兴市南湖区大桥镇工业园区兴工路 66 号", 81,
                 capJson("井式渗碳炉", "RQ3-75", "±5℃",
                         "[\"20CrMnTi\",\"合金钢\"]",
                         "[\"热处理\",\"渗碳淬火\"]",
@@ -66,7 +66,7 @@ public class DemoDataSeeder implements CommandLineRunner {
                         "[{\"processName\":\"热处理\",\"dailyCapacity\":600,\"loadPct\":45}]",
                         0.98, "硬度计+金相显微镜"));
         enrichFactory("91320508MA1M6N7P7E",
-                "苏州汇通智能制造有限公司", "周启明", "苏州市相城区黄埭镇潘阳工业园春丰路 18 号", 74,
+                "苏州汇通智能制造有限公司", "周启明", "苏州市相城区黄埭镇潘阳工业园春丰路 18 号", 79,
                 capJson("卧式加工中心", "HMC500", "0.02mm",
                         "[\"20CrMnTi\",\"铝合金\",\"合金钢\"]",
                         "[\"粗车\",\"热处理\",\"精磨\",\"铣削\"]",
@@ -89,7 +89,7 @@ public class DemoDataSeeder implements CommandLineRunner {
         e.setName("杭州精工传动有限公司");
         e.setContactName("陈明远");
         e.setAddress("杭州市余杭区仓前街道文一西路 1500 号");
-        e.setCreditScore(78);
+        e.setCreditScore(82);
         e.setAuthStatus("APPROVED");
         enterpriseMapper.updateById(e);
     }

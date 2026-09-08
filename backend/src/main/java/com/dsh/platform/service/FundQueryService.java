@@ -98,6 +98,9 @@ public class FundQueryService {
         m.put("enterpriseType", e.getType());
         m.put("account", acc);
         m.put("flows", flows);
+        m.put("totalFlow", flows.stream()
+                .map(f -> f.getAmount() == null ? BigDecimal.ZERO : f.getAmount().abs())
+                .reduce(BigDecimal.ZERO, BigDecimal::add));
         return m;
     }
 
@@ -126,7 +129,21 @@ public class FundQueryService {
     }
 
     public List<Account> accounts() {
-        return accountService.listAll();
+        List<Account> list = accountService.listAll();
+        Map<Long, BigDecimal> totals = new HashMap<>();
+        List<FundFlow> flows = fundFlowMapper.selectList(null);
+        if (flows != null) {
+            for (FundFlow f : flows) {
+                if (f.getTenantId() == null || f.getAmount() == null) {
+                    continue;
+                }
+                totals.merge(f.getTenantId(), f.getAmount().abs(), BigDecimal::add);
+            }
+        }
+        for (Account a : list) {
+            a.setTotalFlow(totals.getOrDefault(a.getTenantId(), BigDecimal.ZERO));
+        }
+        return list;
     }
 
     public List<FundFlow> impoundFlows() {

@@ -6,7 +6,7 @@
       <el-table ref="tableRef" :data="rows" border row-key="orderId" @row-click="onRowClick">
         <el-table-column type="expand">
           <template #default="{ row }">
-            <el-table :data="row.periods || []" border size="small" class="period-table">
+            <el-table :data="nestReworkPeriods(row.periods || [])" border size="small" class="period-table">
               <el-table-column label="期" width="90">
                 <template #default="{ row: p }">{{ p.periodLabel || ('第' + (p.periodNo || '-') + '期') }}</template>
               </el-table-column>
@@ -16,11 +16,21 @@
               <el-table-column label="实交数量" width="90">
                 <template #default="{ row: p }">{{ p.deliveredQty ?? '-' }}</template>
               </el-table-column>
-              <el-table-column label="开始时间" width="160">
-                <template #default="{ row: p }">{{ fmtTime(p.periodStart) }}</template>
+              <el-table-column label="开始" width="108">
+                <template #default="{ row: p }">
+                  <div class="dt-2">
+                    <div>{{ fmtDateLine(p.periodStart) }}</div>
+                    <div v-if="fmtTimeLine(p.periodStart)" class="dt-clock">{{ fmtTimeLine(p.periodStart) }}</div>
+                  </div>
+                </template>
               </el-table-column>
-              <el-table-column label="截止时间" width="160">
-                <template #default="{ row: p }">{{ fmtTime(p.periodEnd || p.promisedDate) }}</template>
+              <el-table-column label="截止" width="108">
+                <template #default="{ row: p }">
+                  <div class="dt-2">
+                    <div>{{ fmtDateLine(p.periodEnd || p.promisedDate) }}</div>
+                    <div v-if="fmtTimeLine(p.periodEnd || p.promisedDate)" class="dt-clock">{{ fmtTimeLine(p.periodEnd || p.promisedDate) }}</div>
+                  </div>
+                </template>
               </el-table-column>
               <el-table-column label="本期工费" width="100">
                 <template #default="{ row: p }">{{ p.amount ?? '-' }}</template>
@@ -32,7 +42,7 @@
                     class="rework-status"
                     @click.stop="openReworkReason(p)"
                   >返工生产中</span>
-                  <span v-else>{{ periodStatusText(p) }}</span>
+                  <span v-else>{{ stageProgressLabel(p) }}</span>
                 </template>
               </el-table-column>
               <el-table-column label="托管" width="100">
@@ -42,8 +52,8 @@
                 <template #default="{ row: p }">
                   <el-button v-if="canProduce(p)" size="small" type="warning" @click.stop="openProg(p)">上报进度</el-button>
                   <el-button v-if="canProduce(p)" size="small" type="primary" @click.stop="openDeliver(p)">交付</el-button>
-                  <el-button v-if="p.status==='PENDING_INSPECT_PAY' && p.inspectFeePayer==='FACTORY'" size="small" type="warning" @click.stop="payFee(p)">支付质检费 ¥{{ p.inspectFeeAmount }}</el-button>
-                  <el-button v-if="['PASS','FAIL','CLOSED'].includes(p.status)" size="small" @click.stop="openInsp(p)">质检报告</el-button>
+                  <el-button v-if="canPayInspectFee(p, true)" size="small" type="warning" @click.stop="payFee(p)">提交质检费 ¥{{ p.inspectFeeAmount ?? 0 }}</el-button>
+                  <el-button v-if="canShowInspectReport(p)" size="small" @click.stop="openInsp(p)">质检报告</el-button>
                   <el-button v-if="p.status==='PASS' && !p.surveyed" size="small" @click.stop="openSurvey(p)">评价</el-button>
                   <span v-if="p.status==='WAITING_OPEN' && p.contractSigned" class="hint">未到开始时间</span>
                   <span v-if="!p.contractSigned" class="hint">请到「我的报名」签署合同</span>
@@ -62,6 +72,22 @@
           <template #default="{ row }">
             <el-button link type="primary" @click.stop="openDetail(row)">查看</el-button>
             <span class="hint">{{ row.detail || '-' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="开始" width="108">
+          <template #default="{ row }">
+            <div class="dt-2">
+              <div>{{ fmtDateLine(factoryWorkSpan(row.periods).start) }}</div>
+              <div v-if="fmtTimeLine(factoryWorkSpan(row.periods).start)" class="dt-clock">{{ fmtTimeLine(factoryWorkSpan(row.periods).start) }}</div>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="截止" width="108">
+          <template #default="{ row }">
+            <div class="dt-2">
+              <div>{{ fmtDateLine(factoryWorkSpan(row.periods).end) }}</div>
+              <div v-if="fmtTimeLine(factoryWorkSpan(row.periods).end)" class="dt-clock">{{ fmtTimeLine(factoryWorkSpan(row.periods).end) }}</div>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="工期进度" width="160">
@@ -164,7 +190,7 @@ import { computed, reactive, ref, onMounted } from 'vue'
 import { myDemandJobs, deliver, submitSurvey, reportProgress, inspectionOf, uploadFile, payInspectFee } from '../../api/order'
 import PagedBox from '../../components/PagedBox.vue'
 import { ElMessage } from 'element-plus'
-import { STAGE_STATUS, ESCROW_STATUS, label, fmtTime } from '../../utils/labels'
+import { STAGE_STATUS, ESCROW_STATUS, label, fmtTime, fmtDateLine, fmtTimeLine, stageProgressLabel, nestReworkPeriods, canShowInspectReport, canPayInspectFee, factoryWorkSpan } from '../../utils/labels'
 
 const jobList = ref([])
 const tableRef = ref()
@@ -204,10 +230,7 @@ function jobStatusText(row) {
 }
 
 function periodStatusText(p) {
-  if (!p.contractSigned && (p.status === 'PENDING' || p.status === 'WAITING_OPEN')) return '待签约'
-  if (p.status === 'IN_PRODUCTION') return '进行中'
-  if (p.status === 'WAITING_OPEN') return '待开启'
-  return label(STAGE_STATUS, p.status)
+  return stageProgressLabel(p)
 }
 
 function canProduce(p) {
@@ -277,7 +300,10 @@ async function submitProg() {
   load()
 }
 async function openInsp(row) {
-  inspReport.value = (await inspectionOf(row.id)) || {}
+  if (!canShowInspectReport(row)) return ElMessage.warning('质检尚未完成，暂无质检报告')
+  const ins = await inspectionOf(row.id)
+  if (!ins) return ElMessage.warning('质检尚未完成，暂无质检报告')
+  inspReport.value = ins
   inspOpen.value = true
 }
 function openDeliver(row) {
@@ -288,7 +314,7 @@ function openDeliver(row) {
 async function submitDeliver() {
   if (!delQty.value || delQty.value < 1) return ElMessage.warning('请填写实交件数')
   await deliver(delStage.value.id, { deliveredQty: delQty.value })
-  ElMessage.success('已交付，请等待对应方支付质检费后再质检')
+  ElMessage.success('已交付')
   delOpen.value = false
   load()
 }
@@ -317,6 +343,8 @@ onMounted(load)
 
 <style scoped>
 .hint { color: #909399; font-size: 12px; margin-left: 8px; }
+.dt-2 { line-height: 1.35; }
+.dt-clock { color: #606266; font-size: 12px; }
 .period-table { margin: 8px 12px 12px 48px; }
 .rework-status {
   color: #f56c6c;

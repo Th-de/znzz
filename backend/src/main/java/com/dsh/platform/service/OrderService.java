@@ -172,6 +172,8 @@ public class OrderService {
             quotationMapper.updateById(q);
             if (!win && q.getTenantId() != null && refunded.add(q.getTenantId())) {
                 fundLedger.refundLoser(q);
+                siteNotify.send(q.getTenantId(), "已落选#" + demandId,
+                        "需求「" + d.getTitle() + "」方案已确定，本厂未入选，报名状态已变为已落选。后续不再推送该需求相关通知。");
             }
         }
         List<Long> winFactoryIds = new java.util.ArrayList<>(winProcessNames.keySet());
@@ -703,12 +705,6 @@ public class OrderService {
         BigDecimal fee = InspectPrices.fee(d == null ? null : d.getInspectMode(), feeQty);
         ws.setInspectFeePayer(payer);
         ws.setInspectFeeAmount(fee);
-        if (fee.compareTo(BigDecimal.ZERO) <= 0) {
-            ws.setInspectFeeStatus("PAID");
-            ws.setStatus("PENDING_INSPECTION");
-            workStageMapper.updateById(ws);
-            return;
-        }
         ws.setInspectFeeStatus("PENDING_PAY");
         ws.setStatus("PENDING_INSPECT_PAY");
         workStageMapper.updateById(ws);

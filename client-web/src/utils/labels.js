@@ -16,6 +16,7 @@ export const DEMAND_STATUS = {
   COMPLETED: '已完成',
   CANCELLED: '已取消',
   FLOW_FAILED: '流拍',
+  LOSE: '已落选',
 }
 
 export const QUOTE_STATUS = {
@@ -80,15 +81,81 @@ export const STAGE_STATUS = {
   PENDING_SIGN: '待签约',
   PENDING: '待启动',
   IN_PRODUCTION: '进行中',
-  PENDING_INSPECT_PAY: '待付质检费',
-  PENDING_INSPECTION: '待质检',
-  PENDING_REVIEW: '待审核',
+  PENDING_INSPECT_PAY: '待交质检费',
+  PENDING_INSPECTION: '质检中',
+  PENDING_REVIEW: '质检中',
   INSPECTING: '质检中',
-  PASS: '可收款',
+  PASS: '结算中',
   FAIL: '待买家处理',
   CLOSED: '已关闭',
   CANCELLED: '已取消',
   COMPLETED: '已完成',
+}
+
+export function stageProgressLabel(p) {
+  if (!p) return '-'
+  if (!p.contractSigned && (p.status === 'PENDING' || p.status === 'WAITING_OPEN')) return '待签约'
+  if (p.status === 'IN_PRODUCTION' && Number(p.reworkCount) > 0) return '返工生产中'
+  if (p.status === 'PENDING_INSPECT_PAY') return '待交质检费'
+  if (p.status === 'PENDING_INSPECTION' || p.status === 'PENDING_REVIEW' || p.status === 'INSPECTING') return '质检中'
+  if (p.status === 'PASS' && (p.escrowStatus === 'NONE' || p.escrowStatus === 'PENDING_PAY')) return '结算中'
+  if (p.status === 'PASS' && p.escrowStatus === 'HELD') return '已托管'
+  if (p.status === 'PASS' && p.escrowStatus === 'SETTLED') return '已完成'
+  return STAGE_STATUS[p.status] || p.status || '-'
+}
+
+export function nestReworkPeriods(list) {
+  const rows = Array.isArray(list) ? [...list] : []
+  const byId = new Map(rows.map((p) => [p.id, p]))
+  const childrenByParent = new Map()
+  const roots = []
+  for (const p of rows) {
+    if (p.parentStageId && byId.has(p.parentStageId)) {
+      const arr = childrenByParent.get(p.parentStageId) || []
+      arr.push(p)
+      childrenByParent.set(p.parentStageId, arr)
+    } else {
+      roots.push(p)
+    }
+  }
+  roots.sort((a, b) => (a.periodNo || 0) - (b.periodNo || 0) || (a.id || 0) - (b.id || 0))
+  const out = []
+  for (const r of roots) {
+    out.push(r)
+    const kids = (childrenByParent.get(r.id) || []).sort((a, b) => (a.id || 0) - (b.id || 0))
+    const base = r.periodLabel || (r.periodNo ? ('第' + r.periodNo + '期') : '本期')
+    for (const c of kids) {
+      out.push({ ...c, periodLabel: String(c.periodLabel || '').includes('返工') ? c.periodLabel : (base + ' 返工') })
+    }
+  }
+  return out
+}
+
+export function canShowInspectReport(p) {
+  if (!['PASS', 'FAIL', 'CLOSED', 'COMPLETED'].includes(p?.status)) return false
+  if (p.hasInspection === false) return false
+  return true
+}
+
+export function factoryWorkSpan(children) {
+  let start = null
+  let end = null
+  for (const p of children || []) {
+    const s = p.periodStart
+    const e = p.periodEnd || p.promisedDate
+    if (s && (start == null || String(s) < String(start))) start = s
+    if (e && (end == null || String(e) > String(end))) end = e
+  }
+  return { start, end }
+}
+
+export function canPayInspectFee(p, asFactory) {
+  if (p?.status !== 'PENDING_INSPECT_PAY') return false
+  return asFactory ? p.inspectFeePayer === 'FACTORY' : p.inspectFeePayer !== 'FACTORY'
+}
+
+export function canPayStageLabor(p) {
+  return ['PASS', 'COMPLETED'].includes(p?.status) && (p.escrowStatus === 'NONE' || p.escrowStatus === 'PENDING_PAY')
 }
 
 export const FUND_DIR = {
@@ -135,6 +202,18 @@ export function fmtTime(v) {
   if (v == null || v === '') return '-'
   const s = String(v).replace('T', ' ')
   return s.length >= 19 ? s.slice(0, 19) : s
+}
+
+export function fmtDateLine(v) {
+  const s = fmtTime(v)
+  if (s === '-') return '-'
+  return s.length >= 10 ? s.slice(0, 10) : s
+}
+
+export function fmtTimeLine(v) {
+  const s = fmtTime(v)
+  if (s === '-' || s.length < 16) return ''
+  return s.slice(11, 19)
 }
 
 export function formatInspectMode(raw) {

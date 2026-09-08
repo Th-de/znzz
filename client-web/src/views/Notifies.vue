@@ -11,7 +11,10 @@
             <template #default="{ row }">{{ fmtTime(row.bidAt) }}</template>
           </el-table-column>
           <el-table-column label="阶段" width="140">
-            <template #default="{ row }">{{ label(DEMAND_STATUS, row.status) }}</template>
+            <template #default="{ row }">
+              <el-tag v-if="row.status === 'LOSE'" type="danger" size="small">已落选</el-tag>
+              <span v-else>{{ label(DEMAND_STATUS, row.status) }}</span>
+            </template>
           </el-table-column>
           <el-table-column label="最新通知" width="170">
             <template #default="{ row }">{{ fmtTime(row.latestNotifyAt) }}</template>

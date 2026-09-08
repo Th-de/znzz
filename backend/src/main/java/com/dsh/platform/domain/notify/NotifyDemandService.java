@@ -33,7 +33,9 @@ public class NotifyDemandService {
     public List<NotifyDemandRow> mine() {
         Long tenantId = UserContext.tenantId();
         String role = UserContext.role();
-        Map<Long, LocalDateTime> joinedAt = joinedTimes(tenantId, role);
+        Map<Long, Boolean> factoryWon = new HashMap<>();
+        Map<Long, Boolean> factoryLost = new HashMap<>();
+        Map<Long, LocalDateTime> joinedAt = joinedTimes(tenantId, role, factoryWon, factoryLost);
         if (joinedAt.isEmpty()) {
             return List.of();
         }
@@ -64,11 +66,18 @@ public class NotifyDemandService {
             if (d == null) {
                 continue;
             }
-            List<NotifyView> notifies = byDemand.getOrDefault(e.getKey(), List.of());
+            List<NotifyView> notifies = new ArrayList<>(byDemand.getOrDefault(e.getKey(), List.of()));
             NotifyDemandRow row = new NotifyDemandRow();
             row.setDemandId(d.getId());
             row.setTitle(d.getTitle());
             row.setStatus(d.getStatus());
+            boolean lostOnly = "FACTORY".equals(role)
+                    && Boolean.TRUE.equals(factoryLost.get(d.getId()))
+                    && !Boolean.TRUE.equals(factoryWon.get(d.getId()));
+            if (lostOnly) {
+                row.setStatus("LOSE");
+                ensureLoseNotify(notifies, d);
+            }
             row.setBidAt(e.getValue());
             if (!notifies.isEmpty()) {
                 row.setLatestNotifyAt(notifies.get(0).getCreatedAt());
@@ -83,7 +92,8 @@ public class NotifyDemandService {
     }
 
     /** 买家：自己发布的需求；工厂：自己报过名的需求。 */
-    private Map<Long, LocalDateTime> joinedTimes(Long tenantId, String role) {
+    private Map<Long, LocalDateTime> joinedTimes(Long tenantId, String role,
+                                                Map<Long, Boolean> factoryWon, Map<Long, Boolean> factoryLost) {
         Map<Long, LocalDateTime> out = new LinkedHashMap<>();
         if ("FACTORY".equals(role)) {
             List<Quotation> qs = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
@@ -94,6 +104,12 @@ public class NotifyDemandService {
                 LocalDateTime old = out.get(q.getDemandId());
                 if (old == null || (at != null && at.isBefore(old))) {
                     out.put(q.getDemandId(), at);
+                }
+                if ("WIN".equals(q.getStatus())) {
+                    factoryWon.put(q.getDemandId(), true);
+                }
+                if ("LOSE".equals(q.getStatus())) {
+                    factoryLost.put(q.getDemandId(), true);
                 }
             }
             return out;
@@ -108,6 +124,24 @@ public class NotifyDemandService {
             }
         }
         return out;
+    }
+
+    /** 落选当时未写库的历史数据，列表里补一条落选通知。 */
+    private void ensureLoseNotify(List<NotifyView> notifies, Demand d) {
+        for (NotifyView v : notifies) {
+            if (v.getTitle() != null && v.getTitle().startsWith("已落选#")) {
+                return;
+            }
+        }
+        NotifyView v = new NotifyView();
+        v.setDemandId(d.getId());
+        v.setTitle("已落选#" + d.getId());
+        v.setContent("需求「" + d.getTitle() + "」方案已确定，本厂未入选，报名状态已变为已落选。后续不再推送该需求相关通知。");
+        v.setIsRead(1);
+        v.setLink("/factory/quotations/" + d.getId());
+        v.setAction("查看报名");
+        v.setCreatedAt(notifies.isEmpty() ? d.getUpdatedAt() : notifies.get(0).getCreatedAt());
+        notifies.add(0, v);
     }
 
     private static boolean duplicateNotify(List<NotifyView> bucket, NotifyView view) {
