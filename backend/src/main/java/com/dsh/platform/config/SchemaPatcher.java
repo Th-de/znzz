@@ -69,6 +69,8 @@ public class SchemaPatcher {
                 "ALTER TABLE `order` ADD COLUMN contract_issue_end_at DATETIME NULL COMMENT '合同发布截止'");
         patchColumn("order", "contract_sign_end_at",
                 "ALTER TABLE `order` ADD COLUMN contract_sign_end_at DATETIME NULL COMMENT '合同签署截止'");
+        widenVarchar("credit_event", "type", 32,
+                "ALTER TABLE credit_event MODIFY COLUMN type VARCHAR(32) NOT NULL COMMENT '信用事件类型'");
         dropColumn("process", "quantity");
         backfillDeliveredQty();
         patchUniqueIndex("sys_user", "uk_phone",
@@ -126,6 +128,25 @@ public class SchemaPatcher {
             log.info("已为 {}.{} 补唯一索引", table, index);
         } catch (Exception e) {
             log.warn("补唯一索引 {}.{} 失败: {}", table, index, e.getMessage());
+        }
+    }
+
+    private void widenVarchar(String table, String column, int minLength, String sql) {
+        try {
+            Integer length = jdbcTemplate.queryForObject(
+                    """
+                    SELECT CHARACTER_MAXIMUM_LENGTH
+                    FROM information_schema.COLUMNS
+                    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?
+                    """,
+                    Integer.class, table, column);
+            if (length != null && length >= minLength) {
+                return;
+            }
+            jdbcTemplate.execute(sql);
+            log.info("已扩展 {}.{} 至 VARCHAR({})", table, column, minLength);
+        } catch (Exception e) {
+            log.warn("扩展 {}.{} 失败: {}", table, column, e.getMessage());
         }
     }
 

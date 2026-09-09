@@ -662,7 +662,7 @@ onMounted(async () => {
   font-size: 16px;
   line-height: 32px;
 }
-.step-btn:hover { color: #409eff; }
+.step-btn:hover { color: #533afd; }
 .step-num {
   flex: 1;
   text-align: center;

@@ -321,10 +321,9 @@ public class AiSolutionGenerator {
             if (items.isEmpty()) {
                 continue;
             }
-            String type = scheme.path("type").asText("AI" + i);
-            if (!type.startsWith("AI")) {
-                type = "AI" + i;
-            }
+            // 业务编号必须按最终通过校验的方案连续编号。不能沿用模型返回的 AI2/AI3，
+            // 因为前面的候选可能在水合校验时被丢弃，导致首个可见方案从 AI3 开始。
+            String type = "AI" + i;
             result.add(new SolutionCombo(type, scoreOf(items), items, packRationale(scheme)));
             i++;
         }

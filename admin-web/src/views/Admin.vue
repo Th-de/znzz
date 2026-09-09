@@ -524,19 +524,38 @@
         <div v-if="!fundEnterprise">
         <div class="toolbar"><span class="title">资金总览</span><el-button @click="loadFundViews">刷新</el-button></div>
         <el-card shadow="never" class="trend-card">
-          <div class="trend-head">近 30 天资金流水趋势</div>
-          <div class="trend-plot" v-if="fundTrendPoints.line">
+          <div class="trend-head">
+            <div>
+              <span>近 30 天资金流水</span>
+              <small>按日汇总 · 人民币</small>
+            </div>
+            <strong>¥ {{ fmtAmt(fundTrendTotal) }}</strong>
+          </div>
+          <div class="trend-plot" v-if="fundTrendPoints.hasActivity">
             <div class="trend-y">
               <span v-for="(t, i) in fundTrendPoints.yTicks.slice().reverse()" :key="i">{{ t }}</span>
             </div>
             <div class="trend-plot-main">
               <div class="trend-svg-wrap" @mousemove="onTrendMove" @mouseleave="fundTrendHover = null">
-                <svg class="trend-svg" viewBox="0 0 640 180" preserveAspectRatio="none">
-                  <line v-for="(y, i) in fundTrendPoints.gridYs" :key="'g'+i" x1="0" :y1="y" x2="640" :y2="y" stroke="#ebeef5" stroke-width="1" />
-                  <line v-if="fundTrendHover" :x1="fundTrendHover.x" :x2="fundTrendHover.x" y1="0" y2="180" stroke="#2B6BFF" stroke-width="1" stroke-dasharray="3 3" />
-                  <polyline :points="fundTrendPoints.line" fill="none" stroke="#2B6BFF" stroke-width="2.5" stroke-linejoin="round" />
-                  <circle v-for="(p, i) in fundTrendPoints.dots" :key="'d'+i" :cx="p.x" :cy="p.y" r="3" fill="#2B6BFF" />
-                  <circle v-if="fundTrendHover" :cx="fundTrendHover.x" :cy="fundTrendHover.y" r="5" fill="#fff" stroke="#2B6BFF" stroke-width="2" />
+                <svg class="trend-svg" viewBox="0 0 640 220" preserveAspectRatio="none">
+                  <defs>
+                    <linearGradient id="fundArea" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stop-color="#533afd" stop-opacity="0.28" />
+                      <stop offset="100%" stop-color="#7c6ffe" stop-opacity="0.02" />
+                    </linearGradient>
+                    <filter id="fundGlow" x="-20%" y="-20%" width="140%" height="140%">
+                      <feGaussianBlur stdDeviation="2.4" result="b" />
+                      <feMerge>
+                        <feMergeNode in="b" />
+                        <feMergeNode in="SourceGraphic" />
+                      </feMerge>
+                    </filter>
+                  </defs>
+                  <line v-for="(y, i) in fundTrendPoints.gridYs" :key="'g'+i" x1="0" :y1="y" x2="640" :y2="y" stroke="#e6e8f5" stroke-width="1" />
+                  <polygon v-if="fundTrendPoints.area" :points="fundTrendPoints.area" fill="url(#fundArea)" ref="trendArea" />
+                  <line v-if="fundTrendHover" :x1="fundTrendHover.x" :x2="fundTrendHover.x" y1="0" y2="220" stroke="#7c6ffe" stroke-width="1" stroke-dasharray="3 3" />
+                  <polyline ref="trendLine" :points="fundTrendPoints.line" fill="none" stroke="#533afd" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round" filter="url(#fundGlow)" />
+                  <circle v-if="fundTrendHover" :cx="fundTrendHover.x" :cy="fundTrendHover.y" r="5.5" fill="#fff" stroke="#533afd" stroke-width="2" />
                 </svg>
                 <div
                   v-if="fundTrendHover"
@@ -552,14 +571,20 @@
               </div>
             </div>
           </div>
-          <p v-if="!fundTrend.length" class="hint">暂无近 30 天流水</p>
+          <div v-else class="trend-empty">
+            <div class="trend-empty-mark">
+              <i></i><i></i><i></i><i></i><i></i>
+            </div>
+            <strong>近 30 天暂无资金变动</strong>
+            <span>产生托管、佣金或结算流水后，将在此显示趋势</span>
+          </div>
         </el-card>
-        <el-row :gutter="12" style="margin-bottom:16px">
-          <el-col :span="5"><el-card shadow="never"><div class="kpi">意向冻结</div><div class="kpi-v">¥ {{ fundOverview.intentionFrozenNet || 0 }}</div></el-card></el-col>
-          <el-col :span="5"><el-card shadow="never"><div class="kpi">保证金冻结</div><div class="kpi-v">¥ {{ fundOverview.depositFrozenNet || 0 }}</div></el-card></el-col>
-          <el-col :span="5"><el-card shadow="never"><div class="kpi">平台托管</div><div class="kpi-v">¥ {{ fundOverview.platformEscrow || 0 }}</div></el-card></el-col>
-          <el-col :span="5"><el-card shadow="never"><div class="kpi">佣金累计</div><div class="kpi-v">¥ {{ fundOverview.commissionTotal || 0 }}</div></el-card></el-col>
-          <el-col :span="4"><el-card shadow="never"><div class="kpi">平台余额</div><div class="kpi-v">¥ {{ fundOverview.platformBalance || 0 }}</div></el-card></el-col>
+        <el-row :gutter="16" class="fund-kpis">
+          <el-col :span="5"><el-card shadow="never" class="fund-kpi-card" tabindex="0" @click="openFundDetails('INTENTION')" @keyup.enter="openFundDetails('INTENTION')"><div class="kpi">意向冻结 <span>查看明细 →</span></div><div class="kpi-v"><CountUp prefix="¥ " :value="fundOverview.intentionFrozenNet || 0" /></div></el-card></el-col>
+          <el-col :span="5"><el-card shadow="never" class="fund-kpi-card" tabindex="0" @click="openFundDetails('DEPOSIT')" @keyup.enter="openFundDetails('DEPOSIT')"><div class="kpi">保证金冻结 <span>查看明细 →</span></div><div class="kpi-v"><CountUp prefix="¥ " :value="fundOverview.depositFrozenNet || 0" /></div></el-card></el-col>
+          <el-col :span="5"><el-card shadow="never" class="fund-kpi-card" tabindex="0" @click="openFundDetails('ESCROW')" @keyup.enter="openFundDetails('ESCROW')"><div class="kpi">平台托管 <span>查看明细 →</span></div><div class="kpi-v"><CountUp prefix="¥ " :value="fundOverview.platformEscrow || 0" /></div></el-card></el-col>
+          <el-col :span="5"><el-card shadow="never" class="fund-kpi-card" tabindex="0" @click="openFundDetails('COMMISSION')" @keyup.enter="openFundDetails('COMMISSION')"><div class="kpi">佣金累计 <span>查看明细 →</span></div><div class="kpi-v"><CountUp prefix="¥ " :value="fundOverview.commissionTotal || 0" /></div></el-card></el-col>
+          <el-col :span="4"><el-card shadow="never"><div class="kpi">平台余额</div><div class="kpi-v"><CountUp prefix="¥ " :value="fundOverview.platformBalance || 0" /></div></el-card></el-col>
         </el-row>
         <el-tabs v-model="fundTab">
           <el-tab-pane label="需求流水" name="byDemand" />
@@ -652,6 +677,19 @@
           </PagedBox>
         </div>
       </div>
+      <el-dialog v-model="fundDetailOpen" :title="fundDetailTitle" width="860px">
+        <PagedBox v-if="fundDetailRows.length" :data="fundDetailRows" :page-size="10" v-slot="{ rows }">
+          <el-table :data="rows" border>
+            <el-table-column label="时间" width="165"><template #default="{ row }">{{ fmtTime(row.createdAt) }}</template></el-table-column>
+            <el-table-column label="需求" min-width="160"><template #default="{ row }">{{ row.demandTitle || (row.demandId ? '#' + row.demandId : '-') }}</template></el-table-column>
+            <el-table-column prop="enterpriseName" label="资金主体" min-width="150" />
+            <el-table-column label="类型" width="110"><template #default="{ row }">{{ label(FUND_TYPE, row.type) }}</template></el-table-column>
+            <el-table-column label="方向" width="90"><template #default="{ row }">{{ label(FUND_DIR, row.direction) }}</template></el-table-column>
+            <el-table-column label="金额" width="120" align="right"><template #default="{ row }">¥ {{ fmtAmt(row.amount) }}</template></el-table-column>
+          </el-table>
+        </PagedBox>
+        <el-empty v-else description="暂无相关资金明细" :image-size="64" />
+      </el-dialog>
 
       <!-- 用户信息管理 -->
       <div v-if="active==='enterprises'">
@@ -669,19 +707,31 @@
           <el-tab-pane label="质检方" name="INSPECTION" />
         </el-tabs>
         <PagedBox :data="enterprises" v-slot="{ rows }">
-        <el-table :data="rows" border>
-          <el-table-column prop="id" label="企业ID" width="80" />
-          <el-table-column prop="name" label="企业名称" min-width="140" />
-          <el-table-column prop="creditCode" label="信用代码" min-width="150" />
-          <el-table-column prop="contactName" label="联系人" width="100" />
-          <el-table-column prop="address" label="地址" min-width="160" />
-          <el-table-column prop="creditScore" label="信用分" width="80" />
-          <el-table-column prop="authStatus" label="认证" width="90" />
-          <el-table-column label="注册时间" width="160">
+        <el-table :data="rows" border class="enterprise-table">
+          <el-table-column prop="name" label="企业" min-width="150" show-overflow-tooltip />
+          <el-table-column prop="creditCode" label="统一信用代码" width="150" show-overflow-tooltip />
+          <el-table-column prop="contactName" label="联系人" width="90" align="center" />
+          <el-table-column prop="address" label="地址" min-width="180" show-overflow-tooltip />
+          <el-table-column label="企业状态" width="110" align="center">
+            <template #default="{ row }">
+              <div class="credit-cell">
+                <strong>{{ row.creditScore ?? '-' }}</strong>
+                <span>{{ row.authStatus === 'APPROVED' ? '已认证' : (row.authStatus === 'REJECTED' ? '未通过' : '待认证') }}</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="注册时间" width="150" align="center">
             <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
           </el-table-column>
-          <el-table-column prop="accountPhone" label="登录手机" width="120" />
-          <el-table-column label="用户密码" width="150">
+          <el-table-column label="登录账号" width="135">
+            <template #default="{ row }">
+              <div class="account-cell">
+                <strong>{{ row.accountPhone || '-' }}</strong>
+                <span>{{ row.realName || '未设置姓名' }}</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="密码" width="120" align="center">
             <template #default="{ row }">
               <span v-if="row.accountPassword" class="pwd-cell">
                 <span class="pwd-text" :class="{ 'pwd-mask': !pwdShown[row.id] }">{{ pwdShown[row.id] ? row.accountPassword : '••••••••' }}</span>
@@ -693,15 +743,14 @@
               <span v-else>-</span>
             </template>
           </el-table-column>
-          <el-table-column prop="realName" label="账号姓名" width="100" />
-          <el-table-column label="账号状态" width="90">
+          <el-table-column label="状态" width="80" align="center">
             <template #default="{ row }">
               <el-tag v-if="row.userStatus === 'DISABLED'" type="danger" size="small">停用</el-tag>
               <el-tag v-else-if="row.userStatus" type="success" size="small">启用</el-tag>
               <span v-else>-</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="220" fixed="right">
+          <el-table-column label="操作" :width="entTab==='FACTORY' ? 210 : 150" align="center">
             <template #default="{ row }">
               <el-button v-if="entTab==='FACTORY'" size="small" type="primary" plain @click="openFactoryProfile(row.id)">详情</el-button>
               <el-button size="small" @click="openEntEdit(row)">编辑</el-button>
@@ -919,7 +968,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, reactive, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, reactive, computed, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api'
 import { listAll, getDetail, getCoverage, listBidFactories, returnToBuyer, audit as auditDemand } from '../api/demand'
@@ -929,11 +978,13 @@ import CoverageBars from '../components/CoverageBars.vue'
 import BuyerInfoBlock from '../components/BuyerInfoBlock.vue'
 import IntentionCountdown from '../components/IntentionCountdown.vue'
 import PagedBox from '../components/PagedBox.vue'
+import CountUp from '../components/CountUp.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { View, Hide } from '@element-plus/icons-vue'
 import AppHeader from '../components/AppHeader.vue'
 import { DEMAND_STATUS, FUND_TYPE, FUND_DIR, STAGE_STATUS, DEVICE_STATUS, ESCROW_STATUS, label, fmtTime, fmtDateLine, fmtTimeLine, deviceStatusType, formatInspectMode, stageProgressLabel, nestReworkPeriods, canShowInspectReport, factoryWorkSpan } from '../utils/labels'
 import { getRole, clearAuth } from '../utils/auth'
+import { drawStroke, fillArea } from '../motion/chart'
 
 const router = useRouter()
 const role = getRole()
@@ -984,18 +1035,26 @@ const fundAccounts = ref([])
 const fundTrend = ref([])
 const fundTab = ref('byDemand')
 const fundEnterprise = ref(null)
+const fundDetailOpen = ref(false)
+const fundDetailTitle = ref('')
+const fundDetailRows = ref([])
 const fundTrendHover = ref(null)
+const trendLine = ref(null)
+const trendArea = ref(null)
 const fundBuyers = computed(() => (fundAccounts.value || []).filter(a => a.enterpriseType === 'BUYER'))
 const fundFactories = computed(() => (fundAccounts.value || []).filter(a => a.enterpriseType === 'FACTORY'))
+const fundTrendTotal = computed(() => (fundTrend.value || []).reduce((sum, item) => sum + (Number(item.amount) || 0), 0))
 const fundTrendPoints = computed(() => {
   const list = fundTrend.value || []
-  if (!list.length) return { line: '', yTicks: [], gridYs: [], dots: [] }
+  if (!list.length) return { line: '', area: '', yTicks: [], gridYs: [], dots: [], hasActivity: false }
   const vals = list.map(d => Number(d.amount) || 0)
+  const hasActivity = vals.some(value => value !== 0)
+  if (!hasActivity) return { line: '', area: '', yTicks: [], gridYs: [], dots: [], hasActivity: false }
   const max = niceTrendMax(Math.max(...vals, 0))
   const w = 640
-  const h = 180
-  const padTop = 8
-  const padBot = 8
+  const h = 220
+  const padTop = 16
+  const padBot = 12
   const n = list.length
   const innerH = h - padTop - padBot
   const dots = list.map((d, i) => {
@@ -1018,7 +1077,11 @@ const fundTrendPoints = computed(() => {
     yTicks.push(formatTrendY((max * i) / steps))
     gridYs.push((h - padBot - (innerH * i) / steps).toFixed(1))
   }
-  return { line: dots.map(p => `${p.x},${p.y}`).join(' '), yTicks, gridYs, dots }
+  const line = dots.map(p => `${p.x},${p.y}`).join(' ')
+  const area = dots.length
+    ? `${dots[0].x},${h} ${line} ${dots[dots.length - 1].x},${h}`
+    : ''
+  return { line, area, yTicks, gridYs, dots, hasActivity: true }
 })
 const fundTrendAxis = computed(() => {
   const list = fundTrend.value || []
@@ -1478,6 +1541,17 @@ async function loadFundViews() {
 }
 async function openFundEnterprise(row) {
   fundEnterprise.value = await api.get(`/fund/tenant/${row.tenantId}`)
+}
+async function openFundDetails(category) {
+  const titles = {
+    INTENTION: '意向冻结明细',
+    DEPOSIT: '保证金冻结明细',
+    ESCROW: '平台托管明细',
+    COMMISSION: '佣金累计明细',
+  }
+  fundDetailTitle.value = titles[category] || '资金明细'
+  fundDetailRows.value = await api.get(`/fund/details/${category}`)
+  fundDetailOpen.value = true
 }
 async function loadEnterprises() {
   enterprises.value = await api.get('/enterprise/manage', {
@@ -2005,6 +2079,13 @@ function logout() { clearAuth(); router.push('/login') }
 
 function ignore() { /* 接口错误已由 axios 拦截器提示 */ }
 
+watch(() => fundTrendPoints.value.line, async (line) => {
+  if (!line) return
+  await nextTick()
+  drawStroke(trendLine.value, 1.1)
+  fillArea(trendArea.value, 0.35)
+})
+
 watch(active, (v) => {
   if (v !== 'funds') {
     fundEnterprise.value = null
@@ -2065,10 +2146,35 @@ onUnmounted(() => {
   position: sticky;
   bottom: 0;
 }
-.toolbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+.toolbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:18px; }
 .title { font-size:16px; font-weight:bold; }
 .audit-obj { display: inline-flex; align-items: center; gap: 8px; }
 .audit-obj-id { font-variant-numeric: tabular-nums; color: #303133; font-weight: 600; }
+.credit-cell,
+.account-cell { display: flex; flex-direction: column; justify-content: center; gap: 4px; min-height: 38px; line-height: 1.2; }
+.credit-cell strong,
+.account-cell strong { color: #0d253d; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.credit-cell span,
+.account-cell span { color: #7b8798; font-size: 11px; }
+.enterprise-table :deep(.el-table__body-wrapper) { overflow-x: auto; }
+.enterprise-table :deep(td.el-table__cell) {
+  height: 58px;
+  padding-top: 0;
+  padding-bottom: 0;
+  vertical-align: middle;
+}
+.enterprise-table :deep(td.el-table__cell > .cell) {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+}
+.enterprise-table :deep(td.is-center > .cell) {
+  justify-content: center;
+}
+.enterprise-table :deep(.pwd-cell) {
+  min-height: 32px;
+  align-items: center;
+}
 .file-preview { white-space: pre-wrap; word-break: break-word; margin: 0; font-size: 13px; line-height: 1.6; }
 .hint { color: #909399; font-size: 12px; margin: 4px 0 8px; }
 .dt-2 { line-height: 1.35; }
@@ -2077,7 +2183,7 @@ onUnmounted(() => {
 .pwd-text { font-variant-numeric: tabular-nums; }
 .pwd-mask { letter-spacing: -3px; }
 .pwd-eye { cursor: pointer; color: #909399; font-size: 16px; }
-.pwd-eye:hover { color: #409eff; }
+.pwd-eye:hover { color: #533afd; }
 .confirmed-plan { margin-top: 16px; }
 .proc-block { margin-bottom: 14px; padding-bottom: 4px; border-bottom: 1px solid #ebeef5; }
 .proc-block:last-of-type { border-bottom: none; }
@@ -2103,39 +2209,93 @@ onUnmounted(() => {
   color: #606266;
 }
 .total-bar strong { font-size: 16px; color: #303133; font-variant-numeric: tabular-nums; }
-.kpi { color:#909399; font-size:12px; }
-.kpi-v { font-size:18px; font-weight:600; margin-top:6px; }
-.trend-card { margin-bottom: 16px; }
-.trend-head { font-size: 14px; font-weight: 600; color: #303133; margin-bottom: 8px; }
-.trend-plot { display: flex; align-items: stretch; gap: 8px; }
+.kpi { color:#64748d; font-size:12px; }
+.kpi span { float: right; color: #6d5df5; font-size: 10px; opacity: 0; transition: opacity 160ms ease; }
+.kpi-v { font-size:20px; font-weight:600; margin-top:8px; color:#0d253d; }
+.fund-kpi-card { cursor: pointer; transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease; }
+.fund-kpi-card:hover,
+.fund-kpi-card:focus-visible {
+  transform: translateY(-2px);
+  border-color: rgba(83, 58, 253, 0.22) !important;
+  box-shadow: 0 12px 28px rgba(48, 41, 120, 0.1) !important;
+  outline: none;
+}
+.fund-kpi-card:hover .kpi span,
+.fund-kpi-card:focus-visible .kpi span { opacity: 1; }
+.trend-card {
+  margin-bottom: 20px;
+  padding-bottom: 4px;
+  background: rgba(255, 255, 255, 0.72) !important;
+  border: 1px solid rgba(255, 255, 255, 0.8) !important;
+}
+.trend-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 18px;
+  color: #0d253d;
+}
+.trend-head span { display: block; font-size: 15px; font-weight: 600; }
+.trend-head small { display: block; margin-top: 5px; color: #64748d; font-size: 11px; font-weight: 400; }
+.trend-head strong { font-size: 24px; font-weight: 500; letter-spacing: -0.025em; font-variant-numeric: tabular-nums; }
+.trend-plot { display: flex; align-items: stretch; gap: 12px; }
 .trend-y {
-  width: 48px;
+  width: 52px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   align-items: flex-end;
-  color: #909399;
+  color: #64748d;
   font-size: 12px;
-  padding: 8px 0;
+  padding: 12px 0;
   font-variant-numeric: tabular-nums;
 }
 .trend-plot-main { flex: 1; min-width: 0; }
 .trend-svg-wrap { position: relative; cursor: crosshair; }
-.trend-svg { width: 100%; height: 180px; background: #fafbfc; border-radius: 8px; display: block; }
+.trend-svg {
+  width: 100%;
+  height: 220px;
+  background: linear-gradient(180deg, #f4f2ff, #f8faff);
+  border-radius: 12px;
+  display: block;
+}
 .trend-tip {
   position: absolute;
-  top: 8px;
+  top: 10px;
   z-index: 2;
   pointer-events: none;
-  background: #303133;
+  background: rgba(28, 30, 84, 0.88);
   color: #fff;
-  padding: 6px 10px;
-  border-radius: 4px;
+  padding: 8px 12px;
+  border-radius: 10px;
   font-size: 12px;
   line-height: 1.4;
   white-space: nowrap;
-  box-shadow: 0 2px 8px rgba(0,0,0,.18);
+  box-shadow: 0 8px 22px rgba(28, 30, 84, 0.22);
 }
 .trend-tip-amt { font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
-.trend-axis { display: flex; justify-content: space-between; color: #909399; font-size: 12px; margin-top: 6px; }
+.trend-axis { display: flex; justify-content: space-between; color: #64748d; font-size: 12px; margin-top: 10px; }
+.trend-empty {
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(83, 58, 253, 0.08);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 50% 20%, rgba(126, 177, 255, 0.18), transparent 48%),
+    linear-gradient(180deg, #f7f6ff, #fbfcff);
+}
+.trend-empty-mark { height: 42px; display: flex; align-items: flex-end; gap: 5px; margin-bottom: 16px; }
+.trend-empty-mark i { width: 5px; border-radius: 8px; background: linear-gradient(180deg, #7c6ffe, #533afd); opacity: 0.72; }
+.trend-empty-mark i:nth-child(1) { height: 13px; }
+.trend-empty-mark i:nth-child(2) { height: 25px; }
+.trend-empty-mark i:nth-child(3) { height: 18px; }
+.trend-empty-mark i:nth-child(4) { height: 36px; }
+.trend-empty-mark i:nth-child(5) { height: 28px; }
+.trend-empty strong { color: #273951; font-size: 14px; font-weight: 600; }
+.trend-empty span { margin-top: 7px; color: #7b8798; font-size: 12px; }
+.fund-kpis { margin-bottom: 20px; }
 </style>

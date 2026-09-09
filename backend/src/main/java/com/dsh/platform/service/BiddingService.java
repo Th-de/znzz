@@ -9,13 +9,11 @@ import com.dsh.platform.domain.fund.FundLedger;
 import com.dsh.platform.domain.notify.SiteNotify;
 import com.dsh.platform.domain.pay.PaymentChannel;
 import com.dsh.platform.dto.BiddingDtos.*;
-import com.dsh.platform.entity.Attachment;
 import com.dsh.platform.entity.Contract;
 import com.dsh.platform.entity.Demand;
 import com.dsh.platform.entity.Order;
 import com.dsh.platform.entity.Quotation;
 import com.dsh.platform.entity.Enterprise;
-import com.dsh.platform.mapper.AttachmentMapper;
 import com.dsh.platform.mapper.EnterpriseMapper;
 import com.dsh.platform.mapper.ContractMapper;
 import com.dsh.platform.mapper.DemandMapper;
@@ -51,7 +49,6 @@ public class BiddingService {
     private final AuditService auditService;
     private final OrderMapper orderMapper;
     private final ContractMapper contractMapper;
-    private final AttachmentMapper attachmentMapper;
     private final CreditScoring creditScoring;
     private final EnterpriseMapper enterpriseMapper;
 
@@ -404,16 +401,12 @@ public class BiddingService {
         String action = actionOf(q, d, c);
 
         if ("SOLUTION_SELECTED".equals(st) || "CONTRACTED".equals(st) || "IN_PRODUCTION".equals(st)) {
-            // 签约期：进入签约=订单创建；买家下发合同后=附件时间。截止=开始+24h，不因工厂签名后移。
-            if (c != null && c.getAttachmentId() != null) {
-                Attachment a = attachmentMapper.selectById(c.getAttachmentId());
-                if (a != null && a.getCreatedAt() != null) {
-                    start = a.getCreatedAt();
-                }
-                end = start == null ? null : start.plusHours(contractSignHours);
-            } else if (o != null && o.getCreatedAt() != null) {
-                start = o.getCreatedAt();
-                end = start.plusHours(contractSignHours);
+            // 工厂签约 24 小时从买家完成全部签字并统一下发时开始，不能从单份上传时间起算。
+            if (o != null && o.getContractSignEndAt() != null) {
+                end = o.getContractSignEndAt();
+                start = end.minusHours(Math.max(contractSignHours, 1));
+            } else {
+                end = null;
             }
             q.setOrderId(o == null ? null : o.getId());
         }
@@ -469,7 +462,8 @@ public class BiddingService {
             if ("SIGNED".equals(c.getStatus())) {
                 return "SIGNED";
             }
-            if (c.getAttachmentId() == null) {
+            if (c.getAttachmentId() == null
+                    || c.getBuyerSign() == null || c.getBuyerSign().isBlank()) {
                 return "WAIT_ISSUE";
             }
             boolean factorySigned = c.getFactorySign() != null && !c.getFactorySign().isBlank();

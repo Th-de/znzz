@@ -33,11 +33,18 @@ public class FundQueryService {
                 .orderByDesc(FundFlow::getId));
         BigDecimal intentionIn = sum(all, "INTENTION", "FREEZE");
         BigDecimal intentionOut = sum(all, "INTENTION", "UNFREEZE");
-        BigDecimal depositIn = sum(all, "DEPOSIT", "FREEZE");
-        BigDecimal depositOut = sum(all, "DEPOSIT", "UNFREEZE").add(sum(all, "DEPOSIT", "OUT"));
-        BigDecimal escrowHeld = sum(all, "ESCROW", "IN").subtract(sum(all, "ESCROW", "OUT"));
-        BigDecimal commission = sum(all, "COMMISSION", "IN");
         Long platformId = platformTenantId();
+        BigDecimal depositIn = sum(all, "DEPOSIT", "FREEZE")
+                .add(sum(all, "BUYER_DEPOSIT", "FREEZE"));
+        BigDecimal depositOut = sum(all, "DEPOSIT", "UNFREEZE")
+                .add(sum(all, "DEPOSIT", "OUT"))
+                .add(sum(all, "BUYER_DEPOSIT", "UNFREEZE"))
+                .add(sum(all, "BUYER_DEPOSIT", "OUT"));
+        // 托管余额只统计平台账户。买家支付时会同时产生买家 OUT 和平台 IN，
+        // 若全租户相减会互相抵消，导致平台托管始终显示 0。
+        BigDecimal escrowHeld = sum(all, "ESCROW", "IN", platformId)
+                .subtract(sum(all, "ESCROW", "OUT", platformId));
+        BigDecimal commission = sum(all, "COMMISSION", "IN", platformId);
         Account platform = accountService.get(platformId);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("intentionFrozenNet", intentionIn.subtract(intentionOut).max(BigDecimal.ZERO));
@@ -47,6 +54,23 @@ public class FundQueryService {
         m.put("platformBalance", platform.getBalance());
         m.put("platformFrozen", platform.getFrozen());
         return m;
+    }
+
+    public List<FundFlow> details(String category) {
+        String key = category == null ? "" : category.trim().toUpperCase(Locale.ROOT);
+        Long platformId = platformTenantId();
+        LambdaQueryWrapper<FundFlow> q = new LambdaQueryWrapper<FundFlow>()
+                .orderByDesc(FundFlow::getId);
+        switch (key) {
+            case "INTENTION" -> q.eq(FundFlow::getType, "INTENTION");
+            case "DEPOSIT" -> q.in(FundFlow::getType, "DEPOSIT", "BUYER_DEPOSIT");
+            case "ESCROW" -> q.eq(FundFlow::getType, "ESCROW")
+                    .eq(FundFlow::getTenantId, platformId);
+            case "COMMISSION" -> q.eq(FundFlow::getType, "COMMISSION")
+                    .eq(FundFlow::getTenantId, platformId);
+            default -> throw new BizException("不支持的资金明细类型");
+        }
+        return enrich(fundFlowMapper.selectList(q));
     }
 
     /** 最近 N 天每日流水总额（绝对值合计），用于趋势图。 */
@@ -105,11 +129,15 @@ public class FundQueryService {
     }
 
     public List<Map<String, Object>> byDemand() {
-        List<FundFlow> all = fundFlowMapper.selectList(new LambdaQueryWrapper<FundFlow>()
-                .isNotNull(FundFlow::getDemandId)
-                .orderByDesc(FundFlow::getId));
+        // 托管双分录只保存 orderId；先补全订单对应的 demandId，再按需求分组，
+        // 否则 ESCROW 流水会在查询阶段被提前过滤。
+        List<FundFlow> all = enrich(fundFlowMapper.selectList(new LambdaQueryWrapper<FundFlow>()
+                .orderByDesc(FundFlow::getId)));
         Map<Long, List<FundFlow>> grouped = new LinkedHashMap<>();
         for (FundFlow f : all) {
+            if (f.getDemandId() == null) {
+                continue;
+            }
             grouped.computeIfAbsent(f.getDemandId(), k -> new ArrayList<>()).add(f);
         }
         List<Map<String, Object>> out = new ArrayList<>();
@@ -119,7 +147,7 @@ public class FundQueryService {
             row.put("demandId", e.getKey());
             row.put("demandTitle", d == null ? "" : d.getTitle());
             row.put("demandStatus", d == null ? "" : d.getStatus());
-            row.put("flows", enrich(e.getValue()));
+            row.put("flows", e.getValue());
             row.put("subtotal", e.getValue().stream()
                     .map(f -> f.getAmount() == null ? BigDecimal.ZERO : f.getAmount())
                     .reduce(BigDecimal.ZERO, BigDecimal::add));
@@ -223,6 +251,17 @@ public class FundQueryService {
         BigDecimal s = BigDecimal.ZERO;
         for (FundFlow f : all) {
             if (type.equals(f.getType()) && direction.equals(f.getDirection()) && f.getAmount() != null) {
+                s = s.add(f.getAmount());
+            }
+        }
+        return s;
+    }
+
+    private BigDecimal sum(List<FundFlow> all, String type, String direction, Long tenantId) {
+        BigDecimal s = BigDecimal.ZERO;
+        for (FundFlow f : all) {
+            if (type.equals(f.getType()) && direction.equals(f.getDirection())
+                    && Objects.equals(tenantId, f.getTenantId()) && f.getAmount() != null) {
                 s = s.add(f.getAmount());
             }
         }

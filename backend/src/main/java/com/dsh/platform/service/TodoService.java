@@ -75,6 +75,15 @@ public class TodoService {
                 out.add(new TodoItem("PAY_STAGE", "有 " + pay.size() + " 笔阶段款待支付托管",
                         buyerDemandLink(first.getOrderId()), pay.size()));
             }
+            List<WorkStage> failed = workStageMapper.selectList(new LambdaQueryWrapper<WorkStage>()
+                    .in(WorkStage::getOrderId, orderIds)
+                    .eq(WorkStage::getStatus, "FAIL"));
+            if (!failed.isEmpty()) {
+                WorkStage first = failed.get(0);
+                out.add(new TodoItem("DECIDE_INSPECTION",
+                        "有 " + failed.size() + " 笔不合格工单待处理，请选择让步、返工或关闭",
+                        buyerDemandLink(first.getOrderId()), failed.size()));
+            }
             List<Contract> unsigned = contractMapper.selectList(new LambdaQueryWrapper<Contract>()
                     .in(Contract::getOrderId, orderIds)
                     .ne(Contract::getStatus, "SIGNED"));
@@ -178,6 +187,7 @@ public class TodoService {
                 .eq(Contract::getTenantId, tid)
                 .ne(Contract::getStatus, "SIGNED"));
         long needSign = contracts.stream().filter(c -> c.getAttachmentId() != null
+                && c.getBuyerSign() != null && !c.getBuyerSign().isBlank()
                 && (c.getFactorySign() == null || c.getFactorySign().isBlank())).count();
         if (needSign > 0) {
             out.add(new TodoItem("SIGN_CONTRACT", "有 " + needSign + " 份合同待你签署",

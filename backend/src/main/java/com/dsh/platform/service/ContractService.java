@@ -85,6 +85,7 @@ public class ContractService {
         if ("FACTORY".equals(UserContext.role())) {
             list = list.stream()
                     .filter(c -> UserContext.tenantId().equals(c.getTenantId()))
+                    .filter(c -> releasedToFactories(c, o))
                     .toList();
         }
         Solution s = solutionMapper.selectById(o.getSolutionId());
@@ -95,7 +96,11 @@ public class ContractService {
     public Contract getMine(Long orderId) {
         Order o = requireOrder(orderId);
         if ("FACTORY".equals(UserContext.role())) {
-            return requireContract(orderId, UserContext.tenantId());
+            Contract mine = requireContract(orderId, UserContext.tenantId());
+            if (!releasedToFactories(mine, o)) {
+                throw new BizException("买家尚未完成全部合同签字并统一下发");
+            }
+            return mine;
         }
         List<Contract> all = listByOrder(orderId);
         if (all.size() == 1) {
@@ -144,6 +149,7 @@ public class ContractService {
     public void upload(Long orderId, Long factoryTenantId, Long attachmentId) {
         Order o = requireOrder(orderId);
         assertBuyer(o);
+        ensureIssueWindowOpen(o);
         if ("COMPLETED".equals(o.getStatus())) {
             throw new BizException("订单已完成，不能再改合同");
         }
@@ -168,7 +174,6 @@ public class ContractService {
         markPendingIfReady(c);
         contractMapper.updateById(c);
         touchFactoryQuotes(o.getDemandId(), factoryTenantId);
-        maybeOpenSignWindow(o);
         auditService.record("买家上传合同", "CONTRACT", c.getId(), "订单#" + orderId + " 工厂#" + factoryTenantId);
     }
 
@@ -182,33 +187,30 @@ public class ContractService {
             return;
         }
         o.setContractSignEndAt(LocalDateTime.now().plusHours(Math.max(contractSignHours, 1)));
+        o.setContractIssueEndAt(null);
         orderMapper.updateById(o);
         Demand d = demandMapper.selectById(o.getDemandId());
         if (d != null) {
-            siteNotify.send(d.getTenantId(), "合同签署期开始#" + o.getId(),
-                    "各厂合同已上传，请于 24 小时内完成签署。逾期未签的工厂将扣除保证金赔偿你。");
+            siteNotify.send(d.getTenantId(), "合同已统一下发#" + o.getId(),
+                    "全部合同已签字并统一下发。工厂签约窗口为 24 小时，逾期未签将按规则处理。");
         }
         for (Contract x : all) {
             siteNotify.send(x.getTenantId(), "请签合同#" + o.getId(),
-                    "买家已下发合同，请在 24 小时内签署。签字将提交给买家确认。");
+                    "买家已统一下发全部合同，请在 24 小时内阅读并签署。");
         }
     }
 
     @Transactional
     public void buyerSign(Long orderId, Long factoryTenantId, boolean read, String sign) {
-        if (factoryTenantId == null) {
-            buyerSignAll(orderId, read, sign);
-            return;
-        }
-        Order o = requireOrder(orderId);
-        assertBuyer(o);
-        applyBuyerSign(requireContract(orderId, factoryTenantId), read, sign);
+        // 买家签字是整单原子操作：只有全部合同上传完毕后才能一次签字、统一下发。
+        buyerSignAll(orderId, read, sign);
     }
 
     @Transactional
     public void buyerSignAll(Long orderId, boolean read, String sign) {
         Order o = requireOrder(orderId);
         assertBuyer(o);
+        ensureIssueWindowOpen(o);
         if (!read) {
             throw new BizException("请先勾选已阅读合同");
         }
@@ -237,6 +239,9 @@ public class ContractService {
             }
             applyBuyerSign(c, true, sign);
         }
+        maybeOpenSignWindow(o);
+        auditService.record("买家统一下发合同", "ORDER", orderId,
+                "全部合同已上传并签字，共" + list.size() + "份；工厂签约窗口24小时");
     }
 
     private void applyBuyerSign(Contract c, boolean read, String sign) {
@@ -264,7 +269,7 @@ public class ContractService {
 
     @Transactional
     public void factorySign(Long orderId, boolean read, String sign) {
-        requireOrder(orderId);
+        Order o = requireOrder(orderId);
         if (!"FACTORY".equals(UserContext.role())) {
             throw new BizException(403, "仅中标工厂可签");
         }
@@ -275,6 +280,12 @@ public class ContractService {
             throw new BizException("请完成手写签名");
         }
         Contract c = requireContract(orderId, UserContext.tenantId());
+        if (!releasedToFactories(c, o)) {
+            throw new BizException("买家尚未完成全部合同签字并统一下发");
+        }
+        if (o.getContractSignEndAt() != null && LocalDateTime.now().isAfter(o.getContractSignEndAt())) {
+            throw new BizException("工厂签约 24 小时窗口已结束");
+        }
         if (c.getAttachmentId() == null) {
             throw new BizException("买家尚未上传与你的合同");
         }
@@ -285,7 +296,6 @@ public class ContractService {
         c.setFactorySign(sign);
         markPendingIfReady(c);
         contractMapper.updateById(c);
-        Order o = orderMapper.selectById(orderId);
         if (o != null) {
             touchFactoryQuotes(o.getDemandId(), UserContext.tenantId());
             Demand d = demandMapper.selectById(o.getDemandId());
@@ -414,6 +424,25 @@ public class ContractService {
                 && c.getFactoryRead() != null && c.getFactoryRead() == 1
                 && c.getFactorySign() != null && !c.getFactorySign().isBlank()) {
             c.setStatus("PENDING_REVIEW");
+        }
+    }
+
+    private boolean releasedToFactories(Contract c, Order o) {
+        return c != null
+                && c.getAttachmentId() != null
+                && c.getBuyerSign() != null
+                && !c.getBuyerSign().isBlank()
+                && o != null
+                && o.getContractSignEndAt() != null;
+    }
+
+    private void ensureIssueWindowOpen(Order o) {
+        if (o.getContractSignEndAt() != null) {
+            throw new BizException("合同已统一下发，不能再修改");
+        }
+        if (o.getContractIssueEndAt() != null
+                && LocalDateTime.now().isAfter(o.getContractIssueEndAt())) {
+            throw new BizException("合同上传与统一下发的 48 小时窗口已结束");
         }
     }
 

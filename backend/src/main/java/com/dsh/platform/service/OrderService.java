@@ -1205,12 +1205,8 @@ public class OrderService {
             try {
                 List<Contract> cs = contractMapper.selectList(new LambdaQueryWrapper<Contract>()
                         .eq(Contract::getOrderId, o.getId()));
-                boolean missing = cs.stream().anyMatch(c -> c.getAttachmentId() == null);
-                if (!missing) {
-                    continue;
-                }
                 forfeitBuyerAllToCombo(o, "ISSUE-TIMEOUT-" + o.getId(),
-                        "买家未在 48 小时内发布全部合同，已扣除全部保证金按方案件数比重赔偿工厂。");
+                        "买家未在 48 小时内完成全部合同上传、签字与统一下发，已扣除全部保证金并按方案件数比重赔偿工厂。");
             } catch (Exception ignored) {
                 // 单笔失败不影响其它订单
             }

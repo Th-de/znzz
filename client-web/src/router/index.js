@@ -1,8 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
 const routes = [
+  { path: '/', component: () => import('../views/Landing.vue') },
   { path: '/login', component: () => import('../views/Login.vue') },
-  { path: '/', redirect: '/login' },
   {
     path: '/buyer',
     component: () => import('../layouts/BuyerLayout.vue'),
@@ -41,7 +41,7 @@ const router = createRouter({
 })
 
 router.beforeEach((to) => {
-  if (to.path === '/login') return true
+  if (to.path === '/login' || to.path === '/') return true
   const token = sessionStorage.getItem('token')
   if (!token) return '/login'
   const role = sessionStorage.getItem('role')

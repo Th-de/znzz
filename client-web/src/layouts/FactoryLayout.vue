@@ -2,26 +2,32 @@
   <div class="shell">
     <AppHeader :items="menus" :active="active" role-label="工厂端" @logout="logout" />
     <div class="app-body">
-      <div class="page-shell">
+      <div class="page-shell" ref="body">
         <div class="page-bar">
           <div style="display:flex;align-items:center;gap:8px">
             <el-button v-if="backTo" link type="primary" @click="goBack">← 返回</el-button>
             <h2>{{ title }}</h2>
           </div>
         </div>
-        <router-view />
+        <router-view v-slot="{ Component }">
+          <transition name="page-rise" mode="out-in">
+            <component :is="Component" :key="route.path" />
+          </transition>
+        </router-view>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '../components/AppHeader.vue'
+import { refreshWorkspace } from '../motion/workspace'
 
 const route = useRoute()
 const router = useRouter()
+const body = ref(null)
 const menus = [
   { index: '/factory/home', label: '工作台' },
   {
@@ -56,4 +62,7 @@ function logout() {
   sessionStorage.clear()
   router.push('/login')
 }
+
+onMounted(() => refreshWorkspace(body.value))
+watch(() => route.fullPath, () => refreshWorkspace(body.value))
 </script>

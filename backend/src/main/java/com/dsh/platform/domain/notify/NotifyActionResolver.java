@@ -88,6 +88,11 @@ public class NotifyActionResolver {
             v.setAction("去支付");
             return;
         }
+        if (title.startsWith("请处理质检结果#")) {
+            v.setLink(buyerOrderByStage(hashId));
+            v.setAction("去处理");
+            return;
+        }
         if (title.startsWith("阶段不合格#") || title.startsWith("阶段问卷#")) {
             if (factory) {
                 v.setLink(factoryBidLink(v.getDemandId()));
@@ -203,6 +208,7 @@ public class NotifyActionResolver {
                 || "去上传合同".equals(action)
                 || "去签署".equals(action)
                 || "去支付".equals(action)
+                || "去处理".equals(action)
                 || "去填问卷".equals(action)
                 || "去看需求".equals(action)
                 || "去确认".equals(action)
@@ -222,6 +228,7 @@ public class NotifyActionResolver {
             case "去签署" -> canSign(title, st);
             case "去确认" -> st == DemandStatus.SOLUTION_SELECTED;
             case "去支付" -> canPay(title);
+            case "去处理" -> canDecideInspection(title);
             case "去填问卷" -> canSurvey(title);
             case "去看需求" -> st == DemandStatus.PUBLISHED;
             default -> true;
@@ -258,6 +265,15 @@ public class NotifyActionResolver {
         }
         String escrow = ws.getEscrowStatus();
         return "PENDING_PAY".equals(escrow);
+    }
+
+    private boolean canDecideInspection(String title) {
+        Long stageId = trailingId(title);
+        if (stageId == null) {
+            return false;
+        }
+        WorkStage ws = workStageMapper.selectById(stageId);
+        return ws != null && "FAIL".equals(ws.getStatus());
     }
 
     private boolean canSurvey(String title) {

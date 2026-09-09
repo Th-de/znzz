@@ -313,7 +313,7 @@ CREATE TABLE IF NOT EXISTS fund_flow (
 CREATE TABLE IF NOT EXISTS credit_event (
   id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   tenant_id    BIGINT UNSIGNED NOT NULL,
-  type         VARCHAR(16) NOT NULL,
+  type         VARCHAR(32) NOT NULL,
   score_change INT NOT NULL,
   ref_type     VARCHAR(32) DEFAULT NULL,
   ref_id       BIGINT UNSIGNED DEFAULT NULL,

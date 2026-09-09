@@ -403,13 +403,13 @@
         <el-table-column label="操作" width="140">
           <template #default="{ row }">
             <el-button v-if="row.status!=='SIGNED' && !row.attachmentId" size="small" type="primary" @click="openUpload(row)">上传合同</el-button>
-            <span v-else-if="row.attachmentId && row.status!=='SIGNED'" class="hint">已下发</span>
+            <span v-else-if="row.attachmentId && row.status!=='SIGNED'" class="hint">已上传，待统一下发</span>
           </template>
         </el-table-column>
       </el-table>
-      <el-button type="success" style="margin-top:12px" :disabled="!canUnifySign" @click="openUnifySign">签名</el-button>
-      <span v-if="!allContractsUploaded" class="hint" style="margin-left:10px">请先为每个工厂分别上传合同，下发后不可更换</span>
-      <span v-else-if="buyerAllSigned && !canConfirmDispatch" class="hint" style="margin-left:10px">买家已签名，等待各厂签署</span>
+      <el-button type="success" style="margin-top:12px" :disabled="!canUnifySign" @click="openUnifySign">签字并统一下发</el-button>
+      <span v-if="!allContractsUploaded" class="hint" style="margin-left:10px">请在 48 小时内为每个工厂上传合同；统一下发前工厂不可见</span>
+      <span v-else-if="buyerAllSigned && !canConfirmDispatch" class="hint" style="margin-left:10px">已统一下发，工厂须在 24 小时内签署</span>
       <el-button v-if="canConfirmDispatch" type="primary" style="margin-top:12px;margin-left:8px" @click="confirmAllSigned">确认全部签署并开始派单</el-button>
       <div v-if="order.canBuyerCancel" class="phase-actions">
         <el-button type="danger" @click="cancelFulfillment">取消订单</el-button>
@@ -560,7 +560,7 @@
         <el-button type="primary" :disabled="!upFile" @click="doUpload">上传该厂合同</el-button>
       </template>
     </el-dialog>
-    <el-dialog v-model="signOpen" title="签名" width="520px" :close-on-click-modal="false">
+    <el-dialog v-model="signOpen" title="签字并统一下发合同" width="520px" :close-on-click-modal="false">
       <ul class="hint" style="padding-left:18px">
         <li v-for="c in contractList" :key="c.id">{{ c.factoryName }}：{{ c.fileName || (c.attachmentId ? ('附件 #' + c.attachmentId) : '未上传') }}</li>
       </ul>
@@ -569,7 +569,7 @@
       <SignPad @change="signData = $event" />
       <template #footer>
         <el-button @click="signOpen=false">取消</el-button>
-        <el-button type="success" :disabled="!signRead || !signData" @click="doSign">提交签名</el-button>
+        <el-button type="success" :disabled="!signRead || !signData" @click="doSign">确认签字并统一下发</el-button>
       </template>
     </el-dialog>
     <el-dialog v-model="progOpen" title="进度记录" width="560px">
@@ -802,9 +802,9 @@ const fulfillHint = computed(() => {
   if (!showFulfillment.value) return ''
   const list = contractList.value || []
   const needFile = list.filter(c => c.status !== 'SIGNED' && !c.attachmentId).length
-  if (needFile) return '请先为每个工厂分别上传合同（下发后不可更换），再统一签名'
+  if (needFile) return '请在 48 小时内为每个工厂分别上传合同；统一下发前工厂不可见'
   const needSign = list.filter(c => c.status !== 'SIGNED' && !(c.buyerSign && String(c.buyerSign).trim())).length
-  if (needSign) return '各厂合同已下发，请点「签名」一次签完'
+  if (needSign) return '合同已全部上传，请点「签字并统一下发」一次完成签署与下发'
   if (canConfirmDispatch.value) return '各厂已签字提交到本页，请确认全部签署后开始派单'
   const need = list.filter(c => c.status !== 'SIGNED').length
   if (need) return '有 ' + need + ' 份合同待工厂签署，签完后将提交到本页'
@@ -1376,7 +1376,7 @@ async function confirmAllSigned() {
 }
 async function doSign() {
   await buyerSign(order.value.id, true, signData.value)
-  ElMessage.success('已成功签名')
+  ElMessage.success('全部合同已签字并统一下发，工厂签约窗口已开启')
   signOpen.value = false
   load()
 }

@@ -112,7 +112,7 @@ onUnmounted(() => {
 <style scoped>
 .avatar-card { border-radius: 16px; }
 .avatar-row { display: flex; align-items: center; gap: 16px; }
-.avatar-tip { color: #5483B3; font-size: 13px; }
-.avatar-name { margin-top: 6px; font-size: 16px; color: #052659; font-weight: 600; }
+.avatar-tip { color: #64748d; font-size: 13px; }
+.avatar-name { margin-top: 6px; font-size: 16px; color: #0d253d; font-weight: 600; }
 </style>
 
