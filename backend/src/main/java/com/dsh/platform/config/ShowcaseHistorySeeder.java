@@ -37,10 +37,14 @@ public class ShowcaseHistorySeeder implements CommandLineRunner {
     @Override
     @Transactional
     public void run(String... args) {
+        log.info("历史样例改由 OpsShowcaseSeeder 写入，本组件跳过");
+    }
+
+    @SuppressWarnings("unused")
+    private void legacyDisabled() {
         Integer n = jdbc.queryForObject("SELECT COUNT(*) FROM demand WHERE title = ? AND deleted = 0",
                 Integer.class, MARKER);
         if (n != null && n > 0) {
-            log.info("历史履约样例已存在，跳过清理与写入");
             return;
         }
         cleanup();

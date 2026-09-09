@@ -3,12 +3,12 @@
     <svg ref="svg" :viewBox="`0 0 ${w} ${h}`" preserveAspectRatio="none">
       <defs>
         <linearGradient :id="gid" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="#533afd" stop-opacity="0.28" />
-          <stop offset="100%" stop-color="#533afd" stop-opacity="0" />
+          <stop offset="0%" stop-color="#052659" stop-opacity="0.28" />
+          <stop offset="100%" stop-color="#052659" stop-opacity="0" />
         </linearGradient>
       </defs>
       <path v-if="area" ref="areaEl" :d="area" :fill="`url(#${gid})`" />
-      <path ref="lineEl" :d="line" fill="none" stroke="#533afd" :stroke-width="compact ? 1.6 : 2.2" stroke-linejoin="round" stroke-linecap="round" />
+      <path ref="lineEl" :d="line" fill="none" stroke="#052659" :stroke-width="compact ? 1.6 : 2.2" stroke-linejoin="round" stroke-linecap="round" />
     </svg>
   </div>
 </template>

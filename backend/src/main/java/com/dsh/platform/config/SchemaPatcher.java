@@ -75,6 +75,18 @@ public class SchemaPatcher {
         backfillDeliveredQty();
         patchUniqueIndex("sys_user", "uk_phone",
                 "ALTER TABLE sys_user ADD UNIQUE KEY uk_phone (phone)");
+        patchTable("todo_ack", """
+                CREATE TABLE todo_ack (
+                  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                  tenant_id BIGINT UNSIGNED NOT NULL,
+                  type VARCHAR(32) NOT NULL,
+                  biz_id BIGINT UNSIGNED NOT NULL,
+                  created_at DATETIME NOT NULL,
+                  PRIMARY KEY (id),
+                  UNIQUE KEY uk_todo_ack (tenant_id, type, biz_id)
+                ) COMMENT='待办已读'
+                """);
+        relaxAuditJsonColumns();
     }
 
     private void dropColumn(String table, String column) {
@@ -147,6 +159,41 @@ public class SchemaPatcher {
             log.info("已扩展 {}.{} 至 VARCHAR({})", table, column, minLength);
         } catch (Exception e) {
             log.warn("扩展 {}.{} 失败: {}", table, column, e.getMessage());
+        }
+    }
+
+    private void patchTable(String table, String sql) {
+        try {
+            Integer n = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?",
+                    Integer.class, table);
+            if (n != null && n > 0) {
+                return;
+            }
+            jdbcTemplate.execute(sql);
+            log.info("已建表 {}", table);
+        } catch (Exception e) {
+            log.warn("建表 {} 失败: {}", table, e.getMessage());
+        }
+    }
+
+    /** after_json 原为 JSON 类型，中文详情不是合法 JSON，插入会静默失败导致操作日志为空。 */
+    private void relaxAuditJsonColumns() {
+        for (String column : new String[]{"after_json", "before_json"}) {
+            try {
+                String type = jdbcTemplate.queryForObject(
+                        """
+                        SELECT DATA_TYPE FROM information_schema.COLUMNS
+                        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_log' AND COLUMN_NAME = ?
+                        """,
+                        String.class, column);
+                if (type != null && "json".equalsIgnoreCase(type)) {
+                    jdbcTemplate.execute("ALTER TABLE audit_log MODIFY COLUMN `" + column + "` TEXT");
+                    log.info("已将 audit_log.{} 改为 TEXT，允许写入操作详情", column);
+                }
+            } catch (Exception e) {
+                log.warn("调整 audit_log.{} 失败: {}", column, e.getMessage());
+            }
         }
     }
 

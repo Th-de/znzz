@@ -9,6 +9,103 @@
       <el-step title="订单结算" />
     </el-steps>
 
+    <el-card v-if="showStages" shadow="never" class="phase produce-block">
+      <template #header>生产与质检 {{ progressPercent }}%</template>
+      <el-progress :percentage="progressPercent" style="margin-bottom:10px" />
+      <el-table :data="factoryStageGroups" border size="small" row-key="key">
+        <el-table-column type="expand">
+          <template #default="{ row }">
+            <el-table :data="row.children" border size="small">
+              <el-table-column label="期数" width="90">
+                <template #default="{ row: p }">{{ p.periodLabel || ('第' + (p.periodNo || '-') + '期') }}</template>
+              </el-table-column>
+              <el-table-column label="数量" width="90">
+                <template #default="{ row: p }">{{ p.quantity != null ? p.quantity + ' 件' : '-' }}</template>
+              </el-table-column>
+              <el-table-column label="开始" width="108">
+                <template #default="{ row: p }">
+                  <div class="dt-2">
+                    <div>{{ fmtDateLine(p.periodStart) }}</div>
+                    <div v-if="fmtTimeLine(p.periodStart)" class="dt-clock">{{ fmtTimeLine(p.periodStart) }}</div>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="截止" width="108">
+                <template #default="{ row: p }">
+                  <div class="dt-2">
+                    <div>{{ fmtDateLine(p.periodEnd || p.promisedDate) }}</div>
+                    <div v-if="fmtTimeLine(p.periodEnd || p.promisedDate)" class="dt-clock">{{ fmtTimeLine(p.periodEnd || p.promisedDate) }}</div>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="进度" width="150">
+                <template #default="{ row: p }">
+                  <el-progress :percentage="p.actualProgress || 0" :stroke-width="10" />
+                  <el-tag v-if="overdueDays(p)" type="danger" size="small">逾期 {{ overdueDays(p) }} 天</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="本段工费" width="100">
+                <template #default="{ row: p }">{{ p.amount ?? '-' }}</template>
+              </el-table-column>
+              <el-table-column label="应托管" width="100">
+                <template #default="{ row: p }">{{ p.payAmount != null ? p.payAmount : '-' }}</template>
+              </el-table-column>
+              <el-table-column label="状态" width="140">
+                <template #default="{ row: p }">
+                  <StatusPill :tone="stageProgressTone(p)" :text="stageProgressLabel(p)" />
+                </template>
+              </el-table-column>
+              <el-table-column label="托管" width="110">
+                <template #default="{ row: p }">
+                  <StatusPill :tone="statusTone(p.escrowStatus)" :text="label(ESCROW_STATUS, p.escrowStatus)" />
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" min-width="280">
+                <template #default="{ row: p }">
+                  <el-button size="small" @click="openProgress(p)">进度记录</el-button>
+                  <el-button v-if="canPayInspectFee(p, false)" size="small" type="warning" @click="payFee(p)">提交质检费 ¥{{ p.inspectFeeAmount ?? 0 }}</el-button>
+                  <el-button v-if="canShowInspectReport(p)" size="small" @click="openInsp(p)">质检报告</el-button>
+                  <el-button v-if="p.status==='FAIL'" size="small" type="warning" @click="openDecide(p)">处理结果</el-button>
+                  <el-button v-if="canPayStageLabor(p)" size="small" type="primary" @click="pay(p)">{{ p.escrowStatus==='PENDING_PAY' ? '继续支付' : ('支付工费 ¥' + (p.payAmount ?? p.amount)) }}</el-button>
+                  <el-button v-if="p.status==='PASS' && !p.surveyed" size="small" @click="openSurvey(p)">评价</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </template>
+        </el-table-column>
+        <el-table-column prop="factoryName" label="工厂" min-width="160" />
+        <el-table-column label="开始" width="108">
+          <template #default="{ row }">
+            <div class="dt-2">
+              <div>{{ fmtDateLine(row.spanStart) }}</div>
+              <div v-if="fmtTimeLine(row.spanStart)" class="dt-clock">{{ fmtTimeLine(row.spanStart) }}</div>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="截止" width="108">
+          <template #default="{ row }">
+            <div class="dt-2">
+              <div>{{ fmtDateLine(row.spanEnd) }}</div>
+              <div v-if="fmtTimeLine(row.spanEnd)" class="dt-clock">{{ fmtTimeLine(row.spanEnd) }}</div>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="承接总数" width="110">
+          <template #default="{ row }">{{ row.totalQty }} 件</template>
+        </el-table-column>
+        <el-table-column label="进度" width="150">
+          <template #default="{ row }"><el-progress :percentage="row.progress" :stroke-width="10" /></template>
+        </el-table-column>
+        <el-table-column label="总工费" width="110">
+          <template #default="{ row }">{{ money(row.totalAmount) }}</template>
+        </el-table-column>
+        <el-table-column label="已托管工费" width="120">
+          <template #default="{ row }">{{ money(row.escrowHeld) }}</template>
+        </el-table-column>
+      </el-table>
+      <el-button v-if="order.status==='IN_PRODUCTION'" type="success" style="margin-top:12px" @click="doAccept">完工确认</el-button>
+    </el-card>
+
     <el-form ref="formRef" :model="form" :rules="canEditDemand ? rules : {}" label-width="130px" @submit.prevent>
       <el-tabs type="border-card" stretch class="spec-tabs">
         <el-tab-pane label="基础">
@@ -71,9 +168,10 @@
             <div class="card-head"><InspectDeliveryRules /></div>
             <el-form-item label="检验方式" prop="inspectMode">
               <el-radio-group v-model="form.inspectMode" class="inspect-modes" @change="onInspectMode">
-                <el-radio value="AQL">AQL 抽样（{{ INSPECT_UNIT.AQL }} 元/件）</el-radio>
-                <el-radio value="FULL">全检（{{ INSPECT_UNIT.FULL }} 元/件）</el-radio>
+                <el-radio value="AQL">抽样检验（AQL，{{ INSPECT_UNIT.AQL }} 元/件）</el-radio>
+                <el-radio value="FULL">全数检验（{{ INSPECT_UNIT.FULL }} 元/件）</el-radio>
               </el-radio-group>
+              <div class="hint" style="margin-left:0">请选择交货后的质量检验方式。厂内首件由工厂自行完成，平台只在交货后按所选方式检验。费用按平台单价 × 本期实际交货件数计算。</div>
             </el-form-item>
             <el-form-item v-if="needAql" label="AQL" prop="aql">
               <el-select v-model="form.aql" style="width:100%">
@@ -82,9 +180,11 @@
                 <el-option label="1.5" value="1.5" />
                 <el-option label="2.5" value="2.5" />
               </el-select>
+              <div class="hint" style="margin-left:0">AQL 为可接收质量限。平台按 GB/T 2828.1、一般检验水平 II、一次正常抽样确定抽样件数与接收/拒收标准。选择抽样检验后，无需再填写最低良率。</div>
             </el-form-item>
             <el-form-item v-if="needFull" label="最低良率" prop="minYield">
               <el-input-number v-model="form.minYield" :min="0" :max="1" :step="0.01" />
+              <div class="hint" style="margin-left:0">仅全数检验需要。质量合格须同时满足：关键尺寸均未超出图纸公差；合格件数占实交件数的比例不低于本值。</div>
             </el-form-item>
             <el-form-item label="认证要求" prop="certList">
               <el-select v-model="form.certList" multiple filterable allow-create default-first-option style="width:100%">
@@ -112,6 +212,7 @@
                 <span class="step-num">{{ deliveryTimes }}</span>
                 <button type="button" class="step-btn" @click="setTimes(deliveryTimes + 1)">+</button>
               </div>
+              <div class="hint" style="margin-left:0">后一期开始日须等于前一期截止日；最后一期截止日须等于硬交期。逾期未完成不延长原交期，返工期限由买家另行确定。</div>
             </el-form-item>
             <el-form-item v-for="(row, i) in deliveryPlan" :key="'plan-' + i" :label="`第${i + 1}期`">
               <div class="period-row">
@@ -149,6 +250,7 @@
         <el-tab-pane label="工序意向图纸">
           <template v-if="canEditDemand">
             <el-form-item label="工序列表" prop="processes">
+              <div class="hint" style="margin:0 0 8px">工序列表只说明工艺路线，不必按工序填写数量。交货件数等于需求数量。</div>
               <div class="row head">
                 <span class="col-name">工序名</span>
                 <span class="col-req">特殊要求</span>
@@ -205,6 +307,7 @@
       <template #header>发布需求</template>
       <el-alert v-if="demand.status === 'PENDING_AUDIT'" type="info" :closable="false" title="等待运营审核。通过后自动进入意向期。" />
       <el-alert v-else-if="demand.status === 'RETURNED'" type="warning" :closable="false" :title="'审核不通过：' + (demand.returnReason || '未填写原因') + '。请在上方栏目修改后重新提交，或取消订单。'" />
+      <el-alert v-else-if="demand.status === 'FLOW_FAILED'" type="warning" :closable="false" :title="'已流单' + (demand.cancelReason ? '：' + demand.cancelReason : '')" />
       <el-alert v-else-if="demand.status === 'CANCELLED'" type="info" :closable="false" :title="'已取消' + (demand.cancelReason ? '：' + demand.cancelReason : '')" />
       <el-alert v-else type="success" :closable="false" title="已通过审核并发布。" />
       <div v-if="demand.status === 'RETURNED'" class="phase-actions">
@@ -416,99 +519,6 @@
       </div>
     </el-card>
 
-    <el-card v-if="showStages" shadow="never" class="phase">
-      <template #header>生产与质检 {{ progressPercent }}%</template>
-      <el-progress :percentage="progressPercent" style="margin-bottom:10px" />
-      <el-table :data="factoryStageGroups" border size="small" row-key="key">
-        <el-table-column type="expand">
-          <template #default="{ row }">
-            <el-table :data="row.children" border size="small">
-              <el-table-column label="期数" width="90">
-                <template #default="{ row: p }">{{ p.periodLabel || ('第' + (p.periodNo || '-') + '期') }}</template>
-              </el-table-column>
-              <el-table-column label="数量" width="90">
-                <template #default="{ row: p }">{{ p.quantity != null ? p.quantity + ' 件' : '-' }}</template>
-              </el-table-column>
-              <el-table-column label="开始" width="108">
-                <template #default="{ row: p }">
-                  <div class="dt-2">
-                    <div>{{ fmtDateLine(p.periodStart) }}</div>
-                    <div v-if="fmtTimeLine(p.periodStart)" class="dt-clock">{{ fmtTimeLine(p.periodStart) }}</div>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column label="截止" width="108">
-                <template #default="{ row: p }">
-                  <div class="dt-2">
-                    <div>{{ fmtDateLine(p.periodEnd || p.promisedDate) }}</div>
-                    <div v-if="fmtTimeLine(p.periodEnd || p.promisedDate)" class="dt-clock">{{ fmtTimeLine(p.periodEnd || p.promisedDate) }}</div>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column label="进度" width="150">
-                <template #default="{ row: p }">
-                  <el-progress :percentage="p.actualProgress || 0" :stroke-width="10" />
-                  <el-tag v-if="overdueDays(p)" type="danger" size="small">逾期 {{ overdueDays(p) }} 天</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="本段工费" width="100">
-                <template #default="{ row: p }">{{ p.amount ?? '-' }}</template>
-              </el-table-column>
-              <el-table-column label="应托管" width="100">
-                <template #default="{ row: p }">{{ p.payAmount != null ? p.payAmount : '-' }}</template>
-              </el-table-column>
-              <el-table-column label="状态" width="120">
-                <template #default="{ row: p }">{{ stageProgressLabel(p) }}</template>
-              </el-table-column>
-              <el-table-column label="托管" width="90">
-                <template #default="{ row: p }">{{ label(ESCROW_STATUS, p.escrowStatus) }}</template>
-              </el-table-column>
-              <el-table-column label="操作" min-width="280">
-                <template #default="{ row: p }">
-                  <el-button size="small" @click="openProgress(p)">进度记录</el-button>
-                  <el-button v-if="canPayInspectFee(p, false)" size="small" type="warning" @click="payFee(p)">提交质检费 ¥{{ p.inspectFeeAmount ?? 0 }}</el-button>
-                  <el-button v-if="canShowInspectReport(p)" size="small" @click="openInsp(p)">质检报告</el-button>
-                  <el-button v-if="p.status==='FAIL'" size="small" type="warning" @click="openDecide(p)">处理结果</el-button>
-                  <el-button v-if="canPayStageLabor(p)" size="small" type="primary" @click="pay(p)">{{ p.escrowStatus==='PENDING_PAY' ? '继续支付' : ('支付工费 ¥' + (p.payAmount ?? p.amount)) }}</el-button>
-                  <el-button v-if="p.status==='PASS' && !p.surveyed" size="small" @click="openSurvey(p)">评价</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-          </template>
-        </el-table-column>
-        <el-table-column prop="factoryName" label="工厂" min-width="160" />
-        <el-table-column label="开始" width="108">
-          <template #default="{ row }">
-            <div class="dt-2">
-              <div>{{ fmtDateLine(row.spanStart) }}</div>
-              <div v-if="fmtTimeLine(row.spanStart)" class="dt-clock">{{ fmtTimeLine(row.spanStart) }}</div>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="截止" width="108">
-          <template #default="{ row }">
-            <div class="dt-2">
-              <div>{{ fmtDateLine(row.spanEnd) }}</div>
-              <div v-if="fmtTimeLine(row.spanEnd)" class="dt-clock">{{ fmtTimeLine(row.spanEnd) }}</div>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="承接总数" width="110">
-          <template #default="{ row }">{{ row.totalQty }} 件</template>
-        </el-table-column>
-        <el-table-column label="进度" width="150">
-          <template #default="{ row }"><el-progress :percentage="row.progress" :stroke-width="10" /></template>
-        </el-table-column>
-        <el-table-column label="总工费" width="110">
-          <template #default="{ row }">{{ money(row.totalAmount) }}</template>
-        </el-table-column>
-        <el-table-column label="已托管工费" width="120">
-          <template #default="{ row }">{{ money(row.escrowHeld) }}</template>
-        </el-table-column>
-      </el-table>
-      <el-button v-if="order.status==='IN_PRODUCTION'" type="success" style="margin-top:12px" @click="doAccept">完工确认</el-button>
-    </el-card>
-
     <el-card v-if="demand.status === 'COMPLETED'" shadow="never" class="phase">
       <template #header>订单结算</template>
       <el-alert type="success" :closable="false" title="订单已完成。" />
@@ -517,7 +527,7 @@
     <el-dialog v-model="fileOpen" :title="fileTitle" width="720px">
       <pre class="file-preview">{{ fileText }}</pre>
     </el-dialog>
-    <el-dialog v-model="factoryOpen" title="工厂详情" width="640px" :close-on-click-modal="false">
+    <el-dialog v-model="factoryOpen" title="工厂详情" width="720px" :close-on-click-modal="false">
       <el-descriptions :column="2" border size="small">
         <el-descriptions-item label="名称" :span="2">{{ factoryInfo.name }}</el-descriptions-item>
         <el-descriptions-item label="信用分">{{ factoryInfo.creditScore ?? '-' }}</el-descriptions-item>
@@ -530,16 +540,18 @@
         <el-descriptions-item label="企业介绍" :span="2">{{ factoryInfo.introduction || '-' }}</el-descriptions-item>
       </el-descriptions>
       <h4 style="margin:12px 0 8px">设备与状态</h4>
-      <el-table :data="factoryInfo.devices || []" border size="small">
+      <PagedBox :data="factoryInfo.devices || []" :page-size="8" v-slot="{ rows }">
+      <el-table :data="rows" border size="small">
         <el-table-column prop="name" label="设备" min-width="120" />
         <el-table-column prop="processNames" label="适用工序" min-width="120" />
         <el-table-column prop="dailyCapacity" label="日产能" width="80" />
         <el-table-column label="状态" width="80">
           <template #default="{ row }">
-            <el-tag :type="deviceStatusType(row.status)" size="small">{{ label(DEVICE_STATUS, row.status) }}</el-tag>
+            <StatusPill :tone="statusTone(row.status)" :text="label(DEVICE_STATUS, row.status)" />
           </template>
         </el-table-column>
       </el-table>
+      </PagedBox>
     </el-dialog>
     <el-dialog v-model="upOpen" :title="'上传合同 · ' + (current?.factoryName || '')" width="520px" destroy-on-close :close-on-click-modal="false" @closed="resetUpload">
       <p>请上传与该厂约定的合同文件。</p>
@@ -587,7 +599,7 @@
       <el-descriptions :column="1" border>
         <el-descriptions-item label="结论">{{ inspReport.result || '-' }}</el-descriptions-item>
         <el-descriptions-item label="实交数量">{{ inspJson.deliveredQty ?? '-' }}</el-descriptions-item>
-        <el-descriptions-item label="抽检数">{{ inspJson.sampleCount ?? '-' }}</el-descriptions-item>
+        <el-descriptions-item label="检验件数">{{ inspJson.sampleCount ?? '-' }}</el-descriptions-item>
         <el-descriptions-item v-if="inspJson.aqlAc != null" label="AQL Ac/Re">{{ inspJson.aqlAc }} / {{ inspJson.aqlRe }}</el-descriptions-item>
         <el-descriptions-item label="关键公差不合格">{{ inspJson.criticalFailCount ?? '-' }}</el-descriptions-item>
         <el-descriptions-item label="一般公差不合格">{{ inspJson.generalFailCount ?? '-' }}</el-descriptions-item>
@@ -598,19 +610,21 @@
         <el-descriptions-item label="备注">{{ inspJson.remark || '-' }}</el-descriptions-item>
       </el-descriptions>
     </el-dialog>
-    <el-dialog v-model="decideOpen" title="处理质检结果" width="560px" :close-on-click-modal="false">
-      <p>分支 {{ decideStage?.branchCode || '-' }}。让步：B 数量不齐但抽检/全检过关（托管已交工费 + 本阶段工费 5%）；C1 数量齐但轻微不良（托管全款。抽检再赔本阶段工费 5%；全检赔工费×(最低良率−实际良率)）。C2/D/E 不能让步。</p>
-      <p class="hint">关闭将取消该厂后续工期，并按「本期+后续工费」5% 从工厂保证金中赔付；保证金不足则无法关闭。返工全程一次，期限由买家填写，与原分期截止无关。</p>
+    <el-dialog v-model="decideOpen" title="处理质检不合格结果" width="640px" :close-on-click-modal="false">
+      <p><b>当前情况：</b>{{ decideCopy.situation }}</p>
+      <p>{{ decideCopy.settlement }}</p>
+      <p v-if="decideCopy.options">{{ decideCopy.options }}</p>
+      <p class="hint">{{ decideCopy.closeNote }}</p>
       <el-form label-width="120px" style="margin-top:12px">
-        <el-form-item label="返工期限(小时)">
-          <el-input-number v-model="reworkHours" :min="12" :max="72" :disabled="!decideStage?.canRework" />
+        <el-form-item label="返工期限(天)">
+          <el-input-number v-model="reworkDays" :min="1" :disabled="!decideStage?.canRework" />
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="decideOpen=false">取消</el-button>
-        <el-button type="success" :disabled="!decideStage?.canConcede" @click="doDecide('CONCESSION')">让步交款</el-button>
+        <el-button type="success" :disabled="!decideStage?.canConcede" @click="doDecide('CONCESSION')">让步接收</el-button>
         <el-button type="warning" :disabled="!decideStage?.canRework" @click="doDecide('REWORK')">要求返工</el-button>
-        <el-button type="danger" @click="doDecide('CLOSE')">关闭本段</el-button>
+        <el-button type="danger" :disabled="!decideStage?.canClose" @click="doDecide('CLOSE')">关闭本阶段</el-button>
       </template>
     </el-dialog>
     <el-dialog v-model="surveyOpen" title="总体评价" width="420px">
@@ -634,12 +648,14 @@ import { listByDemand, selectSolution, saveCustom } from '../../api/solution'
 import { fetchAttachment, saveBlob } from '../../api/file'
 import api from '../../api'
 import CoverageBars from '../../components/CoverageBars.vue'
+import PagedBox from '../../components/PagedBox.vue'
 import IntentionCountdown from '../../components/IntentionCountdown.vue'
 import SignPad from '../../components/SignPad.vue'
 import InspectDeliveryRules from '../../components/InspectDeliveryRules.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete } from '@element-plus/icons-vue'
-import { DEVICE_STATUS, ESCROW_STATUS, label, fmtTime, fmtDateLine, fmtTimeLine, deviceStatusType, formatInspectMode, stageProgressLabel, nestReworkPeriods, canShowInspectReport, canPayInspectFee, canPayStageLabor, factoryWorkSpan } from '../../utils/labels'
+import { DEVICE_STATUS, ESCROW_STATUS, label, fmtTime, fmtDateLine, fmtTimeLine, deviceStatusType, formatInspectMode, inspectDecideCopy, stageProgressLabel, nestReworkPeriods, canShowInspectReport, canPayInspectFee, canPayStageLabor, factoryWorkSpan, statusTone, stageProgressTone } from '../../utils/labels'
+import StatusPill from '../../components/StatusPill.vue'
 
 const route = useRoute()
 const loading = ref(false)
@@ -726,7 +742,8 @@ const inspOpen = ref(false)
 const inspReport = ref({})
 const decideOpen = ref(false)
 const decideStage = ref(null)
-const reworkHours = ref(24)
+const decideCopy = computed(() => inspectDecideCopy(decideStage.value))
+const reworkDays = ref(1)
 const stageList = ref([])
 
 function statusIndex(st) {
@@ -813,8 +830,8 @@ const fulfillHint = computed(() => {
   const pay = (stageList.value || []).filter(s => canPayStageLabor(s))
   if (pay.length) return '有 ' + pay.length + ' 笔工单待支付工费'
   const wait = (stageList.value || []).filter(s => s.status === 'FAIL')
-  if (wait.length) return '有 ' + wait.length + ' 个工单待处理质检结果（让步 / 返工 / 关闭）'
-  if (order.value.status === 'IN_PRODUCTION') return '生产进行中，可在下方查看各厂进度、质检与托管'
+  if (wait.length) return '有 ' + wait.length + ' 个工单待处理质检结果。请选择让步接收、要求返工或关闭本阶段。'
+  if (order.value.status === 'IN_PRODUCTION') return '生产进行中，可在流程进度下方查看各厂进度、质检与托管'
   if (order.value.status === 'COMPLETED') return '订单已完成'
   return ''
 })
@@ -1169,7 +1186,7 @@ function firstError() {
   if (!form.heatTreatment?.trim()) return '请填写热处理'
   if (!form.certList?.length) return '请选择认证要求'
   if (form.inspectMode === 'AQL' && !form.aql) return '请填写 AQL'
-  if (form.inspectMode === 'FULL' && (form.minYield == null || form.minYield === '')) return '全检请填写最低良率'
+  if (form.inspectMode === 'FULL' && (form.minYield == null || form.minYield === '')) return '全数检验请填写最低良率'
   if (!form.deadlineHard) return '请选择硬交期'
   if (!form.deliveryAddress?.trim()) return '请填写交付地址'
   if (!form.packaging?.trim()) return '请填写包装要求'
@@ -1309,14 +1326,17 @@ async function openInsp(row) {
 }
 function openDecide(row) {
   decideStage.value = row
-  reworkHours.value = 24
+  reworkDays.value = 1
   decideOpen.value = true
 }
 async function doDecide(action) {
-  if (action === 'REWORK' && (reworkHours.value < 12 || reworkHours.value > 72)) {
-    return ElMessage.warning('返工期限须为 12～72 小时')
+  if (action === 'CLOSE' && decideStage.value?.canClose === false) {
+    return ElMessage.warning('数量不足但质量合格时不能关闭本阶段')
   }
-  await decideInspect(decideStage.value.id, { action, reworkHours: reworkHours.value })
+  if (action === 'REWORK' && (!reworkDays.value || reworkDays.value < 1)) {
+    return ElMessage.warning('请填写返工期限，至少 1 天')
+  }
+  await decideInspect(decideStage.value.id, { action, reworkDays: reworkDays.value })
   ElMessage.success(action === 'CONCESSION' ? '已让步，请支付本阶段托管款' : (action === 'REWORK' ? '已通知工厂返工' : '本段已关闭'))
   decideOpen.value = false
   load()
@@ -1512,6 +1532,7 @@ watch(() => route.params.id, load, { immediate: true })
 .sign-img { display: block; max-height: 48px; margin-top: 6px; border: 1px solid #ebeef5; background: #fff; }
 .spec-tabs { margin-bottom: 16px; }
 .phase { margin-top: 16px; }
+.produce-block { margin-top: 20px; margin-bottom: 20px; }
 .phase-actions { margin-top: 12px; }
 .deposit-box { margin-top: 10px; padding: 10px 12px; background: #fdf6ec; border-radius: 6px; color: #b88230; font-size: 13px; }
 .cov-label { font-size: 13px; color: #303133; margin-bottom: 6px; }

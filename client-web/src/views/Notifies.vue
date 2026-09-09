@@ -10,10 +10,10 @@
           <el-table-column label="报名时间" width="170">
             <template #default="{ row }">{{ fmtTime(row.bidAt) }}</template>
           </el-table-column>
-          <el-table-column label="阶段" width="140">
+          <el-table-column label="阶段" width="150">
             <template #default="{ row }">
-              <el-tag v-if="row.status === 'LOSE'" type="danger" size="small">已落选</el-tag>
-              <span v-else>{{ label(DEMAND_STATUS, row.status) }}</span>
+              <StatusPill v-if="row.status === 'LOSE'" tone="red" text="已落选" />
+              <StatusPill v-else :tone="statusTone(row.status)" :text="label(DEMAND_STATUS, row.status)" />
             </template>
           </el-table-column>
           <el-table-column label="最新通知" width="170">
@@ -52,7 +52,8 @@
 import { ref, onMounted } from 'vue'
 import api from '../api'
 import PagedBox from '../components/PagedBox.vue'
-import { DEMAND_STATUS, fmtTime, label } from '../utils/labels'
+import { DEMAND_STATUS, fmtTime, label, statusTone } from '../utils/labels'
+import StatusPill from '../components/StatusPill.vue'
 
 const demands = ref([])
 const current = ref(null)

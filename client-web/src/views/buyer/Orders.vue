@@ -10,8 +10,10 @@
         <el-table-column label="下单时间" width="160">
           <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="110">
-          <template #default="{ row }">{{ label(ORDER_STATUS, row.status) }}</template>
+        <el-table-column label="状态" width="130">
+          <template #default="{ row }">
+            <StatusPill :tone="statusTone(row.status)" :text="label(ORDER_STATUS, row.status)" />
+          </template>
         </el-table-column>
         <el-table-column label="操作" width="140">
           <template #default="{ row }">
@@ -27,7 +29,8 @@
 import { ref, onMounted } from 'vue'
 import { listOrders } from '../../api/order'
 import PagedBox from '../../components/PagedBox.vue'
-import { ORDER_STATUS, label, fmtTime } from '../../utils/labels'
+import { ORDER_STATUS, label, fmtTime, statusTone } from '../../utils/labels'
+import StatusPill from '../../components/StatusPill.vue'
 
 const orders = ref([])
 

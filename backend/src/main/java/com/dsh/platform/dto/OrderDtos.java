@@ -15,7 +15,7 @@ public class OrderDtos {
                                  Integer deliveredQty, String keyDimensions, Boolean meetsRequirement,
                                  String remark, java.math.BigDecimal actualYield, Boolean quantityOk) {}
 
-    public record DecisionRequest(String action, Integer reworkHours) {}
+    public record DecisionRequest(String action, Integer reworkHours, Integer reworkDays) {}
 
     public record SignRequest(Boolean read, String sign, Long factoryTenantId) {}
 
@@ -28,6 +28,8 @@ public class OrderDtos {
     public record DeliverRequest(Integer deliveredQty) {}
 
     public record TodoItem(String type, String title, String link, Integer count) {}
+
+    public record TodoAckRequest(String type, Long bizId) {}
 
     public record FactoryDemandJob(Long demandId, Long orderId, String demandTitle, String productName,
                                    String detail, Integer progress, BigDecimal totalAmount, String status,

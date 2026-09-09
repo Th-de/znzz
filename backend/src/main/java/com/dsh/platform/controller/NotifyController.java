@@ -6,6 +6,7 @@ import com.dsh.platform.domain.notify.NotifyActionResolver;
 import com.dsh.platform.domain.notify.NotifyDemandService;
 import com.dsh.platform.dto.NotifyDemandRow;
 import com.dsh.platform.dto.NotifyView;
+import com.dsh.platform.dto.OrderDtos.TodoAckRequest;
 import com.dsh.platform.dto.OrderDtos.TodoItem;
 import com.dsh.platform.entity.CreditEvent;
 import com.dsh.platform.service.CreditQueryService;
@@ -35,6 +36,12 @@ public class NotifyController {
     @GetMapping("/todos")
     public R<List<TodoItem>> todos() {
         return R.ok(todoService.mine());
+    }
+
+    @PostMapping("/todos/ack")
+    public R<Void> ackTodo(@RequestBody TodoAckRequest req) {
+        todoService.ack(req);
+        return R.ok();
     }
 
     @GetMapping("/notifies")

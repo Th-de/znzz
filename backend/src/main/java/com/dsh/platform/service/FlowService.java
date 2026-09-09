@@ -74,6 +74,10 @@ public class FlowService {
         if (DemandStatus.of(d.getStatus()) != DemandStatus.PUBLISHED) {
             return;
         }
+        if (!hasValidIntention(d)) {
+            failIntentionFlow(d);
+            return;
+        }
         stateMachine.transit(d, DemandStatus.FACTORY_THINKING);
         d.setFactoryThinkingAt(LocalDateTime.now());
         d.setFactoryThinkingEndAt(LocalDateTime.now().plusHours(Math.max(factoryThinkingHours, 1)));
@@ -89,6 +93,31 @@ public class FlowService {
                         + " 小时）。参加请填报实施方案、单件报价，并冻结总报价 5% 保证金；"
                         + "不参加可退出并退回意向金。逾期未报价将自动取消报名并退回意向金。");
         auditService.record("结束意向期", "DEMAND", demandId, "进入工厂思考期");
+    }
+
+    private boolean hasValidIntention(Demand d) {
+        List<Quotation> qs = quotationMapper.selectList(new LambdaQueryWrapper<Quotation>()
+                .eq(Quotation::getDemandId, d.getId())
+                .in(Quotation::getStatus, "INTENTION", "LOCKED"));
+        for (Quotation q : qs) {
+            String pay = q.getIntentionStatus();
+            if ("FROZEN".equals(pay) || "COVERED".equals(pay) || "RELEASED".equals(pay)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void failIntentionFlow(Demand d) {
+        stateMachine.transit(d, DemandStatus.FLOW_FAILED);
+        d.setCancelReason("意向期结束无有效报名");
+        demandMapper.updateById(d);
+        fundLedger.unfreezeIntentionsOfDemand(d.getId());
+        siteNotify.send(d.getTenantId(), "需求流单#" + d.getId(),
+                "需求「" + d.getTitle() + "」意向期结束无有效报名，已流单。");
+        notifyFactories(d.getId(), "需求流单#" + d.getId(),
+                "需求「" + d.getTitle() + "」意向期结束无有效报名，已流单。");
+        auditService.record("意向期流单", "DEMAND", d.getId(), "无有效报名");
     }
 
     /** 工厂思考期结束：未报价厂取消报名并退意向金；无论覆盖率如何都进入买家思考期。 */

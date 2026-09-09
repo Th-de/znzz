@@ -1,6 +1,8 @@
 package com.dsh.platform.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.dsh.platform.domain.inspect.InspectRules;
+import com.dsh.platform.dto.OrderDtos.TodoAckRequest;
 import com.dsh.platform.dto.OrderDtos.TodoItem;
 import com.dsh.platform.entity.Contract;
 import com.dsh.platform.entity.Demand;
@@ -16,10 +18,12 @@ import com.dsh.platform.mapper.SolutionMapper;
 import com.dsh.platform.mapper.WorkStageMapper;
 import com.dsh.platform.security.UserContext;
 import lombok.RequiredArgsConstructor;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -33,6 +37,7 @@ public class TodoService {
     private final ContractMapper contractMapper;
     private final SolutionMapper solutionMapper;
     private final QuotationMapper quotationMapper;
+    private final JdbcTemplate jdbcTemplate;
 
     public List<TodoItem> mine() {
         String role = UserContext.role();
@@ -212,7 +217,50 @@ public class TodoService {
             out.add(new TodoItem("REPORT_PROGRESS", "有 " + producing + " 张工单在生产中，请上报进度",
                     "/factory/quotations", (int) producing));
         }
+        Set<Long> closedAcked = ackedBizIds(tid, "STAGE_CLOSED");
+        Map<Long, List<WorkStage>> byOrder = stages.stream()
+                .filter(s -> s.getOrderId() != null)
+                .collect(Collectors.groupingBy(WorkStage::getOrderId));
+        for (Map.Entry<Long, List<WorkStage>> e : byOrder.entrySet()) {
+            if (!InspectRules.factoryWorkClosed(e.getValue())) {
+                continue;
+            }
+            Order o = orderMapper.selectById(e.getKey());
+            Demand d = o == null || o.getDemandId() == null ? null : demandMapper.selectById(o.getDemandId());
+            String title = d == null || d.getTitle() == null ? String.valueOf(e.getKey()) : d.getTitle();
+            Long demandId = o == null ? null : o.getDemandId();
+            if (demandId != null && closedAcked.contains(demandId)) {
+                continue;
+            }
+            out.add(new TodoItem("STAGE_CLOSED",
+                    "买家已关闭需求「" + title + "」的本厂后续工期，请查看详情",
+                    demandId == null ? "/factory/quotations" : "/factory/quotations/" + demandId,
+                    1));
+        }
         return out;
+    }
+
+    public void ack(TodoAckRequest req) {
+        if (req == null || req.bizId() == null || !"STAGE_CLOSED".equals(req.type())) {
+            return;
+        }
+        if (!"FACTORY".equals(UserContext.role())) {
+            return;
+        }
+        jdbcTemplate.update("""
+                INSERT IGNORE INTO todo_ack (tenant_id, type, biz_id, created_at)
+                VALUES (?, ?, ?, NOW())
+                """, UserContext.tenantId(), req.type(), req.bizId());
+    }
+
+    private Set<Long> ackedBizIds(Long tenantId, String type) {
+        try {
+            return Set.copyOf(jdbcTemplate.queryForList(
+                    "SELECT biz_id FROM todo_ack WHERE tenant_id = ? AND type = ?",
+                    Long.class, tenantId, type));
+        } catch (Exception e) {
+            return Set.of();
+        }
     }
 
     private String buyerDemandLink(Long orderId) {

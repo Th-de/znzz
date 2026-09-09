@@ -1,7 +1,10 @@
 package com.dsh.platform.domain.inspect;
 
+import com.dsh.platform.entity.WorkStage;
+
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.List;
 
 public final class InspectRules {
 
@@ -135,6 +138,37 @@ public final class InspectRules {
             return false;
         }
         return branch != null && branch != Branch.A;
+    }
+
+    /** 数量不足且质量合格时只能让步或补交，不能关闭本阶段。 */
+    public static boolean canClose(Branch branch) {
+        return branch != null && branch != Branch.B;
+    }
+
+    public static boolean isActiveWork(String status) {
+        if (status == null) {
+            return false;
+        }
+        return "IN_PRODUCTION".equals(status)
+                || "FAIL".equals(status)
+                || "WAITING_OPEN".equals(status)
+                || "PENDING".equals(status)
+                || "PENDING_INSPECT_PAY".equals(status)
+                || "PENDING_INSPECTION".equals(status)
+                || "PENDING_REVIEW".equals(status)
+                || "INSPECTING".equals(status);
+    }
+
+    /** 本厂已被买家关闭本阶段及后续期，且没有仍需生产/质检的工单。 */
+    public static boolean factoryWorkClosed(List<WorkStage> periods) {
+        if (periods == null || periods.isEmpty()) {
+            return false;
+        }
+        boolean anyClosed = periods.stream().anyMatch(ws -> "CLOSED".equals(ws.getStatus()));
+        if (!anyClosed) {
+            return false;
+        }
+        return periods.stream().noneMatch(ws -> isActiveWork(ws.getStatus()));
     }
 
     /** 让步托管：B 按已交比例；C1 托管本阶段全款。 */

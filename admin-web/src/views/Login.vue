@@ -152,7 +152,8 @@ onMounted(() => riseIn('.login-card', { y: 16, duration: 0.55 }))
 .login-card {
   width: auto;
   align-self: center;
-  margin: 14px;
+  height: calc(100% - 56px);
+  margin: 28px 36px 28px 0;
   border: 1px solid rgba(255,255,255,.78);
   border-radius: 22px;
   background: rgba(249,251,255,.92);
@@ -174,7 +175,7 @@ onMounted(() => riseIn('.login-card', { y: 16, duration: 0.55 }))
   .login-wrap { padding: 18px; }
   .login-shell { grid-template-columns: 1fr; min-height: auto; }
   .login-story { display: none; }
-  .login-card { margin: 0; }
+  .login-card { margin: 16px; }
 }
 @media (prefers-reduced-transparency: reduce) {
   .login-shell { background: #0a315b; backdrop-filter: none; }

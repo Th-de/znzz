@@ -6,19 +6,22 @@ import com.dsh.platform.domain.coverage.CoverageView;
 import com.dsh.platform.domain.coverage.ProcessCoverageService;
 import com.dsh.platform.domain.credit.CreditScoring;
 import com.dsh.platform.domain.fund.FundLedger;
+import com.dsh.platform.domain.inspect.InspectRules;
 import com.dsh.platform.domain.notify.SiteNotify;
 import com.dsh.platform.domain.pay.PaymentChannel;
 import com.dsh.platform.dto.BiddingDtos.*;
 import com.dsh.platform.entity.Contract;
 import com.dsh.platform.entity.Demand;
+import com.dsh.platform.entity.Enterprise;
 import com.dsh.platform.entity.Order;
 import com.dsh.platform.entity.Quotation;
-import com.dsh.platform.entity.Enterprise;
-import com.dsh.platform.mapper.EnterpriseMapper;
+import com.dsh.platform.entity.WorkStage;
 import com.dsh.platform.mapper.ContractMapper;
 import com.dsh.platform.mapper.DemandMapper;
+import com.dsh.platform.mapper.EnterpriseMapper;
 import com.dsh.platform.mapper.OrderMapper;
 import com.dsh.platform.mapper.QuotationMapper;
+import com.dsh.platform.mapper.WorkStageMapper;
 import com.dsh.platform.security.UserContext;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -51,6 +54,7 @@ public class BiddingService {
     private final ContractMapper contractMapper;
     private final CreditScoring creditScoring;
     private final EnterpriseMapper enterpriseMapper;
+    private final WorkStageMapper workStageMapper;
 
     @Value("${dsh.fee.deposit-rate}")
     private BigDecimal depositRate;
@@ -409,10 +413,23 @@ public class BiddingService {
                 end = null;
             }
             q.setOrderId(o == null ? null : o.getId());
+            if (factoryWorkClosed(o)) {
+                q.setDemandStatus("CLOSED");
+            }
         }
         q.setDemandStageAt(start);
         q.setDemandStageEndAt(end);
         q.setActionKey(action);
+    }
+
+    private boolean factoryWorkClosed(Order o) {
+        if (o == null) {
+            return false;
+        }
+        List<WorkStage> mine = workStageMapper.selectList(new LambdaQueryWrapper<WorkStage>()
+                .eq(WorkStage::getOrderId, o.getId())
+                .eq(WorkStage::getTenantId, UserContext.tenantId()));
+        return InspectRules.factoryWorkClosed(mine);
     }
 
     private String actionOf(Quotation q, Demand d, Contract c) {

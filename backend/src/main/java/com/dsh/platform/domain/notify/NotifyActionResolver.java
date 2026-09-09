@@ -83,6 +83,16 @@ public class NotifyActionResolver {
             v.setAction("去签署");
             return;
         }
+        if (title.startsWith("本段已关闭#") || title.startsWith("已关闭工单#")) {
+            if (factory) {
+                v.setLink(factoryBidLink(v.getDemandId()));
+                v.setAction("查看需求");
+            } else {
+                v.setLink(buyerOrderByStage(hashId));
+                v.setAction("查看需求");
+            }
+            return;
+        }
         if (title.startsWith("请付阶段款#")) {
             v.setLink(buyerOrderByStage(hashId));
             v.setAction("去支付");
@@ -155,7 +165,7 @@ public class NotifyActionResolver {
                 || title.startsWith("买家取消需求#") || title.startsWith("买家已确认继续#")
                 || title.startsWith("买家申请取消需求#") || title.startsWith("工厂思考期开始")
                 || title.startsWith("思考期超时扣分#") || title.startsWith("订单已结束#")
-                || title.startsWith("需求流拍#")) {
+                || title.startsWith("需求流拍#") || title.startsWith("需求流单#")) {
             if (factory) {
                 v.setLink(factoryBidLink(v.getDemandId()));
                 v.setAction(title.startsWith("工厂思考期开始") ? "去填报报价" : "查看报名");
@@ -175,7 +185,7 @@ public class NotifyActionResolver {
         }
         if (title.startsWith("覆盖度更新#") || title.startsWith("意向期末日提醒#")
                 || title.startsWith("意向期结束#") || title.startsWith("取消进入审核#")
-                || title.startsWith("取消未通过#") || title.startsWith("需求流拍#")
+                || title.startsWith("取消未通过#") || title.startsWith("需求流拍#") || title.startsWith("需求流单#")
                 || title.startsWith("需求已取消#")) {
             v.setLink("/buyer/demand/" + hashId);
             v.setAction(title.startsWith("意向期结束") ? "去决定" : "查看需求");

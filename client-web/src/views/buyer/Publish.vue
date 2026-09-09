@@ -51,10 +51,10 @@
           </template>
           <el-form-item label="检验方式" prop="inspectMode">
             <el-radio-group v-model="form.inspectMode" class="inspect-modes" @change="onInspectMode">
-              <el-radio value="AQL">AQL 抽样（{{ INSPECT_UNIT.AQL }} 元/件，按本批实交）</el-radio>
-              <el-radio value="FULL">全检（{{ INSPECT_UNIT.FULL }} 元/件，按本批实交）</el-radio>
+              <el-radio value="AQL">抽样检验（AQL，{{ INSPECT_UNIT.AQL }} 元/件）</el-radio>
+              <el-radio value="FULL">全数检验（{{ INSPECT_UNIT.FULL }} 元/件）</el-radio>
             </el-radio-group>
-            <div class="hint" style="margin-left:0">二选一。首件由工厂内部完成，平台只做交货后的抽检或全检。费用按平台标价 × 实交件数，发布时不必填单价。</div>
+            <div class="hint" style="margin-left:0">请选择交货后的质量检验方式。厂内首件由工厂自行完成，平台只在交货后按所选方式检验。费用按平台单价 × 本期实际交货件数计算，发布时无需填写单价。</div>
           </el-form-item>
           <el-form-item v-if="needAql" label="AQL" prop="aql">
             <el-select v-model="form.aql" style="width:100%">
@@ -63,11 +63,11 @@
               <el-option label="1.5" value="1.5" />
               <el-option label="2.5" value="2.5" />
             </el-select>
-            <div class="hint" style="margin-left:0">按 GB/T 2828.1 水平 II 一次正常抽样查 n 与 Ac/Re。选了 AQL 不必填最低良率。</div>
+            <div class="hint" style="margin-left:0">AQL 为可接收质量限。平台按 GB/T 2828.1、一般检验水平 II、一次正常抽样，根据本批实际交货数量确定抽样件数，以及一般缺陷的接收数（Ac）和拒收数（Re）。选择抽样检验后，无需再填写最低良率。</div>
           </el-form-item>
           <el-form-item v-if="needFull" label="最低良率" prop="minYield">
             <el-input-number v-model="form.minYield" :min="0" :max="1" :step="0.01" />
-            <div class="hint" style="margin-left:0">仅全检需要。无关键超差且良率不低于该值才算公差合格。</div>
+            <div class="hint" style="margin-left:0">仅全数检验需要。质量合格须同时满足：关键尺寸均未超出图纸公差；合格件数占实交件数的比例不低于本值。</div>
           </el-form-item>
           <el-form-item label="认证要求" prop="certList">
             <el-select v-model="form.certList" multiple filterable allow-create default-first-option
@@ -90,7 +90,7 @@
               <span class="step-num">{{ deliveryTimes }}</span>
               <button type="button" class="step-btn" @click="setTimes(deliveryTimes + 1)">+</button>
             </div>
-            <div class="hint" style="margin-left:0">后一期开始日必须等于前一期截止日；最后一期截止日必须等于硬交期。逾期未完成由买家另行确定返工期限，不延长原交期。</div>
+            <div class="hint" style="margin-left:0">后一期开始日须等于前一期截止日；最后一期截止日须等于硬交期。逾期未完成不延长原交期，返工期限由买家另行确定。</div>
           </el-form-item>
           <el-form-item v-for="(row, i) in deliveryPlan" :key="'plan-' + i" :label="`第${i + 1}期`">
             <div class="period-row">
@@ -133,7 +133,7 @@
           <template #header>工序 / 意向 / 图纸</template>
           <el-form-item label="工序列表" prop="processes">
             <div class="hint" style="margin:0 0 8px">
-              一单一品：中标工厂做完下列全部工序后按期交货，工序只描述工艺路线，<b>不再单独填工序数量</b>，件数一律等于需求数量 {{ form.quantity || 0 }} 件。
+              一单一品：中标工厂须完成下列全部工序后按期交货。工序列表只说明工艺路线，<b>不必按工序填写数量</b>，交货件数一律等于需求数量 {{ form.quantity || 0 }} 件。
             </div>
             <div class="row head">
               <span class="col-name">工序名</span>
@@ -213,7 +213,7 @@ const rules = {
   heatTreatment: require('请填写热处理'),
   aql: [{
     validator: (_r, v, cb) => {
-      if (needAql.value && !v) return cb(new Error('请选择 AQL'))
+      if (needAql.value && !v) return cb(new Error('请选择 AQL（可接收质量限）'))
       cb()
     },
     trigger: 'change',
@@ -222,7 +222,7 @@ const rules = {
   certList: [{ type: 'array', required: true, min: 1, message: '请选择认证要求', trigger: 'change' }],
   minYield: [{
     validator: (_r, v, cb) => {
-      if (needFull.value && (v == null || v === '')) return cb(new Error('全检请填写最低良率'))
+      if (needFull.value && (v == null || v === '')) return cb(new Error('全数检验请填写最低良率'))
       cb()
     },
     trigger: 'change',
@@ -552,7 +552,7 @@ function firstError() {
   if (!form.certList?.length) return '请选择或添加认证要求'
   if (!form.inspectMode) return '请选择检验方式'
   if (form.inspectMode === 'AQL' && !form.aql) return '选择 AQL 抽样时请填写 AQL'
-  if (form.inspectMode === 'FULL' && (form.minYield == null || form.minYield === '')) return '全检请填写最低良率'
+  if (form.inspectMode === 'FULL' && (form.minYield == null || form.minYield === '')) return '全数检验请填写最低良率'
   if (!form.deadlineHard) return '请选择硬交期'
   const hard = String(form.deadlineHard).slice(0, 10)
   const today = new Date()
@@ -662,7 +662,7 @@ onMounted(async () => {
   font-size: 16px;
   line-height: 32px;
 }
-.step-btn:hover { color: #533afd; }
+.step-btn:hover { color: #052659; }
 .step-num {
   flex: 1;
   text-align: center;

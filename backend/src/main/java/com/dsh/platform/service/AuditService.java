@@ -36,7 +36,7 @@ public class AuditService {
             a.setAction(action);
             a.setTargetType(targetType);
             a.setTargetId(targetId);
-            a.setAfterJson(detail);
+            a.setAfterJson(toDetailJson(detail));
             auditLogMapper.insert(a);
         } catch (Exception e) {
             log.warn("审计日志记录失败 action={}: {}", action, e.getMessage());
@@ -79,7 +79,7 @@ public class AuditService {
             case "FACTORY" -> "工厂";
             case "OPERATOR" -> "运营";
             case "SUPER_ADMIN" -> "超管";
-            case "INSPECTOR" -> "质检";
+            case "INSPECTOR", "INSPECTION" -> "质检";
             default -> null;
         };
     }
@@ -96,6 +96,14 @@ public class AuditService {
             case "CONTRACT" -> "合同";
             default -> type;
         };
+    }
+
+    String toDetailJson(String detail) {
+        try {
+            return objectMapper.writeValueAsString(java.util.Map.of("detail", detail == null ? "" : detail));
+        } catch (Exception e) {
+            return detail;
+        }
     }
 
     String extractDetail(String raw) {

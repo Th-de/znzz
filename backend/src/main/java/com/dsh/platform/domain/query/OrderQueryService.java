@@ -197,6 +197,9 @@ public class OrderQueryService {
         if (!signed) {
             return "PENDING_SIGN";
         }
+        if (InspectRules.factoryWorkClosed(periods)) {
+            return "CLOSED";
+        }
         if (periods.stream().anyMatch(ws -> "FAIL".equals(ws.getStatus()))) {
             return "FAIL";
         }
@@ -210,7 +213,7 @@ public class OrderQueryService {
         if (periods.stream().allMatch(ws -> "CLOSED".equals(ws.getStatus()) || "CANCELLED".equals(ws.getStatus()))) {
             return "CLOSED";
         }
-        if (periods.stream().allMatch(ws -> List.of("PASS", "COMPLETED", "CLOSED").contains(ws.getStatus()))) {
+        if (periods.stream().allMatch(ws -> List.of("PASS", "COMPLETED", "CLOSED", "CANCELLED").contains(ws.getStatus()))) {
             return "COMPLETED";
         }
         if (periods.stream().anyMatch(ws -> "PENDING_INSPECT_PAY".equals(ws.getStatus()))) {
@@ -578,7 +581,7 @@ public class OrderQueryService {
         ws.setBranchCode(branch.name());
         ws.setCanConcede(InspectRules.canConcede(branch, rework));
         ws.setCanRework(InspectRules.canRework(branch, rework));
-        ws.setCanClose(true);
+        ws.setCanClose(InspectRules.canClose(branch));
         ws.setMinYield(minY);
     }
 

@@ -6,10 +6,10 @@
       <el-table-column label="报名时间" width="170">
         <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
       </el-table-column>
-      <el-table-column label="状态" width="140">
+      <el-table-column label="状态" width="150">
         <template #default="{ row }">
-          <el-tag v-if="row.lost" type="danger" size="small">已落选</el-tag>
-          <span v-else>{{ label(DEMAND_STATUS, row.demandStatus) }}</span>
+          <StatusPill v-if="row.lost" tone="red" text="已落选" />
+          <StatusPill v-else :tone="statusTone(row.demandStatus)" :text="label(DEMAND_STATUS, row.demandStatus)" />
         </template>
       </el-table-column>
       <el-table-column label="更新时间" width="170">
@@ -30,7 +30,8 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import api from '../../api'
-import { DEMAND_STATUS, label, fmtTime } from '../../utils/labels'
+import { DEMAND_STATUS, label, fmtTime, statusTone } from '../../utils/labels'
+import StatusPill from '../../components/StatusPill.vue'
 
 const quotations = ref([])
 
@@ -55,7 +56,7 @@ const rows = computed(() => {
     if (q.actionKey) g.actionKeys.push(q.actionKey)
   }
   return [...map.values()].map((g) => {
-    const afterConfirm = ['SOLUTION_CONFIRMED', 'SOLUTION_SELECTED', 'CONTRACTED', 'IN_PRODUCTION', 'COMPLETED']
+    const afterConfirm = ['SOLUTION_CONFIRMED', 'SOLUTION_SELECTED', 'CONTRACTED', 'IN_PRODUCTION', 'COMPLETED', 'CLOSED']
     const won = g.quoteStatuses.includes('WIN')
     const lost = !won && afterConfirm.includes(g.demandStatus)
       && (g.quoteStatuses.includes('LOSE') || g.actionKeys.includes('LOSE'))

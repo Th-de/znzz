@@ -15,7 +15,8 @@ export const DEMAND_STATUS = {
   IN_PRODUCTION: '生产中',
   COMPLETED: '已完成',
   CANCELLED: '已取消',
-  FLOW_FAILED: '流拍',
+  CLOSED: '已关闭',
+  FLOW_FAILED: '流单',
   LOSE: '已落选',
 }
 
@@ -169,6 +170,8 @@ export const CREDIT_TYPE = {
   STAGE_PASS: '工单质检通过',
   QUALITY_PASS: '质检合格',
   QUALITY_FAIL: '质检不合格',
+  QUALITY_QTY_FAIL: '数量不足',
+  QUALITY_STD_FAIL: '质量不达标',
   PUNCTUAL_ON: '按时交付',
   PUNCTUAL_LATE: '逾期交付',
   HONESTY_FACTORY_EXIT: '工厂思考期退出',
@@ -184,6 +187,78 @@ export const CREDIT_TYPE = {
 
 export function label(map, key) {
   return map[key] || key || '-'
+}
+
+const STATUS_TONE = {
+  DRAFT: 'slate',
+  PENDING_AUDIT: 'amber',
+  PUBLISHED: 'sky',
+  RETURNED: 'orange',
+  FACTORY_THINKING: 'indigo',
+  BUYER_THINKING: 'violet',
+  THINKING: 'blue',
+  REVIEWING: 'cyan',
+  LOCKING: 'gold',
+  SOLUTION_GENERATED: 'teal',
+  SOLUTION_CONFIRMED: 'mint',
+  SOLUTION_SELECTED: 'purple',
+  CONTRACTED: 'navy',
+  IN_PRODUCTION: 'blue',
+  COMPLETED: 'green',
+  CANCELLED: 'stone',
+  FLOW_FAILED: 'rose',
+  LOSE: 'red',
+  WAITING_OPEN: 'slate',
+  PENDING_SIGN: 'peach',
+  PENDING: 'sand',
+  PENDING_INSPECT_PAY: 'tangerine',
+  PENDING_INSPECTION: 'aqua',
+  PENDING_REVIEW: 'aqua',
+  INSPECTING: 'aqua',
+  PASS: 'emerald',
+  FAIL: 'red',
+  CLOSED: 'stone',
+  NONE: 'slate',
+  PENDING_PAY: 'amber',
+  HELD: 'cobalt',
+  SETTLED: 'green',
+  CREATED: 'peach',
+  DELIVERED: 'teal',
+  ACCEPTED: 'mint',
+  DISPUTE: 'rose',
+  GOOD: 'green',
+  FAULT: 'red',
+  IDLE: 'green',
+  IN_USE: 'green',
+  MAINTENANCE: 'red',
+  PENDING_UPLOAD: 'sand',
+  SIGNED: 'green',
+  WIN: 'green',
+  INTENTION: 'sky',
+  LOCKED: 'indigo',
+  INVALID: 'stone',
+  FORFEITED: 'red',
+  RELEASED: 'mint',
+  COVERED: 'cyan',
+  FROZEN: 'cobalt',
+  DEDUCTED: 'navy',
+  DISABLED: 'red',
+}
+
+export function statusTone(code) {
+  return STATUS_TONE[code] || 'slate'
+}
+
+export function stageProgressTone(p) {
+  if (!p) return 'slate'
+  if (!p.contractSigned && (p.status === 'PENDING' || p.status === 'WAITING_OPEN')) return 'peach'
+  if (p.status === 'IN_PRODUCTION' && Number(p.reworkCount) > 0) return 'orange'
+  if (p.status === 'PENDING_INSPECT_PAY') return 'tangerine'
+  if (p.status === 'PENDING_INSPECTION' || p.status === 'PENDING_REVIEW' || p.status === 'INSPECTING') return 'aqua'
+  if (p.status === 'PASS' && (p.escrowStatus === 'NONE' || p.escrowStatus === 'PENDING_PAY')) return 'emerald'
+  if (p.status === 'PASS' && p.escrowStatus === 'HELD') return 'cobalt'
+  if (p.status === 'PASS' && p.escrowStatus === 'SETTLED') return 'green'
+  return statusTone(p.status)
 }
 
 export const DEVICE_STATUS = {
@@ -218,9 +293,53 @@ export function fmtTimeLine(v) {
 
 export function formatInspectMode(raw) {
   const s = String(raw || '').toUpperCase()
-  if (s.includes('FULL')) return '全检'
-  if (s.includes('AQL')) return 'AQL 抽样'
+  if (s.includes('FULL')) return '全数检验'
+  if (s.includes('AQL')) return '抽样检验（AQL）'
   return raw ? String(raw) : '-'
+}
+
+const INSPECT_DECIDE_COPY = {
+  B: {
+    situation: '交货数量未达到约定数量，质量检验合格。',
+    settlement: '若选择让步接收：按已交数量结算工费，另从工厂保证金划转本阶段约定工费的 5%，作为数量不足的补偿。',
+    options: '也可以要求工厂补交短缺数量。本情况不能关闭本阶段。',
+  },
+  C1: {
+    situation: '交货数量已达标，但质量轻微不合格：抽样检验中一般缺陷刚好达到拒收标准，或全数检验的实际良率低于约定最低良率、且差额不超过 5 个百分点。',
+    settlement: '若选择让步接收：本阶段工费按全额进入托管。抽样检验时，另从工厂保证金划转本阶段工费的 5%；全数检验时，划转金额为本阶段工费 ×（最低良率 − 实际良率）。',
+    options: '也可以要求工厂返工。',
+  },
+  C2: {
+    situation: '交货数量已达标，但质量明显不合格，已超出轻微不合格范围。',
+    settlement: '本情况不能让步接收。请要求工厂返工，或关闭本阶段。',
+    options: '',
+  },
+  D: {
+    situation: '交货数量未达到约定数量，且质量检验不合格。',
+    settlement: '本情况不能让步接收。可要求工厂返工一次；返工后仍不合格，则只能关闭本阶段。',
+    options: '',
+  },
+  E: {
+    situation: '存在关键尺寸超出图纸公差。',
+    settlement: '本情况不能让步接收。可要求工厂返工，或关闭本阶段。返工后仍不合格，只能关闭。',
+    options: '',
+  },
+}
+
+export function inspectDecideCopy(stage) {
+  const code = String(stage?.branchCode || '').toUpperCase()
+  const fallback = {
+    situation: '质检未通过，请根据下方可选操作处理。',
+    settlement: '让步接收仅适用于「数量不足但质量合格」或「数量达标且质量轻微不合格」。',
+    options: '',
+  }
+  const cannotClose = code === 'B' || stage?.canClose === false
+  return {
+    ...(INSPECT_DECIDE_COPY[code] || fallback),
+    closeNote: cannotClose
+      ? '数量不足但质量合格时不能关闭本阶段。请选择让步接收，或要求工厂补交短缺数量。返工期限按天填写，至少 1 天，不设上限。'
+      : '选择「关闭本阶段」将取消该厂后续未完成工期，并从工厂履约保证金划转「本期及后续未完成期工费合计」的 5% 补偿买家。保证金不足时无法关闭。每个工单全流程仅允许返工一次，期限按天填写，不设上限，与原分期截止日期无关。',
+  }
 }
 
 export function formatDeliveryPeriod(x) {

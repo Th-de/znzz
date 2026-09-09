@@ -38,7 +38,7 @@
               <template #default="{row}">{{ stageStart(row) }}</template>
             </el-table-column>
             <el-table-column label="当前阶段" width="150">
-              <template #default="{row}"><el-tag :type="tagType(row.status)">{{ statusText(row.status) }}</el-tag></template>
+              <template #default="{row}"><StatusPill :tone="statusTone(row.status)" :text="statusText(row.status)" /></template>
             </el-table-column>
             <el-table-column label="更新时间" width="170">
               <template #default="{row}">{{ fmtTime(row.updatedAt) }}</template>
@@ -48,8 +48,8 @@
             <el-table-column prop="quantity" label="数量" width="100" />
             <el-table-column prop="status" label="当前状态" width="170">
               <template #default="{row}">
-                <el-tag v-if="demandTab==='fulfill' && row.pendingReview" type="danger">待审核</el-tag>
-                <el-tag v-else :type="tagType(row.status)">{{ statusText(row.status) }}</el-tag>
+                <StatusPill v-if="demandTab==='fulfill' && row.pendingReview" tone="red" text="待审核" />
+                <StatusPill v-else :tone="statusTone(row.status)" :text="statusText(row.status)" />
               </template>
             </el-table-column>
             <el-table-column label="提交时间" width="160">
@@ -96,8 +96,10 @@
           <el-table-column prop="title" label="标题" />
           <el-table-column prop="productName" label="产品" />
           <el-table-column prop="quantity" label="数量" width="100" />
-          <el-table-column label="状态" width="140">
-            <template #default="{ row }">{{ label(DEMAND_STATUS, row.status) }}</template>
+          <el-table-column label="状态" width="150">
+            <template #default="{ row }">
+              <StatusPill :tone="statusTone(row.status)" :text="label(DEMAND_STATUS, row.status)" />
+            </template>
           </el-table-column>
           <el-table-column label="提交时间" width="160">
             <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
@@ -170,11 +172,15 @@
                     <el-table-column label="本段工费" width="100">
                       <template #default="{ row: p }">{{ p.amount ?? '-' }}</template>
                     </el-table-column>
-                    <el-table-column label="托管" width="90">
-                      <template #default="{ row: p }">{{ label(ESCROW_STATUS, p.escrowStatus) }}</template>
+                    <el-table-column label="托管" width="110">
+                      <template #default="{ row: p }">
+                        <StatusPill :tone="statusTone(p.escrowStatus)" :text="label(ESCROW_STATUS, p.escrowStatus)" />
+                      </template>
                     </el-table-column>
-                    <el-table-column label="状态" width="120">
-                      <template #default="{ row: p }">{{ stageProgressLabel(p) }}</template>
+                    <el-table-column label="状态" width="140">
+                      <template #default="{ row: p }">
+                        <StatusPill :tone="stageProgressTone(p)" :text="stageProgressLabel(p)" />
+                      </template>
                     </el-table-column>
                     <el-table-column label="操作" min-width="200">
                       <template #default="{ row: p }">
@@ -221,7 +227,9 @@
             </el-table>
           </div>
           <el-descriptions :column="1" border size="small">
-            <el-descriptions-item label="状态">{{ label(DEMAND_STATUS, detail.demand?.status) }}</el-descriptions-item>
+            <el-descriptions-item label="状态">
+              <StatusPill :tone="statusTone(detail.demand?.status)" :text="label(DEMAND_STATUS, detail.demand?.status)" />
+            </el-descriptions-item>
             <el-descriptions-item label="标题">{{ detail.demand?.title }}</el-descriptions-item>
             <el-descriptions-item label="产品">{{ detail.demand?.productName }}</el-descriptions-item>
             <el-descriptions-item label="数量">{{ detail.demand?.quantity }}</el-descriptions-item>
@@ -345,8 +353,10 @@
                   <span v-else>未上传</span>
                 </template>
               </el-table-column>
-              <el-table-column label="状态" width="120">
-                <template #default="{ row }">{{ contractStatusText(row.status) }}</template>
+              <el-table-column label="状态" width="130">
+                <template #default="{ row }">
+                  <StatusPill :tone="statusTone(row.status)" :text="contractStatusText(row.status)" />
+                </template>
               </el-table-column>
               <el-table-column label="签署时间" width="160">
                 <template #default="{ row }">{{ fmtTime(row.signedAt) }}</template>
@@ -441,7 +451,7 @@
           </el-table-column>
           <el-table-column prop="status" label="状态" width="110">
             <template #default="{row}">
-              <el-tag :type="inspectStatusType(row.status)" size="small">{{ inspectStatusText(row) }}</el-tag>
+              <StatusPill :tone="statusTone(row.status)" :text="inspectStatusText(row)" />
             </template>
           </el-table-column>
           <el-table-column label="操作" width="120">
@@ -470,19 +480,19 @@
             <BuyerInfoBlock :buyer="inspBuyer" staff />
           </div>
           <h4 style="margin:16px 0 8px">{{ inspCanApprove ? '审核' : '质检填写' }}</h4>
-          <p class="hint" style="margin:0 0 8px">{{ inspRuleHint }} 规定抽检数 {{ inspRequiredSample }} 件。</p>
+          <p class="hint" style="margin:0 0 8px">{{ inspRuleHint }} 规定抽样（或全数检验）件数 {{ inspRequiredSample }} 件。</p>
           <el-form label-width="130px">
             <el-form-item label="实交数量">
               <el-input-number v-model="inspForm.deliveredQty" :min="0" :disabled="!inspQtyEditable" />
               <span class="hint">约定 {{ inspTarget?.quantity ?? '-' }} 件，质检员/运营可按现场清点修改</span>
             </el-form-item>
-            <el-form-item label="抽检数"><el-input-number v-model="inspForm.sampleCount" :min="inspRequiredSample" :disabled="true" /></el-form-item>
+            <el-form-item label="检验件数"><el-input-number v-model="inspForm.sampleCount" :min="inspRequiredSample" :disabled="true" /></el-form-item>
             <el-form-item label="关键公差不合格"><el-input-number v-model="inspForm.criticalFailCount" :min="0" :max="inspForm.sampleCount || 0" :disabled="inspFillReadonly" /></el-form-item>
             <el-form-item label="一般公差不合格"><el-input-number v-model="inspForm.generalFailCount" :min="0" :max="inspRemainGeneral" :disabled="inspFillReadonly" /></el-form-item>
             <el-form-item label="关键尺寸结论"><el-input v-model="inspForm.keyDimensions" :disabled="inspFillReadonly" /></el-form-item>
             <el-form-item label="实际良率">
               <el-input :model-value="inspActualYield" disabled />
-              <span class="hint">{{ inspIsAql ? ('AQL ' + (inspTarget?.aql || '') + '　Ac=' + (inspTarget?.aqlAc ?? '-') + ' / Re=' + (inspTarget?.aqlRe ?? '-')) : ('最低良率 ' + inspMinYield) }}</span>
+              <span class="hint">{{ inspIsAql ? ('抽样检验 AQL ' + (inspTarget?.aql || '') + '　接收数 Ac=' + (inspTarget?.aqlAc ?? '-') + ' / 拒收数 Re=' + (inspTarget?.aqlRe ?? '-')) : ('约定最低良率 ' + inspMinYield) }}</span>
             </el-form-item>
             <el-form-item label="公差是否合格">
               <el-radio-group :model-value="inspToleranceOk" disabled>
@@ -540,8 +550,8 @@
                 <svg class="trend-svg" viewBox="0 0 640 220" preserveAspectRatio="none">
                   <defs>
                     <linearGradient id="fundArea" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stop-color="#533afd" stop-opacity="0.28" />
-                      <stop offset="100%" stop-color="#7c6ffe" stop-opacity="0.02" />
+                      <stop offset="0%" stop-color="#052659" stop-opacity="0.28" />
+                      <stop offset="100%" stop-color="#5483B3" stop-opacity="0.02" />
                     </linearGradient>
                     <filter id="fundGlow" x="-20%" y="-20%" width="140%" height="140%">
                       <feGaussianBlur stdDeviation="2.4" result="b" />
@@ -553,9 +563,9 @@
                   </defs>
                   <line v-for="(y, i) in fundTrendPoints.gridYs" :key="'g'+i" x1="0" :y1="y" x2="640" :y2="y" stroke="#e6e8f5" stroke-width="1" />
                   <polygon v-if="fundTrendPoints.area" :points="fundTrendPoints.area" fill="url(#fundArea)" ref="trendArea" />
-                  <line v-if="fundTrendHover" :x1="fundTrendHover.x" :x2="fundTrendHover.x" y1="0" y2="220" stroke="#7c6ffe" stroke-width="1" stroke-dasharray="3 3" />
-                  <polyline ref="trendLine" :points="fundTrendPoints.line" fill="none" stroke="#533afd" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round" filter="url(#fundGlow)" />
-                  <circle v-if="fundTrendHover" :cx="fundTrendHover.x" :cy="fundTrendHover.y" r="5.5" fill="#fff" stroke="#533afd" stroke-width="2" />
+                  <line v-if="fundTrendHover" :x1="fundTrendHover.x" :x2="fundTrendHover.x" y1="0" y2="220" stroke="#5483B3" stroke-width="1" stroke-dasharray="3 3" />
+                  <polyline ref="trendLine" :points="fundTrendPoints.line" fill="none" stroke="#052659" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round" filter="url(#fundGlow)" />
+                  <circle v-if="fundTrendHover" :cx="fundTrendHover.x" :cy="fundTrendHover.y" r="5.5" fill="#fff" stroke="#052659" stroke-width="2" />
                 </svg>
                 <div
                   v-if="fundTrendHover"
@@ -743,10 +753,10 @@
               <span v-else>-</span>
             </template>
           </el-table-column>
-          <el-table-column label="状态" width="80" align="center">
+          <el-table-column label="状态" width="90" align="center">
             <template #default="{ row }">
-              <el-tag v-if="row.userStatus === 'DISABLED'" type="danger" size="small">停用</el-tag>
-              <el-tag v-else-if="row.userStatus" type="success" size="small">启用</el-tag>
+              <StatusPill v-if="row.userStatus === 'DISABLED'" tone="red" text="停用" />
+              <StatusPill v-else-if="row.userStatus" tone="green" text="启用" />
               <span v-else>-</span>
             </template>
           </el-table-column>
@@ -935,7 +945,7 @@
           </el-table-column>
           <el-table-column label="状态" width="80">
             <template #default="{ row }">
-              <el-tag :type="deviceStatusType(row.status)" size="small">{{ label(DEVICE_STATUS, row.status) }}</el-tag>
+              <StatusPill :tone="statusTone(row.status)" :text="label(DEVICE_STATUS, row.status)" />
             </template>
           </el-table-column>
         </el-table>
@@ -982,7 +992,8 @@ import CountUp from '../components/CountUp.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { View, Hide } from '@element-plus/icons-vue'
 import AppHeader from '../components/AppHeader.vue'
-import { DEMAND_STATUS, FUND_TYPE, FUND_DIR, STAGE_STATUS, DEVICE_STATUS, ESCROW_STATUS, label, fmtTime, fmtDateLine, fmtTimeLine, deviceStatusType, formatInspectMode, stageProgressLabel, nestReworkPeriods, canShowInspectReport, factoryWorkSpan } from '../utils/labels'
+import { DEMAND_STATUS, FUND_TYPE, FUND_DIR, STAGE_STATUS, DEVICE_STATUS, ESCROW_STATUS, label, fmtTime, fmtDateLine, fmtTimeLine, deviceStatusType, formatInspectMode, stageProgressLabel, nestReworkPeriods, canShowInspectReport, factoryWorkSpan, statusTone, stageProgressTone } from '../utils/labels'
+import StatusPill from '../components/StatusPill.vue'
 import { getRole, clearAuth } from '../utils/auth'
 import { drawStroke, fillArea } from '../motion/chart'
 
@@ -1186,8 +1197,8 @@ const AUDIT_ACTIONS = [
   '买家申请发布', '买家再次提交审核', '买家取消需求', '买家思考期继续', '买家思考期取消',
   '买家确认方案', '买家上传合同', '买家确认签署并派单', '买家完工确认', '方案期关闭订单',
   '工厂报名', '工厂取消报名', '工厂提交报价', '工厂思考期退出', '工厂签署合同', '工厂开工', '工厂交付',
-  '需求审核通过', '需求退回', '结束意向期', '结束工厂思考期', '下发方案', '进入合同签署',
-  '工单质检', '提交质检单', '审核质检单', '开启下一期工单', '支付质检费',
+  '需求审核通过', '需求退回', '结束意向期', '结束工厂思考期', '意向期流单', '下发方案', '进入合同签署',
+  '工单质检', '提交质检单', '审核质检单', '开启下一期工单', '支付质检费', '关闭连锁',
 ]
 const factoryProfileOpen = ref(false)
 const factoryProfile = ref({})
@@ -1326,9 +1337,9 @@ const inspRequiredSample = computed(() => {
 })
 const inspRuleHint = computed(() => {
   if (inspIsAql.value) {
-    return `AQL ${inspTarget.value?.aql || ''}，水平II一次正常。抽 ${inspRequiredSample.value} 件，一般缺陷 Ac=${inspTarget.value?.aqlAc ?? '-'} / Re=${inspTarget.value?.aqlRe ?? '-'}，关键超差 0 件。`
+    return `抽样检验（AQL ${inspTarget.value?.aql || ''}）：按 GB/T 2828.1、一般检验水平 II、一次正常抽样。应从本批实际交货中抽取 ${inspRequiredSample.value} 件。一般缺陷：接收数 Ac=${inspTarget.value?.aqlAc ?? '-'}，拒收数 Re=${inspTarget.value?.aqlRe ?? '-'}（不合格件数达到拒收数即判定抽样不合格）。关键尺寸超差允许件数为 0。`
   }
-  return `全检实交件数。无关键超差且良率不低于最低良率 ${inspMinYield.value}。`
+  return `全数检验：对本批实际交货的每一件进行检验。质量合格须同时满足：关键尺寸均未超出图纸公差；合格件数占实交件数的比例不低于约定最低良率 ${inspMinYield.value}。`
 })
 const inspRemainGeneral = computed(() => Math.max(0, (Number(inspForm.sampleCount) || 0) - (Number(inspForm.criticalFailCount) || 0)))
 const inspMinYield = computed(() => {
@@ -2091,6 +2102,9 @@ watch(active, (v) => {
     fundEnterprise.value = null
     fundTrendHover.value = null
   }
+  if (v === 'audit') {
+    loadAudit().catch(ignore)
+  }
 })
 
 onMounted(() => {
@@ -2183,7 +2197,7 @@ onUnmounted(() => {
 .pwd-text { font-variant-numeric: tabular-nums; }
 .pwd-mask { letter-spacing: -3px; }
 .pwd-eye { cursor: pointer; color: #909399; font-size: 16px; }
-.pwd-eye:hover { color: #533afd; }
+.pwd-eye:hover { color: #052659; }
 .confirmed-plan { margin-top: 16px; }
 .proc-block { margin-bottom: 14px; padding-bottom: 4px; border-bottom: 1px solid #ebeef5; }
 .proc-block:last-of-type { border-bottom: none; }
@@ -2289,7 +2303,7 @@ onUnmounted(() => {
     linear-gradient(180deg, #f7f6ff, #fbfcff);
 }
 .trend-empty-mark { height: 42px; display: flex; align-items: flex-end; gap: 5px; margin-bottom: 16px; }
-.trend-empty-mark i { width: 5px; border-radius: 8px; background: linear-gradient(180deg, #7c6ffe, #533afd); opacity: 0.72; }
+.trend-empty-mark i { width: 5px; border-radius: 8px; background: linear-gradient(180deg, #5483B3, #052659); opacity: 0.72; }
 .trend-empty-mark i:nth-child(1) { height: 13px; }
 .trend-empty-mark i:nth-child(2) { height: 25px; }
 .trend-empty-mark i:nth-child(3) { height: 18px; }

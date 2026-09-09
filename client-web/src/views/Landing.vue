@@ -14,10 +14,6 @@
         <a href="#flow" @click.prevent="go('#flow')">链路</a>
         <a href="#data" @click.prevent="go('#data')">数据</a>
       </div>
-      <div class="nav-cta">
-        <button type="button" class="text-link" @click="$router.push('/login')">登录</button>
-        <button type="button" class="pill" @click="$router.push('/login')">进入平台</button>
-      </div>
     </nav>
 
     <section id="top" class="hero">
@@ -26,7 +22,6 @@
       <p class="lead rise">从需求发布、整品分配到独立质检与资金结算<br />四方遵循同一套规则，每一步有记录，每一笔资金有依据。</p>
       <div class="cta rise">
         <button type="button" class="pill" @click="$router.push('/login')">进入平台</button>
-        <a class="ghost" href="http://127.0.0.1:5174/" target="_blank" rel="noreferrer">看运营指挥台</a>
       </div>
     </section>
 
@@ -256,7 +251,7 @@ async function startWaves() {
       minWidth: 200,
       scale: 1,
       scaleMobile: 1,
-      color: 0x005588,
+      color: 0x041939,
       shininess: 30,
       waveHeight: 15,
       waveSpeed: 1,
@@ -379,9 +374,9 @@ onUnmounted(() => {
   margin: 14px auto 0;
   width: min(1080px, calc(100% - 32px));
   height: 52px;
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
   padding: 0 10px 0 12px;
   border-radius: 9999px;
@@ -401,6 +396,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+  justify-self: start;
   color: #0d253d;
   text-decoration: none;
   font-size: 16px;
@@ -408,7 +404,7 @@ onUnmounted(() => {
   letter-spacing: 0.04em;
 }
 .brand img { width: 32px; height: 32px; border-radius: 8px; object-fit: cover; }
-.nav-links { display: flex; align-items: center; gap: 22px; }
+.nav-links { display: flex; align-items: center; gap: 22px; justify-self: center; }
 .nav-links a {
   color: #0d253d;
   text-decoration: none;
@@ -416,7 +412,6 @@ onUnmounted(() => {
   font-weight: 500;
 }
 .nav-links a:active { transform: scale(0.97); }
-.nav-cta { display: flex; align-items: center; gap: 14px; }
 .global-nav .pill { padding: 8px 16px; font-size: 14px; }
 
 .hero {

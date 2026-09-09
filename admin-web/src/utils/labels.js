@@ -15,7 +15,8 @@ export const DEMAND_STATUS = {
   IN_PRODUCTION: '生产中',
   COMPLETED: '已完成',
   CANCELLED: '已取消',
-  FLOW_FAILED: '流拍',
+  CLOSED: '已关闭',
+  FLOW_FAILED: '流单',
 }
 
 export const FUND_TYPE = {
@@ -120,10 +121,72 @@ export function label(map, key) {
   return map[key] || key || '-'
 }
 
+const STATUS_TONE = {
+  DRAFT: 'slate',
+  PENDING_AUDIT: 'amber',
+  PUBLISHED: 'sky',
+  RETURNED: 'orange',
+  FACTORY_THINKING: 'indigo',
+  BUYER_THINKING: 'violet',
+  THINKING: 'blue',
+  REVIEWING: 'cyan',
+  LOCKING: 'gold',
+  SOLUTION_GENERATED: 'teal',
+  SOLUTION_CONFIRMED: 'mint',
+  SOLUTION_SELECTED: 'purple',
+  CONTRACTED: 'navy',
+  IN_PRODUCTION: 'blue',
+  COMPLETED: 'green',
+  CANCELLED: 'stone',
+  FLOW_FAILED: 'rose',
+  LOSE: 'red',
+  WAITING_OPEN: 'slate',
+  PENDING_SIGN: 'peach',
+  PENDING: 'sand',
+  PENDING_INSPECT_PAY: 'tangerine',
+  PENDING_INSPECTION: 'aqua',
+  PENDING_REVIEW: 'aqua',
+  INSPECTING: 'aqua',
+  PASS: 'emerald',
+  FAIL: 'red',
+  CLOSED: 'stone',
+  NONE: 'slate',
+  PENDING_PAY: 'amber',
+  HELD: 'cobalt',
+  SETTLED: 'green',
+  CREATED: 'peach',
+  DELIVERED: 'teal',
+  ACCEPTED: 'mint',
+  DISPUTE: 'rose',
+  GOOD: 'green',
+  FAULT: 'red',
+  IDLE: 'green',
+  IN_USE: 'green',
+  MAINTENANCE: 'red',
+  PENDING_UPLOAD: 'sand',
+  SIGNED: 'green',
+  DISABLED: 'red',
+}
+
+export function statusTone(code) {
+  return STATUS_TONE[code] || 'slate'
+}
+
+export function stageProgressTone(p) {
+  if (!p) return 'slate'
+  if (p.status === 'IN_PRODUCTION' && Number(p.reworkCount) > 0) return 'orange'
+  if (p.status === 'PENDING_INSPECT_PAY') return 'tangerine'
+  if (p.status === 'PENDING_INSPECTION' || p.status === 'PENDING_REVIEW' || p.status === 'INSPECTING') return 'aqua'
+  if (p.status === 'PASS' && (p.escrowStatus === 'NONE' || p.escrowStatus === 'PENDING_PAY')) return 'emerald'
+  if (p.status === 'PASS' && p.escrowStatus === 'HELD') return 'cobalt'
+  if (p.status === 'PASS' && p.escrowStatus === 'SETTLED') return 'green'
+  return statusTone(p.status)
+}
+
 export function formatInspectMode(raw) {
   const s = String(raw || '').toUpperCase()
-  if (s.includes('FULL')) return '全检'
-  if (s.includes('AQL')) return 'AQL 抽样'
+  if (s.includes('FULL')) return '全数检验'
+  if (s.includes('AQL')) return '抽样检验（AQL）'
   return raw ? String(raw) : '-'
 }
 

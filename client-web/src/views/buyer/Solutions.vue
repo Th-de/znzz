@@ -104,7 +104,7 @@
         </el-col>
       </el-row>
 
-    <el-dialog v-model="factoryOpen" title="工厂详情" width="640px" :close-on-click-modal="false">
+    <el-dialog v-model="factoryOpen" title="工厂详情" width="720px" :close-on-click-modal="false">
       <el-descriptions :column="2" border size="small">
         <el-descriptions-item label="名称" :span="2">{{ factoryInfo.name }}</el-descriptions-item>
         <el-descriptions-item label="信用分">{{ factoryInfo.creditScore ?? '-' }}</el-descriptions-item>
@@ -117,19 +117,21 @@
         <el-descriptions-item label="企业介绍" :span="2">{{ factoryInfo.introduction || '-' }}</el-descriptions-item>
       </el-descriptions>
       <h4 style="margin:12px 0 8px">设备</h4>
-      <el-table :data="factoryInfo.devices || []" border size="small">
+      <PagedBox :data="factoryInfo.devices || []" :page-size="8" v-slot="{ rows }">
+      <el-table :data="rows" border size="small">
         <el-table-column prop="name" label="设备" min-width="120" />
         <el-table-column prop="processNames" label="适用工序" min-width="120" />
         <el-table-column prop="dailyCapacity" label="日产能" width="80" />
         <el-table-column label="状态" width="80">
           <template #default="{ row }">
-            <el-tag :type="deviceStatusType(row.status)" size="small">{{ label(DEVICE_STATUS, row.status) }}</el-tag>
+            <StatusPill :tone="statusTone(row.status)" :text="label(DEVICE_STATUS, row.status)" />
           </template>
         </el-table-column>
         <el-table-column label="添加时间" width="160">
           <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
         </el-table-column>
       </el-table>
+      </PagedBox>
     </el-dialog>
   </div>
 </template>
@@ -142,7 +144,9 @@ import { getDetail, listBidFactories, closeSolution } from '../../api/demand'
 import api from '../../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete } from '@element-plus/icons-vue'
-import { fmtTime, DEVICE_STATUS, label, deviceStatusType } from '../../utils/labels'
+import { fmtTime, DEVICE_STATUS, label, deviceStatusType, statusTone } from '../../utils/labels'
+import StatusPill from '../../components/StatusPill.vue'
+import PagedBox from '../../components/PagedBox.vue'
 
 const route = useRoute()
 const router = useRouter()

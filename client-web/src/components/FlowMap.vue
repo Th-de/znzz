@@ -77,7 +77,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 <style scoped>
 .flow-map {
   --rail: rgba(83, 58, 253, 0.42);
-  --rail-dot: #533afd;
+  --rail-dot: #052659;
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr) 28px minmax(0, 1fr) 28px minmax(0, 1fr) 28px;

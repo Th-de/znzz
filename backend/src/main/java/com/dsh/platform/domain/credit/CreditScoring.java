@@ -36,6 +36,8 @@ public class CreditScoring {
 
     public static final String QUALITY_PASS = "QUALITY_PASS";
     public static final String QUALITY_FAIL = "QUALITY_FAIL";
+    public static final String QUALITY_QTY_FAIL = "QUALITY_QTY_FAIL";
+    public static final String QUALITY_STD_FAIL = "QUALITY_STD_FAIL";
     public static final String PUNCTUAL_ON = "PUNCTUAL_ON";
     public static final String PUNCTUAL_LATE = "PUNCTUAL_LATE";
     public static final String HONESTY_FACTORY_EXIT = "HONESTY_FACTORY_EXIT";
@@ -97,15 +99,24 @@ public class CreditScoring {
     }
 
     public void onInspectResult(WorkStage ws, boolean pass, Long inspectionId) {
+        onInspectResult(ws, pass, inspectionId, true, pass);
+    }
+
+    public void onInspectResult(WorkStage ws, boolean pass, Long inspectionId,
+                                 boolean quantityOk, boolean toleranceOk) {
         if (ws == null || ws.getTenantId() == null) {
             return;
         }
         Long ref = inspectionId != null ? inspectionId : ws.getId();
         if (pass) {
-            insert(ws.getTenantId(), QUALITY_PASS, 2, "INSPECTION", ref, "质检 PASS");
+            insert(ws.getTenantId(), QUALITY_PASS, 2, "INSPECTION", ref, "质检合格");
         } else {
-            insert(ws.getTenantId(), QUALITY_FAIL, -8, "INSPECTION", ref, "质检 FAIL");
-            insert(ws.getTenantId(), HONESTY_INSPECT_FAIL, -3, "INSPECTION", ref, "质检不合格");
+            if (!quantityOk) {
+                insert(ws.getTenantId(), QUALITY_QTY_FAIL, -3, "INSPECTION", ref, "交货数量不足");
+            }
+            if (!toleranceOk) {
+                insert(ws.getTenantId(), QUALITY_STD_FAIL, -3, "INSPECTION", ref, "质量不达标");
+            }
         }
         refresh(ws.getTenantId());
     }
@@ -155,7 +166,9 @@ public class CreditScoring {
                 }
                 return HONESTY_OVERDUE.equals(ev.getType())
                         || HONESTY_INSPECT_FAIL.equals(ev.getType())
-                        || QUALITY_FAIL.equals(ev.getType());
+                        || QUALITY_FAIL.equals(ev.getType())
+                        || QUALITY_QTY_FAIL.equals(ev.getType())
+                        || QUALITY_STD_FAIL.equals(ev.getType());
             });
             if (!dirty) {
                 insert(factoryId, HONESTY_CLEAN_ORDER, 2, "ORDER", order.getId(), "整单完工且无失信");
@@ -206,6 +219,8 @@ public class CreditScoring {
                 acc += 2 * qualityWeight(ev.getCreatedAt(), now);
             } else if (QUALITY_FAIL.equals(ev.getType())) {
                 acc += -8 * qualityWeight(ev.getCreatedAt(), now);
+            } else if (QUALITY_QTY_FAIL.equals(ev.getType()) || QUALITY_STD_FAIL.equals(ev.getType())) {
+                acc += -3 * qualityWeight(ev.getCreatedAt(), now);
             }
         }
         return clamp(100 + acc);

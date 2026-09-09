@@ -298,6 +298,95 @@ public class DeviceService {
         }
     }
 
+    /** 每厂补齐到 target 台，便于买家详情分页展示。 */
+    @Transactional
+    public void ensureFactoryFleet(int target) {
+        if (target <= 0) {
+            return;
+        }
+        List<Enterprise> factories = enterpriseMapper.selectList(new LambdaQueryWrapper<Enterprise>()
+                .eq(Enterprise::getType, "FACTORY"));
+        for (Enterprise e : factories) {
+            List<Device> have = deviceMapper.selectList(new LambdaQueryWrapper<Device>()
+                    .eq(Device::getTenantId, e.getId())
+                    .orderByAsc(Device::getId));
+            int n = have.size();
+            String[][] catalog = fleetOf(e.getName());
+            for (int i = n; i < target; i++) {
+                String[] row = catalog[i % catalog.length];
+                Device d = new Device();
+                d.setTenantId(e.getId());
+                d.setName(row[0] + "-" + String.format("%02d", i + 1));
+                d.setModel(row[1]);
+                d.setPrecisionText(row[2]);
+                d.setProcessNames(row[3]);
+                d.setDailyCapacity(Integer.parseInt(row[4]));
+                d.setParts(row[5]);
+                d.setMaterials(row[6]);
+                d.setStatus(i % 17 == 0 ? "FAULT" : "GOOD");
+                deviceMapper.insert(d);
+            }
+        }
+    }
+
+    private static String[][] fleetOf(String name) {
+        String n = name == null ? "" : name;
+        if (n.contains("热处理")) {
+            return new String[][]{
+                    {"井式渗碳炉", "RQ3-75", "±5℃", "热处理,渗碳淬火", "80", "齿轮,轴类", "20CrMnTi,合金钢"},
+                    {"箱式电阻炉", "SX2-12-10", "±8℃", "热处理,回火", "90", "销轴,法兰", "合金钢,碳钢"},
+                    {"网带淬火炉", "RCWC-300", "±6℃", "热处理,淬火", "70", "销轴", "合金钢"},
+                    {"多用炉", "UMF-600", "±5℃", "热处理,渗碳淬火", "85", "齿轮", "20CrMnTi"},
+                    {"金相试样磨抛机", "MP-2B", "—", "检测", "40", "试样", "合金钢"},
+            };
+        }
+        if (n.contains("表面")) {
+            return new String[][]{
+                    {"阳极氧化线", "OX-800", "±2μm", "表面处理,阳极氧化", "400", "壳体,端盖", "铝合金"},
+                    {"镀锌线", "ZN-12", "±3μm", "表面处理,电镀", "500", "紧固件", "碳钢"},
+                    {"发黑槽", "BK-6", "—", "表面处理", "350", "轴类", "碳钢,合金钢"},
+                    {"喷砂机", "SB-9080", "—", "表面处理", "280", "壳体", "铝合金,铸铁"},
+                    {"膜厚仪工作台", "TT260", "0.1μm", "检测", "60", "抽检件", "铝合金"},
+            };
+        }
+        if (n.contains("钣金")) {
+            return new String[][]{
+                    {"光纤激光切割机", "GF-3015", "0.1mm", "激光切割", "220", "护罩,机柜", "碳钢,不锈钢"},
+                    {"数控折弯机", "WE67K-100", "0.2mm", "折弯", "180", "钣金件", "碳钢,不锈钢"},
+                    {"二保焊机", "NBC-350", "—", "焊接", "150", "机柜", "碳钢"},
+                    {"液压冲床", "JH21-80", "—", "冲压", "260", "支架", "碳钢"},
+                    {"剪板机", "QC12Y-6", "0.2mm", "下料", "300", "板材", "碳钢,不锈钢"},
+            };
+        }
+        if (n.contains("齿轮")) {
+            return new String[][]{
+                    {"滚齿机", "Y3150E", "7级", "滚齿", "90", "齿轮", "20CrMnTi"},
+                    {"插齿机", "Y54", "7级", "插齿", "80", "内齿", "20CrMnTi"},
+                    {"磨齿机", "Y7131", "5级", "磨齿,精磨", "60", "齿轮", "20CrMnTi"},
+                    {"倒棱机", "Y9380", "—", "倒棱", "120", "齿轮", "合金钢"},
+                    {"数控车床", "CK6150", "0.02mm", "粗车,精车", "180", "齿坯", "20CrMnTi,合金钢"},
+            };
+        }
+        if (n.contains("宏达") || n.contains("武进")) {
+            return new String[][]{
+                    {"数控车床", "CK6150", "0.02mm", "粗车,精车,车削", "200", "轴类,盘类", "碳钢,合金钢"},
+                    {"数控车床", "CK7520", "0.015mm", "精车,车削", "180", "法兰,套类", "不锈钢,合金钢"},
+                    {"钻攻中心", "T500", "0.03mm", "钻孔", "220", "法兰", "碳钢"},
+                    {"普通车床", "CA6140", "0.05mm", "粗车", "240", "轴类", "碳钢"},
+                    {"外圆磨床", "M1432B", "0.005mm", "精磨,磨削", "140", "轴类", "合金钢"},
+            };
+        }
+        return new String[][]{
+                {"立式加工中心", "VMC850", "0.01mm", "铣削,精铣,CNC加工", "180", "壳体,法兰", "合金钢,不锈钢,铝合金"},
+                {"卧式加工中心", "HMC500", "0.02mm", "铣削,精铣", "160", "箱体", "铸铁,合金钢"},
+                {"数控车床", "CK6150", "0.02mm", "粗车,精车", "200", "轴类", "碳钢,合金钢"},
+                {"数控铣床", "XK7132", "0.02mm", "铣削,精铣", "170", "底板,端盖", "铝合金,不锈钢"},
+                {"外圆磨床", "M1432B", "0.005mm", "精磨,磨削", "140", "轴类", "合金钢"},
+                {"钻攻中心", "T500", "0.03mm", "钻孔", "210", "法兰", "碳钢,铝合金"},
+                {"三坐标测量机", "CMM-544", "0.002mm", "检测", "40", "抽检件", "通用"},
+        };
+    }
+
     private Device requireMine(Long id) {
         Device d = deviceMapper.selectById(id);
         if (d == null || !UserContext.tenantId().equals(d.getTenantId())) {

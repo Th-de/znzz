@@ -586,7 +586,7 @@ public class OrderService {
                 siteNotify.send(d.getTenantId(), "阶段问卷#" + stageId, "请对本阶段做总体星级评价。");
             }
             siteNotify.send(ws.getTenantId(), "阶段问卷#" + stageId, "请对本阶段做总体星级评价。");
-            creditScoring.onInspectResult(ws, true, ins.getId());
+            creditScoring.onInspectResult(ws, true, ins.getId(), true, true);
         } else {
             ws.setStatus("FAIL");
             workStageMapper.updateById(ws);
@@ -595,7 +595,7 @@ public class OrderService {
                         "工单「" + ws.getProcessName() + "」审核为不合格。请按规则选择让步、返工或关闭本段。");
             }
             siteNotify.send(ws.getTenantId(), "质检不合格#" + stageId, "本段审核不合格，等待买家选择让步、返工或关闭。");
-            creditScoring.onInspectResult(ws, false, ins.getId());
+            creditScoring.onInspectResult(ws, false, ins.getId(), qtyOk, toleranceOk);
         }
         auditService.record("审核质检单", "STAGE", stageId,
                 "结果" + result + " 工序「" + ws.getProcessName() + "」");
@@ -663,19 +663,19 @@ public class OrderService {
         }
         if ("REWORK".equals(action)) {
             if (!InspectRules.canRework(branch, rework)) {
-                throw new BizException("不能再返工，请让步或关闭");
+                throw new BizException("不能再返工");
             }
-            int hours = req.reworkHours() == null ? 24 : req.reworkHours();
-            if (hours < 12 || hours > 72) {
-                throw new BizException("返工期限须为 12～72 小时");
+            int days = reworkDaysOf(req);
+            if (days < 1) {
+                throw new BizException("请填写返工期限，至少 1 天");
             }
             if (branch == InspectRules.Branch.B) {
-                splitQtyRework(ws, o, d, report, hours, A, agreed, delivered);
+                splitQtyRework(ws, o, d, report, days, A, agreed, delivered);
                 return;
             }
             ws.setReworkCount(1);
             ws.setReworkKind("QUALITY");
-            ws.setReworkDeadlineAt(LocalDateTime.now().plusHours(hours));
+            ws.setReworkDeadlineAt(LocalDateTime.now().plusDays(days));
             ws.setReworkReason(buildReworkReason(report));
             ws.setStatus("IN_PRODUCTION");
             ws.setActualProgress(0);
@@ -683,13 +683,16 @@ public class OrderService {
             ws.setUpdatedAt(LocalDateTime.now());
             workStageMapper.updateById(ws);
             siteNotify.send(ws.getTenantId(), "请返工#" + stageId,
-                    "买家要求质量返工，期限 " + hours + " 小时。再次交付后由工厂支付质检费。");
+                    "买家要求质量返工，期限 " + days + " 天。再次交付后由工厂支付质检费。");
             siteNotify.send(d.getTenantId(), "已要求返工#" + stageId,
-                    "已通知工厂质量返工，期限 " + hours + " 小时。");
-            auditService.record("要求返工", "STAGE", stageId, "QUALITY " + hours + "小时");
+                    "已通知工厂质量返工，期限 " + days + " 天。");
+            auditService.record("要求返工", "STAGE", stageId, "QUALITY " + days + "天");
             return;
         }
         if ("CLOSE".equals(action)) {
+            if (!InspectRules.canClose(branch)) {
+                throw new BizException("数量不足但质量合格时不能关闭本阶段，请让步接收或要求补交");
+            }
             closeChain(ws, o, d);
             return;
         }
@@ -750,8 +753,18 @@ public class OrderService {
         return new com.dsh.platform.domain.pay.EscrowStart(true, null);
     }
 
+    private int reworkDaysOf(DecisionRequest req) {
+        if (req != null && req.reworkDays() != null) {
+            return req.reworkDays();
+        }
+        if (req != null && req.reworkHours() != null) {
+            return Math.max(1, (req.reworkHours() + 23) / 24);
+        }
+        return 1;
+    }
+
     private void splitQtyRework(WorkStage ws, Order o, Demand d, Map<String, Object> report,
-                                int hours, BigDecimal A, int agreed, int delivered) {
+                                int days, BigDecimal A, int agreed, int delivered) {
         int remain = Math.max(0, agreed - delivered);
         BigDecimal deliveredPay = InspectRules.concessionPay(InspectRules.Branch.B, A, agreed, delivered, BigDecimal.ONE);
         ws.setPayAmount(deliveredPay);
@@ -779,14 +792,14 @@ public class OrderService {
             child.setStatus("IN_PRODUCTION");
             child.setReworkCount(1);
             child.setReworkKind("QTY");
-            child.setReworkDeadlineAt(LocalDateTime.now().plusHours(hours));
+            child.setReworkDeadlineAt(LocalDateTime.now().plusDays(days));
             child.setReworkReason(buildReworkReason(report));
             child.setParentStageId(ws.getId());
             child.setInspectFeeStatus("NONE");
             workStageMapper.insert(child);
             siteNotify.send(ws.getTenantId(), "请补件#" + child.getId(),
                     "买家要求数量返工。已交 " + delivered + " 件将托管工费；剩余 " + remain + " 件请在 "
-                            + hours + " 小时内交付。剩余件由买家付质检费。");
+                            + days + " 天内交付。剩余件由买家付质检费。");
         }
         siteNotify.send(d.getTenantId(), "数量返工#" + ws.getId(),
                 "已交部分请支付托管 ¥" + deliveredPay + "；剩余 " + remain + " 件已生成补件工单。");
@@ -826,7 +839,7 @@ public class OrderService {
             if ("PASS".equals(s.getStatus()) || "CLOSED".equals(s.getStatus()) || "CANCELLED".equals(s.getStatus())) {
                 continue;
             }
-            s.setStatus("CANCELLED");
+            s.setStatus("CLOSED");
             s.setPayAmount(BigDecimal.ZERO);
             s.setUpdatedAt(LocalDateTime.now());
             workStageMapper.updateById(s);
@@ -836,7 +849,7 @@ public class OrderService {
         ws.setUpdatedAt(LocalDateTime.now());
         workStageMapper.updateById(ws);
         siteNotify.send(ws.getTenantId(), "本段已关闭#" + ws.getId(),
-                "买家关闭本阶段，后续期已取消。已按当前+后续工费 5% 赔付买家 ¥" + paid + "。本期不交托管。");
+                "买家已关闭本阶段及后续工期。已按当前+后续工费 5% 赔付买家 ¥" + paid + "。本期不交托管。");
         siteNotify.send(d.getTenantId(), "已关闭工单#" + ws.getId(),
                 "本段已关闭并取消该厂后续期，赔付 ¥" + paid + "。本期不交托管款。");
         auditService.record("关闭连锁", "STAGE", ws.getId(), "赔付" + paid + " 基数" + left);

@@ -225,8 +225,10 @@ onMounted(() => riseIn('.login-card', { y: 16, duration: 0.55 }))
 .story-status i { display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: #32d296; box-shadow: 0 0 0 4px rgba(50,210,150,.12); }
 .login-card {
   width: auto;
-  max-height: 720px;
-  margin: 14px;
+  align-self: center;
+  height: calc(100% - 56px);
+  max-height: calc(100% - 56px);
+  margin: 28px 36px 28px 0;
   overflow-y: auto;
   border: 1px solid rgba(255,255,255,.78);
   border-radius: 22px;
@@ -259,7 +261,7 @@ onMounted(() => riseIn('.login-card', { y: 16, duration: 0.55 }))
   .login-wrap { padding: 18px; }
   .login-shell { grid-template-columns: 1fr; min-height: auto; }
   .login-story { display: none; }
-  .login-card { margin: 0; max-height: calc(100vh - 36px); }
+  .login-card { margin: 16px; max-height: calc(100vh - 36px); }
 }
 @media (max-width: 520px) {
   .register-form { grid-template-columns: 1fr; }

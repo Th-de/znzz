@@ -7,7 +7,7 @@
       <div v-else class="todos">
         <el-card v-for="t in todos" :key="t.type + t.link" shadow="hover" class="todo">
           <div>{{ t.title }}</div>
-          <el-button type="primary" size="small" style="margin-top:8px" @click="$router.push(t.link)">去办理</el-button>
+          <el-button type="primary" size="small" style="margin-top:8px" @click="goTodo(t)">去办理</el-button>
         </el-card>
       </div>
       <h3>信用事件</h3>
@@ -55,6 +55,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import api from '../../api'
 import PagedBox from '../../components/PagedBox.vue'
 import { FUND_TYPE, FUND_DIR, CREDIT_TYPE, label, fmtTime } from '../../utils/labels'
@@ -63,7 +64,18 @@ const funds = ref([])
 const credits = ref([])
 const capComplete = ref(true)
 const capLoaded = ref(false)
+const router = useRouter()
 const todos = ref([])
+
+async function goTodo(t) {
+  if (t.type === 'STAGE_CLOSED' && t.link) {
+    const m = String(t.link).match(/\/factory\/quotations\/(\d+)/)
+    if (m) {
+      try { await api.post('/common/todos/ack', { type: 'STAGE_CLOSED', bizId: Number(m[1]) }) } catch { /* 已读失败仍跳转 */ }
+    }
+  }
+  router.push(t.link)
+}
 
 async function load() {
   try { todos.value = await api.get('/common/todos') } catch { todos.value = [] }

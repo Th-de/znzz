@@ -35,18 +35,22 @@
               <el-table-column label="本期工费" width="100">
                 <template #default="{ row: p }">{{ p.amount ?? '-' }}</template>
               </el-table-column>
-              <el-table-column label="状态" width="140">
+              <el-table-column label="状态" width="150">
                 <template #default="{ row: p }">
-                  <span
+                  <StatusPill
                     v-if="isReworking(p)"
                     class="rework-status"
+                    tone="orange"
+                    text="返工生产中"
                     @click.stop="openReworkReason(p)"
-                  >返工生产中</span>
-                  <span v-else>{{ stageProgressLabel(p) }}</span>
+                  />
+                  <StatusPill v-else :tone="stageProgressTone(p)" :text="stageProgressLabel(p)" />
                 </template>
               </el-table-column>
-              <el-table-column label="托管" width="100">
-                <template #default="{ row: p }">{{ label(ESCROW_STATUS, p.escrowStatus) }}</template>
+              <el-table-column label="托管" width="110">
+                <template #default="{ row: p }">
+                  <StatusPill :tone="statusTone(p.escrowStatus)" :text="label(ESCROW_STATUS, p.escrowStatus)" />
+                </template>
               </el-table-column>
               <el-table-column label="操作" min-width="280">
                 <template #default="{ row: p }">
@@ -98,8 +102,10 @@
         <el-table-column label="总计工费" width="110">
           <template #default="{ row }">{{ row.totalAmount ?? '-' }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="110">
-          <template #default="{ row }">{{ jobStatusText(row) }}</template>
+        <el-table-column label="状态" width="130">
+          <template #default="{ row }">
+            <StatusPill :tone="jobStatusTone(row)" :text="jobStatusText(row)" />
+          </template>
         </el-table-column>
       </el-table>
       </PagedBox>
@@ -160,7 +166,7 @@
       <el-descriptions :column="1" border>
         <el-descriptions-item label="结论">{{ inspReport.result || '-' }}</el-descriptions-item>
         <el-descriptions-item label="实交数量">{{ inspJson.deliveredQty ?? '-' }}</el-descriptions-item>
-        <el-descriptions-item label="抽检数">{{ inspJson.sampleCount ?? '-' }}</el-descriptions-item>
+        <el-descriptions-item label="检验件数">{{ inspJson.sampleCount ?? '-' }}</el-descriptions-item>
         <el-descriptions-item v-if="inspJson.aqlAc != null" label="AQL Ac/Re">{{ inspJson.aqlAc }} / {{ inspJson.aqlRe }}</el-descriptions-item>
         <el-descriptions-item label="关键公差不合格">{{ inspJson.criticalFailCount ?? '-' }}</el-descriptions-item>
         <el-descriptions-item label="一般公差不合格">{{ inspJson.generalFailCount ?? '-' }}</el-descriptions-item>
@@ -190,7 +196,8 @@ import { computed, reactive, ref, onMounted } from 'vue'
 import { myDemandJobs, deliver, submitSurvey, reportProgress, inspectionOf, uploadFile, payInspectFee } from '../../api/order'
 import PagedBox from '../../components/PagedBox.vue'
 import { ElMessage } from 'element-plus'
-import { STAGE_STATUS, ESCROW_STATUS, label, fmtTime, fmtDateLine, fmtTimeLine, stageProgressLabel, nestReworkPeriods, canShowInspectReport, canPayInspectFee, factoryWorkSpan } from '../../utils/labels'
+import { STAGE_STATUS, ESCROW_STATUS, label, fmtTime, fmtDateLine, fmtTimeLine, stageProgressLabel, nestReworkPeriods, canShowInspectReport, canPayInspectFee, factoryWorkSpan, statusTone, stageProgressTone } from '../../utils/labels'
+import StatusPill from '../../components/StatusPill.vue'
 
 const jobList = ref([])
 const tableRef = ref()
@@ -228,6 +235,10 @@ function jobStatusText(row) {
   if (!row.contractSigned) return '待签约'
   return label(STAGE_STATUS, row.status)
 }
+function jobStatusTone(row) {
+  if (!row.contractSigned) return 'peach'
+  return statusTone(row.status)
+}
 
 function periodStatusText(p) {
   return stageProgressLabel(p)
@@ -256,11 +267,11 @@ function reasonFromInspect(ins, row) {
   const dg = Number(r.generalFailCount) || 0
   if (dc > 0) parts.push('关键公差不合格 ' + dc + ' 件')
   if (r.toleranceOk === false && dc === 0) {
-    if (r.aqlAc != null) parts.push('一般缺陷超过 Ac=' + r.aqlAc)
-    else parts.push('抽检良率低于最低良率')
+    if (r.aqlAc != null) parts.push('一般缺陷超过接收数 Ac=' + r.aqlAc)
+    else parts.push('实际良率低于最低良率')
   }
   else if (dg > 0) parts.push('一般公差不合格 ' + dg + ' 件')
-  if (r.actualYield != null && r.actualYield !== '') parts.push('抽检良率 ' + r.actualYield)
+  if (r.actualYield != null && r.actualYield !== '') parts.push('实际良率 ' + r.actualYield)
   if (r.remark) parts.push('质检备注：' + r.remark)
   if (r.keyDimensions) parts.push('关键尺寸：' + r.keyDimensions)
   return parts.length ? parts.join('；') : '买家要求返工'

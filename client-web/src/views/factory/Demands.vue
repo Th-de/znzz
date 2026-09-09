@@ -6,8 +6,10 @@
         <el-table-column prop="title" label="标题" />
         <el-table-column prop="productName" label="产品" />
         <el-table-column prop="quantity" label="数量" width="90" />
-        <el-table-column label="阶段" width="110">
-          <template #default="{ row }">{{ label(DEMAND_STATUS, row.status) }}</template>
+        <el-table-column label="阶段" width="150">
+          <template #default="{ row }">
+            <StatusPill :tone="statusTone(row.status)" :text="label(DEMAND_STATUS, row.status)" />
+          </template>
         </el-table-column>
         <el-table-column label="发布/意向开始" width="160">
           <template #default="{ row }">{{ fmtTime(row.publishedAt) }}</template>
@@ -93,7 +95,7 @@
       </el-dialog>
 
       <el-dialog v-model="dialog" :title="'意向报名 - ' + current.title" width="640px" :close-on-click-modal="false">
-        <p class="tip">一单一品：报名即承接该需求全部工序，按需求件数报价。意向金按单只收 1000 元。</p>
+        <p class="tip">本需求按「一单一品」承接：报名后由本厂完成全部工序列表中的工序，并按需求件数组织生产。每个需求收取意向金 1000 元，仅冻结一次。</p>
         <h4>工序</h4>
         <el-table :data="processes" size="small" border style="margin-bottom:12px">
           <el-table-column prop="processNo" label="#" width="50" />
@@ -104,8 +106,14 @@
         <CoverageBars :items="coverage" />
         <p class="tip">质检与交付：<InspectDeliveryRules /></p>
         <el-form label-width="110px">
-          <el-form-item label="最小承接量"><el-input-number v-model="wholeQty.minQty" :min="1" /></el-form-item>
-          <el-form-item label="最大承接量"><el-input-number v-model="wholeQty.maxQty" :min="1" /></el-form-item>
+          <el-form-item label="最小承接量">
+            <el-input-number v-model="wholeQty.minQty" :min="1" />
+            <div class="tip">平台分配给本厂的件数不会低于该值。</div>
+          </el-form-item>
+          <el-form-item label="最大承接量">
+            <el-input-number v-model="wholeQty.maxQty" :min="1" />
+            <div class="tip">平台分配给本厂的件数不会高于该值。分配数量始终落在最小与最大承接量之间。</div>
+          </el-form-item>
           <el-form-item label=" ">
             <el-checkbox v-model="confirmIntent">确认冻结意向金 1000 元（一单一次）</el-checkbox>
           </el-form-item>
@@ -117,7 +125,7 @@
       </el-dialog>
 
       <el-dialog v-model="commitDialog" title="填报报价" width="560px" :close-on-click-modal="false">
-        <p class="tip">报该品全部工序的一件单价。承接量为意向报名时填写的区间，不可改。工期与最低良率按买家发布需求执行，无需填写。提交后按「单价 × 承接区间最高值」冻结 5% 保证金（只冻一次）。</p>
+        <p class="tip">请填写完成全部工序后的单件价格。承接数量区间以意向报名时填写的为准，提交后不可修改。交期与质量标准按买家发布的需求执行，无需在此填写。提交后按「单价 × 承接区间上限」冻结 5% 履约保证金，每个需求只冻结一次。</p>
         <el-form label-width="120px">
           <el-form-item label="实施方案" required>
             <el-input v-model="commitForm.planText" type="textarea" :rows="3"
@@ -158,7 +166,8 @@ import BuyerInfoBlock from '../../components/BuyerInfoBlock.vue'
 import PagedBox from '../../components/PagedBox.vue'
 import InspectDeliveryRules from '../../components/InspectDeliveryRules.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { DEMAND_STATUS, label, fmtTime, formatDeliveryPeriod, formatInspectMode } from '../../utils/labels'
+import { DEMAND_STATUS, label, fmtTime, formatDeliveryPeriod, formatInspectMode, statusTone } from '../../utils/labels'
+import StatusPill from '../../components/StatusPill.vue'
 
 const router = useRouter()
 const demands = ref([])

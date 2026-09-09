@@ -21,8 +21,10 @@
         <el-table-column prop="title" label="标题" />
         <el-table-column prop="productName" label="产品" />
         <el-table-column prop="quantity" label="数量" width="100" />
-        <el-table-column label="状态" width="140">
-          <template #default="{ row }">{{ label(DEMAND_STATUS, row.status) }}</template>
+        <el-table-column label="状态" width="150">
+          <template #default="{ row }">
+            <StatusPill :tone="statusTone(row.status)" :text="label(DEMAND_STATUS, row.status)" />
+          </template>
         </el-table-column>
         <el-table-column label="提交时间" width="160">
           <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
@@ -67,7 +69,8 @@ import api from '../../api'
 import IntentionCountdown from '../../components/IntentionCountdown.vue'
 import PagedBox from '../../components/PagedBox.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { DEMAND_STATUS, label, fmtTime } from '../../utils/labels'
+import { DEMAND_STATUS, label, fmtTime, statusTone } from '../../utils/labels'
+import StatusPill from '../../components/StatusPill.vue'
 
 const demands = ref([])
 const cancelStats = ref({ last90Days: 0, warn: false })

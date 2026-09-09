@@ -1,0 +1,140 @@
+.login-wrap {
+  position: relative;
+  isolation: isolate;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #021024;
+}
+
+.login-bg,
+.login-flow {
+  position: absolute;
+  inset: -14%;
+  background: url("/bg-login.png") center / cover no-repeat;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.login-bg {
+  filter: brightness(0.82) saturate(0.95);
+  animation: loginDrift 36s ease-in-out infinite alternate;
+}
+
+.login-flow {
+  opacity: 0.42;
+  mix-blend-mode: screen;
+  background-size: 145% 140%;
+  animation: loginWave 22s linear infinite;
+}
+
+.login-sheen,
+.login-mist {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.login-mist {
+  background:
+    radial-gradient(ellipse at 50% 42%, rgba(2, 16, 36, 0.08) 0%, rgba(2, 16, 36, 0.28) 52%, rgba(2, 16, 36, 0.62) 100%);
+}
+
+.login-sheen {
+  background: linear-gradient(110deg, transparent 18%, rgba(193, 232, 255, 0.1) 48%, transparent 72%);
+  background-size: 220% 100%;
+  animation: loginSheen 16s ease-in-out infinite;
+}
+
+.login-wrap > .login-card {
+  --el-card-bg-color: transparent;
+  --el-bg-color: transparent;
+  position: relative;
+  z-index: 2;
+  background: rgba(193, 232, 255, 0.12) !important;
+  border: 1px solid rgba(193, 232, 255, 0.38) !important;
+  border-radius: 22px;
+  box-shadow:
+    0 22px 64px rgba(2, 16, 36, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  backdrop-filter: blur(22px) saturate(1.55);
+  -webkit-backdrop-filter: blur(22px) saturate(1.55);
+}
+
+.login-wrap .el-card__body {
+  background: transparent !important;
+}
+
+.login-wrap .site-title {
+  color: #c1e8ff !important;
+  text-shadow: 0 2px 12px rgba(2, 16, 36, 0.45);
+}
+
+.login-wrap .site-sub {
+  color: #7da0ca !important;
+}
+
+.login-wrap .el-form-item__label {
+  color: #c1e8ff !important;
+}
+
+.login-wrap .el-tabs__item {
+  color: #7da0ca;
+}
+
+.login-wrap .el-tabs__item.is-active {
+  color: #c1e8ff;
+}
+
+.login-wrap .el-tabs__active-bar {
+  background-color: #c1e8ff;
+}
+
+.login-wrap .el-tabs__nav-wrap::after {
+  background-color: rgba(193, 232, 255, 0.18);
+}
+
+.login-wrap .el-input__wrapper {
+  background: rgba(2, 16, 36, 0.38) !important;
+  box-shadow: 0 0 0 1px rgba(193, 232, 255, 0.28) inset !important;
+}
+
+.login-wrap .el-input__inner {
+  color: #f4fbff !important;
+}
+
+.login-wrap .el-radio {
+  color: #c1e8ff;
+}
+
+.login-wrap .el-radio__label {
+  color: #c1e8ff;
+}
+
+@keyframes loginDrift {
+  from { transform: translate3d(-3.5%, -2%, 0) scale(1.08); }
+  to { transform: translate3d(4%, 3.5%, 0) scale(1.18); }
+}
+
+@keyframes loginWave {
+  0% { background-position: 8% 68%; }
+  50% { background-position: 86% 72%; }
+  100% { background-position: 8% 68%; }
+}
+
+@keyframes loginSheen {
+  0% { background-position: 120% 0; opacity: 0.35; }
+  50% { background-position: 0% 0; opacity: 0.7; }
+  100% { background-position: -80% 0; opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-bg,
+  .login-flow,
+  .login-sheen {
+    animation: none;
+  }
+}

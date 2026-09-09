@@ -24,7 +24,7 @@
       </el-table-column>
       <el-table-column label="状态" width="110">
         <template #default="{ row }">
-          <el-tag :type="statusType(row.status)">{{ statusText(row.status) }}</el-tag>
+          <StatusPill :tone="statusTone(row.status)" :text="label(DEVICE_STATUS, row.status)" />
         </template>
       </el-table-column>
       <el-table-column label="操作" width="260">
@@ -78,7 +78,8 @@ import { ref, reactive, onMounted } from 'vue'
 import api from '../../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PagedBox from '../../components/PagedBox.vue'
-import { fmtTime, DEVICE_STATUS, label, deviceStatusType } from '../../utils/labels'
+import { fmtTime, DEVICE_STATUS, label, deviceStatusType, statusTone } from '../../utils/labels'
+import StatusPill from '../../components/StatusPill.vue'
 
 const list = ref([])
 const dialog = ref(false)
