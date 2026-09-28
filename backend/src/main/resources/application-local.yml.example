@@ -1,0 +1,21 @@
+# Copy this file to application-local.yml (git-ignored) and fill in local secrets.
+# Everything here overrides application.yml.
+
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/dsh_platform?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: change-me
+  data:
+    redis:
+      host: localhost
+      port: 6381
+
+dsh:
+  jwt:
+    secret: replace-with-a-long-random-string
+  ai:
+    # Optional. When empty, the rule-based solution generator is used instead of the LLM.
+    api-key: ${DSH_AI_API_KEY:}
+    model: deepseek-chat
+    base-url: https://api.deepseek.com

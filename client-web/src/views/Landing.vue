@@ -27,7 +27,7 @@
 
     <section class="scene scene-hero">
       <div class="scene-photo">
-        <img class="scene-media" src="https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?auto=format&fit=crop&w=1800&q=80" alt="" />
+        <img class="scene-media" src="/scene-factory.png" alt="" />
         <div class="scene-wash wash-blue"></div>
         <div class="scene-note">
           <span>真实制造场景</span>
@@ -111,7 +111,7 @@
     </section>
 
     <section class="scene scene-slim scene-quality">
-      <img class="scene-media" src="https://images.unsplash.com/photo-1581092918056-0c4c3acd3789?auto=format&fit=crop&w=1800&q=80" alt="" />
+      <img class="scene-media" src="/scene-inspect.png" alt="" />
       <div class="scene-wash wash-cyan"></div>
       <div class="scene-copy">
         <span>独立质检</span>

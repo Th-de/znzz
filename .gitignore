@@ -10,3 +10,16 @@ tools/natapp/
 .vscode/
 .cursor/
 node_modules/
+
+# personal documents
+实习报告-*.docx
+_*.py
+_showcase_imgs/
+_unpack_docs/
+preview-bgs/
+交付/
+第8组-*/
+第8组-*.zip
+.hbuilderx/
+.run/
+/*.pptx
