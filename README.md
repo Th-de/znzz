@@ -74,7 +74,9 @@ docker compose up -d            # MySQL 8 on 3306 (db dsh_platform), Redis on 63
 # 2. backend
 cd backend
 cp src/main/resources/application-local.yml.example src/main/resources/application-local.yml
-#    edit DB password / JWT secret; leave dsh.ai.api-key empty to use the rule-based generator
+#    set dsh.jwt.secret (required, >= 32 random bytes) and the DB password;
+#    leave dsh.ai.api-key empty to use the rule-based generator
+mvn test                                 # unit tests (state machine, fund ledger, JWT, DTO validation)
 mvn -DskipTests spring-boot:run          # http://localhost:8080
 
 # 3. front-ends
@@ -90,15 +92,19 @@ Never reuse these credentials outside a local demo.
 
 All business parameters live under `dsh.*` in `backend/src/main/resources/application.yml`:
 fees and ratios (`dsh.fee`), credit weights (`dsh.credit`), deadlines in hours (`dsh.time`),
-AI provider (`dsh.ai`), payment adapter (`dsh.pay`). Secrets go into the git-ignored
-`application-local.yml` or environment variables (`DSH_AI_API_KEY`, `DSH_ALIPAY_APP_ID`, …).
+AI provider (`dsh.ai`), payment adapter (`dsh.pay`), allowed CORS origins (`dsh.cors.origins`).
+Secrets go into the git-ignored `application-local.yml` or environment variables
+(`DSH_JWT_SECRET`, `DSH_AI_API_KEY`, `DSH_ALIPAY_APP_ID`, …). The application refuses to start
+without a JWT secret of at least 32 bytes.
 
 ## Project status & roadmap
 
 The end-to-end flow (register → publish → bid → contract → produce → inspect → settle → credit)
-runs and is covered by the manual test suite in `docs/deliverables`. Areas we are working on:
+runs and is covered by the manual test suite in `docs/deliverables`. Unit tests cover the demand
+state machine, fund-ledger rules, JWT handling and request validation; CI runs them on every push.
+Areas we are working on:
 
-- [ ] Automated tests for the demand/order state machine and fund ledger (currently manual)
+- [ ] Extend automated tests to order fulfilment, settlement and credit scoring (service layer, Testcontainers)
 - [ ] Replace polling with WebSocket/SSE notifications
 - [ ] Pluggable payment providers (WeChat Pay, bank escrow) behind the existing `pay` domain
 - [ ] Multi-tenant hardening: tenant-scoped queries are in place, row-level policies are not

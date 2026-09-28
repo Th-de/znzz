@@ -27,7 +27,9 @@ Reset demo data with `db/reset_demo_data.sql`.
 
 1. Branch from `master`: `feat/<topic>` or `fix/<topic>`.
 2. Keep one concern per PR; describe the state transitions or screens affected.
-3. CI must build (`mvn package`, `vite build` for both web apps).
+3. CI must pass: `mvn package` (compiles and runs unit tests) and `vite build` for both web apps.
+   New business rules in `domain/` should come with a unit test next to the existing ones in
+   `backend/src/test`.
 4. Chinese or English is fine for issues, commits and comments.
 
 ## Reporting security issues

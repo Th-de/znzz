@@ -6,6 +6,7 @@ import com.dsh.platform.dto.DemandDtos.*;
 import com.dsh.platform.entity.Demand;
 import com.dsh.platform.entity.Process;
 import com.dsh.platform.service.DemandService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -22,13 +23,13 @@ public class DemandController {
 
     @PostMapping("/publish")
     @PreAuthorize("hasRole('BUYER')")
-    public R<Long> publish(@RequestBody PublishRequest req) {
+    public R<Long> publish(@Valid @RequestBody PublishRequest req) {
         return R.ok(demandService.publish(req));
     }
 
     @PostMapping("/{id}/republish")
     @PreAuthorize("hasRole('BUYER')")
-    public R<Long> republish(@PathVariable Long id, @RequestBody PublishRequest req) {
+    public R<Long> republish(@PathVariable Long id, @Valid @RequestBody PublishRequest req) {
         return R.ok(demandService.republish(id, req));
     }
 
