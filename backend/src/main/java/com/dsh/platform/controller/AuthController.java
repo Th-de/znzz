@@ -3,6 +3,7 @@ package com.dsh.platform.controller;
 import com.dsh.platform.common.R;
 import com.dsh.platform.dto.AuthDtos.*;
 import com.dsh.platform.service.AuthService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -14,13 +15,13 @@ public class AuthController {
     private final AuthService authService;
 
     @PostMapping("/register")
-    public R<Void> register(@RequestBody RegisterRequest req) {
+    public R<Void> register(@Valid @RequestBody RegisterRequest req) {
         authService.register(req);
         return R.ok();
     }
 
     @PostMapping("/login")
-    public R<LoginResponse> login(@RequestBody LoginRequest req) {
+    public R<LoginResponse> login(@Valid @RequestBody LoginRequest req) {
         return R.ok(authService.login(req));
     }
 

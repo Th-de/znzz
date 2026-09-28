@@ -63,7 +63,8 @@ docker compose up -d            # MySQL 8 → 3306（库 dsh_platform），Redis
 # 2. 后端
 cd backend
 cp src/main/resources/application-local.yml.example src/main/resources/application-local.yml
-#    修改数据库密码 / JWT 密钥；dsh.ai.api-key 留空则使用规则方案生成器
+#    设置 dsh.jwt.secret（必填，≥32 字节随机串）和数据库密码；dsh.ai.api-key 留空则使用规则方案生成器
+mvn test                                 # 单元测试（状态机、资金台账、JWT、参数校验）
 mvn -DskipTests spring-boot:run          # http://localhost:8080
 
 # 3. 前端
@@ -75,13 +76,13 @@ cd ../admin-web  && npm install && npm run dev   # http://localhost:5174（运�
 
 ### 配置
 
-业务参数集中在 `backend/src/main/resources/application.yml` 的 `dsh.*`：费率与比例（`dsh.fee`）、信用权重（`dsh.credit`）、各时限小时数（`dsh.time`）、AI 供应商（`dsh.ai`）、支付适配（`dsh.pay`）。密钥放在被 git 忽略的 `application-local.yml` 或环境变量（`DSH_AI_API_KEY`、`DSH_ALIPAY_APP_ID` 等）。
+业务参数集中在 `backend/src/main/resources/application.yml` 的 `dsh.*`：费率与比例（`dsh.fee`）、信用权重（`dsh.credit`）、各时限小时数（`dsh.time`）、AI 供应商（`dsh.ai`）、支付适配（`dsh.pay`）、允许的前端来源（`dsh.cors.origins`）。密钥放在被 git 忽略的 `application-local.yml` 或环境变量（`DSH_JWT_SECRET`、`DSH_AI_API_KEY`、`DSH_ALIPAY_APP_ID` 等）。未配置 ≥32 字节的 JWT 密钥时应用拒绝启动。
 
 ## 现状与路线图
 
-注册 → 发单 → 竞标 → 签约 → 生产 → 质检 → 结算 → 信用的端到端流程已跑通，并有 `docs/deliverables` 中的手工测试用例覆盖。进行中：
+注册 → 发单 → 竞标 → 签约 → 生产 → 质检 → 结算 → 信用的端到端流程已跑通，并有 `docs/deliverables` 中的手工测试用例覆盖。单元测试覆盖需求状态机、资金台账规则、JWT 与请求参数校验，CI 每次推送执行。进行中：
 
-- [ ] 需求/订单状态机与资金台账的自动化测试（目前为手工）
+- [ ] 自动化测试扩展到订单履约、结算与信用评分（service 层，Testcontainers）
 - [ ] 通知由轮询改为 WebSocket/SSE
 - [ ] 在现有 `pay` 领域下支持可插拔支付渠道（微信支付、银行托管）
 - [ ] 多租户加固：租户维度查询已就位，行级策略尚未实现

@@ -4,6 +4,7 @@ import com.dsh.platform.common.R;
 import com.dsh.platform.dto.BiddingDtos.*;
 import com.dsh.platform.entity.Quotation;
 import com.dsh.platform.service.BiddingService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -19,7 +20,7 @@ public class BiddingController {
 
     @PostMapping("/intention")
     @PreAuthorize("hasRole('FACTORY')")
-    public R<IntentionStart> intention(@RequestBody IntentionRequest req) {
+    public R<IntentionStart> intention(@Valid @RequestBody IntentionRequest req) {
         return R.ok(biddingService.intention(req));
     }
 
@@ -52,7 +53,7 @@ public class BiddingController {
     /** 工厂思考期填报：实施方案+单价+分期交付，冻结 5% 保证金 */
     @PostMapping("/commit")
     @PreAuthorize("hasRole('FACTORY')")
-    public R<Void> commit(@RequestBody CommitRequest req) {
+    public R<Void> commit(@Valid @RequestBody CommitRequest req) {
         biddingService.commit(req);
         return R.ok();
     }

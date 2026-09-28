@@ -29,7 +29,7 @@ spring:
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    # 开发时如需打印 SQL，在 application-local.yml 中设置 log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
   global-config:
     db-config:
       logic-delete-field: deleted
@@ -39,8 +39,12 @@ mybatis-plus:
 
 # 自定义配置
 dsh:
+  cors:
+    # 允许的前端来源（支持通配）。默认仅本机与内网；生产环境请覆盖为真实域名
+    origins: ${DSH_CORS_ORIGINS:http://localhost:*,http://127.0.0.1:*,http://192.168.*:*,http://10.*:*}
   jwt:
-    secret: dsh-platform-secret-key-for-jwt-signing-2024-change-in-prod
+    # 必填，≥32 字节随机串。未配置时应用拒绝启动。放在 application-local.yml 或环境变量里，不要提交到仓库
+    secret: ${DSH_JWT_SECRET:}
     expire-hours: 24
   fee:
     intention-fixed: 1000      # 意向金固定金额
@@ -79,5 +83,3 @@ dsh:
 logging:
   level:
     com.dsh: info
-debug:
-  true
